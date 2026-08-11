@@ -1,0 +1,29 @@
+[package]
+name = "auto"
+version = "0.1.0"
+description = "Local-first automation control plane for macOS"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+clap.workspace = true
+cron.workspace = true
+plist.workspace = true
+ratatui.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+crossterm.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

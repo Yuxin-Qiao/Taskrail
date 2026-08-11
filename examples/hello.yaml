@@ -1,0 +1,18 @@
+id: hello
+name: hello
+ownership: managed
+trigger:
+  kind: manual
+policy:
+  max_risk: r0_read
+  approval_required: false
+  wall_time_seconds: 5
+steps:
+  - id: say-hello
+    risk: r0_read
+    command:
+      executable: /bin/echo
+      args: ["hello from auto"]
+      cwd: null
+      env: {}
+      shell: false
