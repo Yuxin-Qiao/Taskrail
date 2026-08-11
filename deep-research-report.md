@@ -1,5 +1,9 @@
 # 本地优先 macOS 自动化控制平面：成熟开源项目的技术与产品研究报告
 
+> 历史研究资料：本文记录了早期“控制平面”方向的探索。当前产品已经
+> 收敛为 Taskrail 本地自动化管理器，MCP、Codex App Server、approval 和
+> policy-engine 方案不属于当前 MVP；请以 README、SECURITY.md 和当前代码为准。
+
 ## 执行摘要
 
 截至 **2026 年 8 月 11 日**，这个项目在技术上完全可行，而且存在清晰的产品空位。但成熟版本不应该被定义成“一个可以定时调用 Codex 的 Mac App”，也不应该被定义成“Rust 版 cron / launchd GUI”。最有价值、也最难被现有工具替代的定位是：

@@ -12,4 +12,4 @@ comment, issue, PR, merge or workflow mutation is exposed.
 The adapter is small and uses the user's existing `gh` authentication without
 duplicating a GitHub SDK. Returned issue bodies, titles, logs and check names
 must remain untrusted data when passed to a later AI executor. External write
-operations require a separate capability and approval design.
+write operations are deliberately outside this read-only integration.

@@ -1,25 +1,4 @@
 use anyhow::{Context, Result};
-use auto::{
-    adoption::{
-        AdoptionEngine, CronController, LaunchdController, LaunchdSnapshot, SystemdController,
-        SystemdSnapshot, rollback_adoption,
-    },
-    app_server::{AppServerClient, AppServerConfig, RegistryApprovalHandler},
-    approval,
-    codex::{self, CodexRequest, CodexSandbox},
-    core::{
-        ApprovalRequest, ApprovalState, Automation, Event, Metric, Ownership, Risk, RuntimeState,
-    },
-    discovery::{
-        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
-    },
-    github::{self, GhQuery, QueryKind},
-    mcp, rpc, service,
-    storage::Registry,
-    verification::{self, VerificationCommand},
-    worktree,
-};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
@@ -28,13 +7,34 @@ use std::{
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
+use taskrail::{
+    adoption::{
+        AdoptionEngine, CronController, LaunchdController, LaunchdSnapshot, SystemdController,
+        SystemdSnapshot, rollback_adoption,
+    },
+    codex::{self, CodexRequest, CodexSandbox},
+    core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
+    discovery::{
+        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
+        merge_homebrew_sources, same_native_path,
+    },
+    github::{self, GhQuery, QueryKind},
+    rpc, service,
+    storage::Registry,
+    verification::{self, VerificationCommand},
+    worktree,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
-#[command(name = "auto", version, about = "Local-first automation control plane")]
+#[command(
+    name = "taskrail",
+    version,
+    about = "A local automation manager for developers"
+)]
 struct Cli {
     /// Override the local SQLite Registry path.
-    #[arg(long, env = "AUTO_REGISTRY")]
+    #[arg(long, env = "TASKRAIL_REGISTRY")]
     registry: Option<PathBuf>,
     #[command(subcommand)]
     command: Action,
@@ -67,7 +67,32 @@ enum Action {
     Inspect { id: String },
     /// Register a managed automation from a YAML definition.
     Register { file: PathBuf },
-    /// Run Codex non-interactively under the supervisor policy.
+    /// Add a simple command automation without writing YAML first.
+    Add {
+        /// Stable identifier used by `run`, `pause`, and `logs`.
+        id: String,
+        /// Executable to run, such as `mo`, `gh`, or an absolute path.
+        executable: PathBuf,
+        /// Optional display name; defaults to the identifier.
+        #[arg(long)]
+        name: Option<String>,
+        /// Argument passed to the executable. Repeat for multiple arguments.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+        /// Run every N seconds.
+        #[arg(long, conflicts_with = "cron")]
+        every_seconds: Option<u64>,
+        /// Run on a five-field cron expression.
+        #[arg(long, conflicts_with = "every_seconds")]
+        cron: Option<String>,
+        /// Timezone for a cron trigger.
+        #[arg(long, default_value = "local")]
+        timezone: String,
+        /// Working directory for the command.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Run Codex non-interactively as an optional automation executor.
     CodexRun {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
@@ -83,24 +108,6 @@ enum Action {
         output_schema: Option<PathBuf>,
         #[arg(long)]
         worktree_dir: Option<PathBuf>,
-        #[arg(long)]
-        approval_id: Option<String>,
-        #[arg(long, default_value_t = 30 * 60)]
-        timeout_seconds: u64,
-    },
-    /// Run a prompt through the Codex App Server with policy-backed approvals.
-    CodexAppServer {
-        #[arg(long, default_value = ".")]
-        cwd: PathBuf,
-        #[arg(long)]
-        prompt: String,
-        #[arg(long, value_enum, default_value_t = CodexSandboxArg::ReadOnly)]
-        sandbox: CodexSandboxArg,
-        #[arg(long)]
-        model: Option<String>,
-        /// Persist dynamic approval requests and wait for `auto approve/reject`.
-        #[arg(long)]
-        interactive_approvals: bool,
         #[arg(long, default_value_t = 30 * 60)]
         timeout_seconds: u64,
     },
@@ -170,8 +177,6 @@ enum Action {
         #[arg(value_enum)]
         check: Option<DoctorCheck>,
     },
-    /// List pending and resolved approval requests.
-    Approvals,
     /// List bounded read-only items that need operator attention.
     Inbox {
         #[arg(long, default_value_t = 100)]
@@ -191,22 +196,8 @@ enum Action {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
-    /// Resolve a pending approval request.
-    Approve {
-        id: String,
-        #[arg(long, default_value = "local-user")]
-        actor: String,
-    },
-    /// Reject a pending approval request.
-    Reject {
-        id: String,
-        #[arg(long, default_value = "local-user")]
-        actor: String,
-    },
     /// Explain what a run would do without executing it.
     Explain { id: String },
-    /// Check an automation policy without executing it.
-    PolicyCheck { id: String },
     /// Print a low-cost terminal dashboard.
     Tui,
     /// Run a deterministic argv verifier in a directory.
@@ -241,11 +232,6 @@ enum Action {
         #[command(subcommand)]
         action: WorktreeAction,
     },
-    /// Serve the local Registry through MCP stdio.
-    Mcp {
-        #[command(subcommand)]
-        action: McpAction,
-    },
     /// Evaluate scheduled managed/adopted automations.
     Daemon {
         /// Perform one scheduler pass and exit.
@@ -256,6 +242,12 @@ enum Action {
         socket: Option<PathBuf>,
         #[arg(long, default_value_t = 30)]
         interval_seconds: u64,
+        /// Install the user LaunchAgent that keeps the scheduler running.
+        #[arg(long, conflicts_with = "uninstall")]
+        install: bool,
+        /// Remove the installed user LaunchAgent.
+        #[arg(long, conflicts_with = "install")]
+        uninstall: bool,
     },
     /// Print the Registry path and daemon boundary.
     Status,
@@ -286,11 +278,6 @@ enum GithubQueryArg {
     Pulls,
     FailedRuns,
     Checks,
-}
-
-#[derive(Debug, Subcommand)]
-enum McpAction {
-    Serve,
 }
 
 #[derive(Debug, Subcommand)]
@@ -331,7 +318,6 @@ struct CodexCliOptions {
     model: Option<String>,
     output_schema: Option<PathBuf>,
     worktree_dir: Option<PathBuf>,
-    approval_id: Option<String>,
     timeout_seconds: u64,
 }
 
@@ -346,6 +332,17 @@ struct ResponsesCliOptions {
     json: bool,
 }
 
+struct AddOptions {
+    id: String,
+    executable: PathBuf,
+    name: Option<String>,
+    args: Vec<String>,
+    every_seconds: Option<u64>,
+    cron: Option<String>,
+    timezone: String,
+    cwd: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -355,6 +352,28 @@ async fn main() -> Result<()> {
         Action::List { json } => list(&registry, json),
         Action::Inspect { id } => inspect(&registry, &id),
         Action::Register { file } => register(&registry, &file),
+        Action::Add {
+            id,
+            executable,
+            name,
+            args,
+            every_seconds,
+            cron,
+            timezone,
+            cwd,
+        } => add(
+            &registry,
+            AddOptions {
+                id,
+                executable,
+                name,
+                args,
+                every_seconds,
+                cron,
+                timezone,
+                cwd,
+            },
+        ),
         Action::CodexRun {
             cwd,
             prompt,
@@ -363,7 +382,6 @@ async fn main() -> Result<()> {
             model,
             output_schema,
             worktree_dir,
-            approval_id,
             timeout_seconds,
         } => {
             codex_run(
@@ -376,28 +394,8 @@ async fn main() -> Result<()> {
                     model,
                     output_schema,
                     worktree_dir,
-                    approval_id,
                     timeout_seconds,
                 },
-            )
-            .await
-        }
-        Action::CodexAppServer {
-            cwd,
-            prompt,
-            sandbox,
-            model,
-            interactive_approvals,
-            timeout_seconds,
-        } => {
-            codex_app_server(
-                &registry,
-                cwd,
-                prompt,
-                sandbox,
-                model,
-                interactive_approvals,
-                timeout_seconds,
             )
             .await
         }
@@ -432,7 +430,6 @@ async fn main() -> Result<()> {
         Action::Adoptions { limit } => adoptions(&registry, limit),
         Action::AdoptionInspect { tx_id } => adoption_inspect(&registry, &tx_id),
         Action::Doctor { check } => doctor(&registry, check),
-        Action::Approvals => approvals(&registry),
         Action::Inbox { limit } => inbox(&registry, limit),
         Action::Metrics => metrics(&registry),
         Action::Events { limit } => events(&registry, limit),
@@ -444,14 +441,7 @@ async fn main() -> Result<()> {
         Action::AcknowledgeDrift { id, dry_run, apply } => {
             acknowledge_drift(&registry, &id, dry_run, apply)
         }
-        Action::Approve { id, actor } => {
-            resolve_approval(&registry, &id, ApprovalState::Approved, &actor)
-        }
-        Action::Reject { id, actor } => {
-            resolve_approval(&registry, &id, ApprovalState::Rejected, &actor)
-        }
         Action::Explain { id } => explain(&registry, &id),
-        Action::PolicyCheck { id } => policy_check(&registry, &id),
         Action::Tui => dashboard(&registry),
         Action::Verify {
             cwd,
@@ -478,17 +468,27 @@ async fn main() -> Result<()> {
             .await
         }
         Action::Worktree { action } => worktree_action(action),
-        Action::Mcp { action } => mcp_action(&registry, action).await,
         Action::Daemon {
             once,
             socket,
             interval_seconds,
-        } => daemon(&registry, once, socket, interval_seconds).await,
+            install,
+            uninstall,
+        } => {
+            if install {
+                install_daemon(&registry)
+            } else if uninstall {
+                uninstall_daemon()
+            } else {
+                daemon(&registry, once, socket, interval_seconds).await
+            }
+        }
         Action::Status => {
             println!("registry: {}", registry.path().display());
-            println!(
-                "daemon: not installed; V0.2 scheduler is available through `auto daemon` and native jobs remain observed by default"
-            );
+            match daemon_launch_agent_path() {
+                Ok(path) if path.exists() => println!("daemon: installed ({})", path.display()),
+                _ => println!("daemon: not installed; run `taskrail daemon --install` on macOS"),
+            }
             Ok(())
         }
         Action::Integration { action } => integration_doctor(action),
@@ -623,12 +623,6 @@ fn first_non_empty_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_owned)
 }
 
-async fn mcp_action(registry: &Registry, action: McpAction) -> Result<()> {
-    match action {
-        McpAction::Serve => mcp::serve_stdio(registry.path()).await,
-    }
-}
-
 fn register(registry: &Registry, file: &PathBuf) -> Result<()> {
     let content = std::fs::read_to_string(file)
         .with_context(|| format!("read automation definition {}", file.display()))?;
@@ -643,16 +637,8 @@ fn register(registry: &Registry, file: &PathBuf) -> Result<()> {
     for step in &automation.steps {
         if step.command.shell || step.command.invokes_shell() {
             anyhow::bail!(
-                "step {} requests shell execution; V0.1 requires direct argv",
+                "step {} requests shell execution; Taskrail requires direct argv",
                 step.id
-            );
-        }
-        if step.risk > automation.policy.max_risk {
-            anyhow::bail!(
-                "step {} risk {} exceeds policy max {}",
-                step.id,
-                step.risk.label(),
-                automation.policy.max_risk.label()
             );
         }
     }
@@ -665,11 +651,180 @@ fn register(registry: &Registry, file: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn add(registry: &Registry, options: AddOptions) -> Result<()> {
+    let AddOptions {
+        id,
+        executable,
+        name,
+        args,
+        every_seconds,
+        cron,
+        timezone,
+        cwd,
+    } = options;
+    if id.trim().is_empty() {
+        anyhow::bail!("automation id must not be empty");
+    }
+    if every_seconds.is_some_and(|seconds| seconds == 0) {
+        anyhow::bail!("--every-seconds must be greater than zero");
+    }
+    let trigger = match (every_seconds, cron) {
+        (Some(seconds), None) => Trigger::Interval { seconds },
+        (None, Some(expression)) => Trigger::Cron {
+            expression,
+            timezone,
+        },
+        (None, None) => Trigger::Manual,
+        (Some(_), Some(_)) => unreachable!("clap enforces trigger conflicts"),
+    };
+    let next_run_at = taskrail::scheduler::next_run(&trigger, Utc::now())?;
+    let automation = Automation {
+        id: id.clone(),
+        name: name.unwrap_or_else(|| id.clone()),
+        ownership: Ownership::Managed,
+        runtime_state: RuntimeState::Enabled,
+        trigger,
+        next_run_at,
+        steps: vec![StepSpec {
+            id: "command".into(),
+            command: CommandSpec {
+                executable,
+                args,
+                cwd,
+                ..CommandSpec::default()
+            },
+            responses: None,
+        }],
+        ..Automation::default()
+    };
+    registry.save_automation(&automation)?;
+    println!("added automation {}", automation.name);
+    Ok(())
+}
+
+fn daemon_launch_agent_path() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is required for the user daemon")?;
+    Ok(PathBuf::from(home).join("Library/LaunchAgents/com.taskrail.daemon.plist"))
+}
+
+fn launchctl_user_domain() -> Result<String> {
+    let output = ProcessCommand::new("id")
+        .arg("-u")
+        .output()
+        .context("resolve current user id")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "id -u failed: {}",
+            first_non_empty_line(&output.stderr).unwrap_or_default()
+        );
+    }
+    let uid = first_non_empty_line(&output.stdout).context("id -u returned no user id")?;
+    Ok(format!("gui/{uid}"))
+}
+
+fn install_daemon(registry: &Registry) -> Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = registry;
+        anyhow::bail!("daemon installation currently supports macOS user LaunchAgents only");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let path = daemon_launch_agent_path()?;
+        let parent = path.parent().context("resolve LaunchAgents directory")?;
+        std::fs::create_dir_all(parent)?;
+        let executable = std::env::current_exe().context("resolve taskrail executable")?;
+        let registry_path = registry.path().to_string_lossy().into_owned();
+        let mut program_arguments = vec![
+            plist::Value::String(executable.to_string_lossy().into_owned()),
+            plist::Value::String("--registry".into()),
+            plist::Value::String(registry_path),
+            plist::Value::String("daemon".into()),
+        ];
+        let mut plist = plist::Dictionary::new();
+        plist.insert(
+            "Label".into(),
+            plist::Value::String("com.taskrail.daemon".into()),
+        );
+        plist.insert(
+            "ProgramArguments".into(),
+            plist::Value::Array(std::mem::take(&mut program_arguments)),
+        );
+        let mut environment = plist::Dictionary::new();
+        environment.insert(
+            "PATH".into(),
+            plist::Value::String(
+                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into(),
+            ),
+        );
+        plist.insert(
+            "EnvironmentVariables".into(),
+            plist::Value::Dictionary(environment),
+        );
+        plist.insert("RunAtLoad".into(), plist::Value::Boolean(true));
+        plist.insert("KeepAlive".into(), plist::Value::Boolean(true));
+        plist.insert(
+            "ProcessType".into(),
+            plist::Value::String("Background".into()),
+        );
+        plist.insert("ThrottleInterval".into(), plist::Value::Integer(30.into()));
+        plist::to_file_xml(&path, &plist::Value::Dictionary(plist))
+            .with_context(|| format!("write daemon LaunchAgent {}", path.display()))?;
+        let domain = launchctl_user_domain()?;
+        let _ = ProcessCommand::new("launchctl")
+            .args(["bootout", &domain, &path.to_string_lossy()])
+            .output();
+        let output = ProcessCommand::new("launchctl")
+            .args(["bootstrap", &domain, &path.to_string_lossy()])
+            .output()
+            .context("bootstrap daemon LaunchAgent")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "launchctl bootstrap failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
+        println!("daemon installed and loaded from {}", path.display());
+        Ok(())
+    }
+}
+
+fn uninstall_daemon() -> Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        anyhow::bail!("daemon installation currently supports macOS user LaunchAgents only");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let path = daemon_launch_agent_path()?;
+        if !path.exists() {
+            println!("daemon is not installed");
+            return Ok(());
+        }
+        let domain = launchctl_user_domain()?;
+        let output = ProcessCommand::new("launchctl")
+            .args(["bootout", &domain, &path.to_string_lossy()])
+            .output()
+            .context("unload daemon LaunchAgent")?;
+        if !output.status.success()
+            && !String::from_utf8_lossy(&output.stderr).contains("Could not find service")
+        {
+            anyhow::bail!(
+                "launchctl bootout failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
+        std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        println!("daemon uninstalled");
+        Ok(())
+    }
+}
+
 fn default_registry_path() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/share/auto/registry.sqlite3")
+        .join(".local/share/taskrail/registry.sqlite3")
 }
 
 async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> {
@@ -681,7 +836,6 @@ async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> 
         model,
         output_schema,
         worktree_dir,
-        approval_id,
         timeout_seconds,
     } = options;
     let prompt = match (prompt, prompt_file) {
@@ -712,52 +866,6 @@ async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> 
         add_dirs: Vec::new(),
         timeout_seconds,
     };
-    let mut scope = request.approval_scope();
-    if let Some(path) = &worktree_dir {
-        scope["worktree_dir"] = serde_json::Value::String(path.to_string_lossy().into_owned());
-    }
-    let risk = if matches!(codex_sandbox, CodexSandbox::WorkspaceWrite) {
-        Risk::R1WorkspaceWrite
-    } else {
-        Risk::R0Read
-    };
-    if matches!(
-        approval::decide(
-            risk,
-            Risk::R1WorkspaceWrite,
-            matches!(codex_sandbox, CodexSandbox::WorkspaceWrite),
-            None
-        ),
-        approval::GateDecision::NeedsApproval
-    ) {
-        let approval = match approval_id {
-            Some(id) => registry
-                .get_approval(&id)?
-                .with_context(|| format!("approval not found: {id}"))?,
-            None => {
-                let id = format!("approval_codex_{}", Uuid::new_v4());
-                let request = ApprovalRequest::new(id.clone(), "codex.exec", risk, scope.clone());
-                registry.save_approval(&request)?;
-                println!("{}", serde_json::to_string_pretty(&request)?);
-                anyhow::bail!(
-                    "approval pending; run `auto approve {id}` and retry with `--approval-id {id}`"
-                )
-            }
-        };
-        if approval.state != ApprovalState::Approved {
-            anyhow::bail!(
-                "approval {} is {:?}, not approved",
-                approval.id,
-                approval.state
-            );
-        }
-        if approval.scope != scope {
-            anyhow::bail!(
-                "approval {} does not match this exact Codex operation",
-                approval.id
-            );
-        }
-    }
     let handle = match worktree_dir {
         Some(path) => Some(worktree::create(&cwd, path, None)?),
         None => None,
@@ -802,62 +910,6 @@ async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> 
     }
 }
 
-async fn codex_app_server(
-    registry: &Registry,
-    cwd: PathBuf,
-    prompt: String,
-    sandbox: CodexSandboxArg,
-    model: Option<String>,
-    interactive_approvals: bool,
-    timeout_seconds: u64,
-) -> Result<()> {
-    if matches!(sandbox, CodexSandboxArg::WorkspaceWrite) && !interactive_approvals {
-        anyhow::bail!(
-            "Codex App Server workspace-write requires --interactive-approvals so dynamic requests cannot be silently declined"
-        );
-    }
-    let cwd = cwd
-        .canonicalize()
-        .with_context(|| format!("resolve app-server cwd {}", cwd.display()))?;
-    let sandbox_policy = match sandbox {
-        CodexSandboxArg::ReadOnly => serde_json::json!({"type": "readOnly"}),
-        CodexSandboxArg::WorkspaceWrite => serde_json::json!({
-            "type": "workspaceWrite",
-            "writableRoots": [cwd],
-            "networkAccess": false,
-        }),
-    };
-    let config = AppServerConfig {
-        cwd,
-        model,
-        sandbox_policy,
-        timeout_seconds,
-        ..AppServerConfig::default()
-    };
-    let mut client = AppServerClient::connect(config).await?;
-    let result = if interactive_approvals {
-        let max_risk = if matches!(sandbox, CodexSandboxArg::WorkspaceWrite) {
-            Risk::R1WorkspaceWrite
-        } else {
-            Risk::R0Read
-        };
-        let mut handler =
-            RegistryApprovalHandler::new(registry.path().to_path_buf(), timeout_seconds, max_risk)?
-                .with_announcement(true);
-        client.run_prompt_with_handler(&prompt, &mut handler).await
-    } else {
-        client.run_prompt(&prompt).await
-    };
-    let shutdown = client.shutdown().await;
-    let result = result?;
-    shutdown?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    if result.status != "completed" {
-        anyhow::bail!("Codex App Server turn {}", result.status);
-    }
-    Ok(())
-}
-
 async fn responses_run(registry: &Registry, options: ResponsesCliOptions) -> Result<()> {
     let ResponsesCliOptions {
         prompt,
@@ -876,7 +928,7 @@ async fn responses_run(registry: &Registry, options: ResponsesCliOptions) -> Res
         (None, None) => anyhow::bail!("provide exactly one of --prompt or --prompt-file"),
         (Some(_), Some(_)) => unreachable!("clap enforces prompt conflicts"),
     };
-    let config = auto::responses::ResponsesConfig::from_env(
+    let config = taskrail::responses::ResponsesConfig::from_env(
         base_url,
         model,
         &api_key_env,
@@ -908,14 +960,6 @@ async fn responses_run(registry: &Registry, options: ResponsesCliOptions) -> Res
     } else {
         println!("{}", result.output_text);
     }
-    Ok(())
-}
-
-fn approvals(registry: &Registry) -> Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&registry.list_approvals()?)?
-    );
     Ok(())
 }
 
@@ -1025,17 +1069,6 @@ fn acknowledge_drift(registry: &Registry, id: &str, dry_run: bool, apply: bool) 
     Ok(())
 }
 
-fn resolve_approval(
-    registry: &Registry,
-    id: &str,
-    state: ApprovalState,
-    actor: &str,
-) -> Result<()> {
-    registry.resolve_approval(id, state, actor)?;
-    println!("approval {id}: {state:?}");
-    Ok(())
-}
-
 async fn verify(
     cwd: &PathBuf,
     executable: PathBuf,
@@ -1047,7 +1080,7 @@ async fn verify(
         cwd,
         vec![VerificationCommand {
             name: executable.to_string_lossy().into_owned(),
-            command: auto::CommandSpec::argv(executable, args),
+            command: taskrail::CommandSpec::argv(executable, args),
             expected_exit_code,
         }],
         timeout_seconds,
@@ -1224,7 +1257,7 @@ fn list(registry: &Registry, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&automations)?);
     } else {
         if automations.is_empty() {
-            println!("no automations registered; run `auto scan`");
+            println!("no automations registered; run `taskrail scan`");
         }
         for automation in automations {
             println!(
@@ -1313,7 +1346,7 @@ fn adopt(registry: &Registry, id: &str, dry_run: bool, apply: bool) -> Result<()
         .list_sources()?
         .into_iter()
         .find(|source| source.source_id == id || source.native_id == id)
-        .with_context(|| format!("source not found: {id}; run `auto scan` first"))?;
+        .with_context(|| format!("source not found: {id}; run `taskrail scan` first"))?;
     let automation = registry
         .get_automation(&source.source_id)?
         .with_context(|| "discovered source has no Registry automation")?;
@@ -1347,7 +1380,7 @@ fn rollback(registry: &Registry, tx_id: &str) -> Result<()> {
         .find(|automation| automation.source_id.as_deref() == Some(source_id.as_str()));
     match source.provider.as_str() {
         "cron" => {
-            let snapshot: auto::adoption::CronSnapshot =
+            let snapshot: taskrail::adoption::CronSnapshot =
                 serde_json::from_str(&snapshot_json).context("decode cron adoption snapshot")?;
             rollback_adoption(
                 registry,
@@ -1443,7 +1476,7 @@ fn doctor(registry: &Registry, check: Option<DoctorCheck>) -> Result<()> {
         }
         DoctorCheck::Permissions => {
             println!(
-                "permissions: V0.1 executor uses argv-only subprocesses; system LaunchDaemons are observe-only"
+                "permissions: argv-only subprocesses; system LaunchDaemons are observation-only"
             );
             Ok(())
         }
@@ -1519,54 +1552,24 @@ fn explain(registry: &Registry, id: &str) -> Result<()> {
         automation.name, automation.revision
     );
     println!(
-        "ownership: {:?}\npolicy max risk: {}\ntimeout: {}s\nmax steps: {}\nmax attempts: {}\nretry backoff: {}s (cap {}s)",
-        automation.ownership,
-        automation.policy.max_risk.label(),
-        automation.policy.wall_time_seconds,
-        automation.policy.budget.max_steps,
-        automation.policy.retry.max_attempts,
-        automation.policy.retry.initial_backoff_seconds,
-        automation.policy.retry.max_backoff_seconds
+        "ownership: {:?}\ntrigger: {:?}",
+        automation.ownership, automation.trigger
     );
     for (index, step) in automation.steps.iter().enumerate() {
-        if let Some(responses) = &step.responses {
-            println!(
-                "{}. Responses API ({})\n   prompt bytes: {}\n   risk: {}\n   store: {}",
-                index + 1,
-                responses.model.as_deref().unwrap_or("default model"),
-                responses.prompt.len(),
-                step.risk.label(),
-                responses.store
-            );
-        } else {
-            println!(
-                "{}. {}\n   risk: {}\n   shell: {}",
-                index + 1,
-                step.command.display(),
-                step.risk.label(),
-                step.command.shell || step.command.invokes_shell()
-            );
-        }
+        println!(
+            "{}. {}\n   shell: {}",
+            index + 1,
+            step.command.display(),
+            step.command.shell || step.command.invokes_shell()
+        );
     }
     println!("\nNo commands have been executed.");
     Ok(())
 }
 
-fn policy_check(registry: &Registry, id: &str) -> Result<()> {
-    let automation = registry
-        .get_automation(id)?
-        .with_context(|| format!("automation not found: {id}"))?;
-    let report = auto::policy::check(&automation);
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    if report.status == "fail" {
-        anyhow::bail!("policy check failed")
-    }
-    Ok(())
-}
-
 fn dashboard(registry: &Registry) -> Result<()> {
     if io::stdin().is_terminal() && io::stdout().is_terminal() {
-        return auto::tui::run(registry.path());
+        return taskrail::tui::run(registry.path());
     }
     text_dashboard(registry)
 }

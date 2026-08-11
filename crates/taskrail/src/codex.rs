@@ -1,4 +1,4 @@
-use crate::core::{CommandSpec, fingerprint_bytes};
+use crate::core::CommandSpec;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,17 +68,6 @@ impl CodexRequest {
         }
         args.push(self.prompt.clone());
         CommandSpec::argv("codex", args)
-    }
-
-    pub fn approval_scope(&self) -> Value {
-        serde_json::json!({
-            "cwd": self.cwd,
-            "prompt_sha256": fingerprint_bytes(self.prompt.as_bytes()),
-            "sandbox": self.sandbox,
-            "model": self.model,
-            "output_schema": self.output_schema,
-            "add_dirs": self.add_dirs,
-        })
     }
 
     pub fn validate(&self) -> Result<()> {

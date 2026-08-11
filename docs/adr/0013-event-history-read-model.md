@@ -13,7 +13,7 @@ the same read model through the daemon.
 
 ## Consequences
 
-Run, adoption, approval, and watcher changes can be inspected without opening
+Run, adoption, and watcher changes can be inspected without opening
 SQLite directly. Executor failures, timeouts, and cancellations include the
 step and attempt in `executor.command.failed` or
 `executor.command.cancelled` events. The API is intentionally read-only and

@@ -4,12 +4,12 @@
 
 The macOS desktop app is a SwiftUI executable under `macos/DesktopApp`. It
 connects to the local Unix JSON-RPC socket and displays Registry automations,
-approval requests and metrics. A run button sends only a registered automation
-ID.
+runs, logs, events, attention items, and metrics. A run button sends only a
+registered automation ID.
 
-The app does not open SQLite, parse launchd, schedule jobs, execute commands,
-resolve approvals or implement Codex policy. Those responsibilities remain in
-the Rust daemon so TUI, CLI, SwiftUI and MCP have one source of truth.
+The app does not open SQLite, parse launchd, schedule jobs, or execute commands.
+Those responsibilities remain in the Rust daemon so the CLI, TUI, and optional
+desktop view have one source of truth.
 
 ## Verification
 

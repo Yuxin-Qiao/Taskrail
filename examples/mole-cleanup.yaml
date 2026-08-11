@@ -1,0 +1,15 @@
+id: mole-cleanup
+name: Mole cleanup
+ownership: managed
+trigger:
+  kind: interval
+  seconds: 604800
+timeout_seconds: 1800
+steps:
+  - id: clean
+    command:
+      executable: mo
+      args: [clean]
+      cwd: null
+      env: {}
+      shell: false

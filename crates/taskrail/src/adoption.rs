@@ -190,7 +190,7 @@ impl NativeController for CronController {
 
     fn disable(&self, snapshot: &Self::Snapshot) -> Result<()> {
         let marker = format!(
-            "# auto-adopted {}: {}",
+            "# taskrail-adopted {}: {}",
             snapshot.source_id, snapshot.matched_line
         );
         let replacement = snapshot
@@ -605,7 +605,7 @@ where
                 .as_ref()
                 .is_some_and(|path| path.starts_with("/Library/LaunchDaemons"))
         {
-            anyhow::bail!("system LaunchDaemons are observe-only in V0.1");
+            anyhow::bail!("system LaunchDaemons are observation-only");
         }
         let snapshot = self.controller.snapshot(source)?;
         if snapshot_fingerprint(&snapshot)? != source.fingerprint {
@@ -842,7 +842,6 @@ mod tests {
                 id: "main".into(),
                 command: CommandSpec::argv("echo", ["ok"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };

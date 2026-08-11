@@ -21,9 +21,7 @@ pub async fn execute_with_cancellation(
     mut cancellation: watch::Receiver<bool>,
 ) -> Result<RunResult> {
     if command.shell || command.invokes_shell() {
-        anyhow::bail!(
-            "shell execution is disabled in the V0.1 executor; use a direct argv command instead"
-        );
+        anyhow::bail!("shell execution is disabled; use a direct argv command instead");
     }
     let run_id = format!("run_{}", Uuid::new_v4());
     let start = Instant::now();
@@ -94,7 +92,7 @@ fn bounded_output(bytes: &[u8]) -> String {
         return String::from_utf8_lossy(bytes).into_owned();
     }
     let mut output = String::from_utf8_lossy(&bytes[..MAX_OUTPUT_BYTES]).into_owned();
-    output.push_str("\n[auto: output truncated at 1 MiB]\n");
+    output.push_str("\n[taskrail: output truncated at 1 MiB]\n");
     output
 }
 

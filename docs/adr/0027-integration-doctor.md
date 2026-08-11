@@ -5,8 +5,8 @@
 The CLI exposes read-only integration diagnostics:
 
 ```text
-auto integration codex-doctor --cwd <path>
-auto integration gh-doctor --hostname github.com
+taskrail integration codex-doctor --cwd <path>
+taskrail integration gh-doctor --hostname github.com
 ```
 
 Codex diagnostics check the CLI version and Git-worktree precondition. GitHub

@@ -37,12 +37,12 @@ impl ResponsesConfig {
         let base_url = spec
             .base_url
             .clone()
-            .or_else(|| env::var("AUTO_RESPONSES_BASE_URL").ok())
+            .or_else(|| env::var("TASKRAIL_RESPONSES_BASE_URL").ok())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
         let model = spec
             .model
             .clone()
-            .or_else(|| env::var("AUTO_RESPONSES_MODEL").ok())
+            .or_else(|| env::var("TASKRAIL_RESPONSES_MODEL").ok())
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
         Self::from_env(
             base_url,
@@ -252,7 +252,7 @@ fn bounded_text(value: &str) -> String {
         end -= 1;
     }
     let mut output = value[..end].to_owned();
-    output.push_str("\n[auto: output truncated at 1 MiB]\n");
+    output.push_str("\n[taskrail: output truncated at 1 MiB]\n");
     output
 }
 

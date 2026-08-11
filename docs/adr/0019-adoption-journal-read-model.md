@@ -5,9 +5,9 @@
 Adoption transactions are exposed through read-only, bounded views:
 
 ```text
-auto adoptions --limit 100
-auto adoption-inspect <tx-id>
-auto doctor adoption
+taskrail adoptions --limit 100
+taskrail adoption-inspect <tx-id>
+taskrail doctor adoption
 adoptions.list { limit? }
 adoption.inspect { tx_id }
 ```

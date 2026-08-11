@@ -13,8 +13,8 @@ runtime state changed until its attention state is repaired explicitly.
 ## Interfaces
 
 ```text
-auto pause <automation-id>
-auto resume <automation-id>
+taskrail pause <automation-id>
+taskrail resume <automation-id>
 automation.pause { id }
 automation.resume { id }
 ```

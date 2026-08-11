@@ -5,7 +5,6 @@ enum ControlPlaneSection: Hashable {
     case automations
     case runs
     case inbox
-    case approvals
     case metrics
     case events
 }
@@ -20,13 +19,6 @@ struct AutomationSummary: Codable, Identifiable {
         case id, name, ownership
         case runtimeState = "runtime_state"
     }
-}
-
-struct ApprovalSummary: Codable, Identifiable {
-    let id: String
-    let operation: String
-    let risk: String
-    let state: String
 }
 
 struct InboxItemSummary: Codable, Identifiable {
@@ -139,7 +131,6 @@ final class ControlPlaneModel: ObservableObject {
     @Published private(set) var runs: [RunRecord] = []
     @Published var selectedRunLogs: RunLogsSummary?
     @Published private(set) var inbox: [InboxItemSummary] = []
-    @Published private(set) var approvals: [ApprovalSummary] = []
     @Published private(set) var metrics: [MetricSummary] = []
     @Published private(set) var events: [EventSummary] = []
     @Published private(set) var connectionMessage = "Not connected"
@@ -153,13 +144,12 @@ final class ControlPlaneModel: ObservableObject {
             automations = try client.request(method: "automation.list", params: [:], decode: [AutomationSummary].self)
             runs = try client.request(method: "runs.list", params: ["limit": 100], decode: [RunRecord].self)
             inbox = try client.request(method: "inbox.list", params: ["limit": 100], decode: [InboxItemSummary].self)
-            approvals = try client.request(method: "approvals.list", params: [:], decode: [ApprovalSummary].self)
             metrics = try client.request(method: "metrics.list", params: [:], decode: [MetricSummary].self)
             events = try client.request(method: "events.list", params: ["limit": 100], decode: [EventSummary].self)
             connectionMessage = "Connected · local JSON-RPC"
             lastError = nil
         } catch {
-            connectionMessage = "Daemon unavailable · start auto daemon --socket \(client.socketPath.path)"
+            connectionMessage = "Daemon unavailable · start taskrail daemon --socket \(client.socketPath.path)"
             lastError = error.localizedDescription
         }
     }
@@ -216,24 +206,9 @@ final class ControlPlaneModel: ObservableObject {
         }
     }
 
-    func resolve(_ approval: ApprovalSummary, approved: Bool) {
-        do {
-            let method = approved ? "approval.approve" : "approval.reject"
-            _ = try client.request(
-                method: method,
-                params: ["id": approval.id, "actor": "swiftui"],
-                decode: ApprovalSummary.self
-            )
-            refresh()
-        } catch {
-            lastError = error.localizedDescription
-            showingError = true
-        }
-    }
-
     private static var defaultSocketPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/share/auto/automationd.sock")
+            .appendingPathComponent(".local/share/taskrail/taskraild.sock")
     }
 }
 

@@ -21,10 +21,10 @@ automation:
 Adoption requires an observed, healthy automation, so a drifted or already-owned
 source cannot be re-adopted accidentally.
 
-`auto doctor drift` provides a read-only audit of `needs_attention` states and
+`taskrail doctor drift` provides a read-only audit of `needs_attention` states and
 owned-source fingerprint mismatches. It never changes a source or baseline.
 
-After review, `auto acknowledge-drift <source-id> --apply` may update the
+After review, `taskrail acknowledge-drift <source-id> --apply` may update the
 baseline. The automation is deliberately left paused and requires a separate
 resume action.
 

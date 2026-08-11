@@ -12,6 +12,6 @@ native launchd argument vector.
 
 ## Consequences
 
-This leaves SwiftUI, AI executors, MCP, systemd and privileged helpers for later
-phases. It makes the first milestone testable with local fixtures and prevents
-the control plane from silently becoming a generic arbitrary-command root shell.
+The first milestone stays focused on the local Registry, scheduler, CLI, and
+TUI. Optional integrations remain outside the core manager, and the executor
+cannot silently become a generic arbitrary-command root shell.

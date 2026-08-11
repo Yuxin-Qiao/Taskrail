@@ -108,24 +108,15 @@ async fn execute_automation_at(
     if automation.steps.is_empty() {
         anyhow::bail!("automation {} has no executable steps", automation.name);
     }
-    if automation.steps.len() > automation.policy.budget.max_steps as usize {
+    if automation.retry.max_attempts == 0 {
         anyhow::bail!(
-            "automation {} has {} steps, but its budget allows at most {}",
-            automation.name,
-            automation.steps.len(),
-            automation.policy.budget.max_steps
-        );
-    }
-    if automation.policy.retry.max_attempts == 0 {
-        anyhow::bail!(
-            "automation {} has a zero-attempt retry policy",
+            "automation {} has zero attempts configured",
             automation.name
         );
     }
-    if automation.policy.retry.initial_backoff_seconds > automation.policy.retry.max_backoff_seconds
-    {
+    if automation.retry.initial_backoff_seconds > automation.retry.max_backoff_seconds {
         anyhow::bail!(
-            "automation {} has an invalid retry backoff policy",
+            "automation {} has an invalid retry backoff",
             automation.name
         );
     }
@@ -142,17 +133,6 @@ async fn execute_automation_at(
             if spec.prompt.trim().is_empty() {
                 anyhow::bail!("step {} has an empty Responses API prompt", step.id);
             }
-        }
-        if step.risk > automation.policy.max_risk {
-            anyhow::bail!(
-                "step {} risk {} exceeds policy max {}",
-                step.id,
-                step.risk.label(),
-                automation.policy.max_risk.label()
-            );
-        }
-        if step.risk.requires_approval() || automation.policy.approval_required {
-            anyhow::bail!("step {} requires human approval before execution", step.id);
         }
     }
     let run_id = format!("run_{}", Uuid::new_v4());
@@ -190,7 +170,7 @@ async fn execute_automation_at(
         duration_ms: 0,
     };
     'steps: for step in &automation.steps {
-        for attempt in 1..=automation.policy.retry.max_attempts {
+        for attempt in 1..=automation.retry.max_attempts {
             let executor_kind = if step.responses.is_some() {
                 "responses"
             } else {
@@ -210,7 +190,6 @@ async fn execute_automation_at(
                             serde_json::Value::Null
                         },
                         "model": step.responses.as_ref().and_then(|spec| spec.model.clone()),
-                        "risk": step.risk.label(),
                         "attempt": attempt,
                     }),
                 })?;
@@ -218,10 +197,8 @@ async fn execute_automation_at(
             let mut responses_usage = None;
             let mut result = if let Some(spec) = &step.responses {
                 let started_at = Instant::now();
-                match crate::responses::ResponsesConfig::from_spec(
-                    spec,
-                    automation.policy.wall_time_seconds,
-                ) {
+                match crate::responses::ResponsesConfig::from_spec(spec, automation.timeout_seconds)
+                {
                     Ok(config) => {
                         match config
                             .execute_with_cancellation(&spec.prompt, cancellation.clone())
@@ -265,7 +242,7 @@ async fn execute_automation_at(
             } else {
                 match executor::execute_with_cancellation(
                     &step.command,
-                    automation.policy.wall_time_seconds,
+                    automation.timeout_seconds,
                     cancellation.clone(),
                 )
                 .await
@@ -339,12 +316,12 @@ async fn execute_automation_at(
                 })?;
             }
             let retryable = matches!(result.status.as_str(), "failed" | "timed_out")
-                && attempt < automation.policy.retry.max_attempts;
+                && attempt < automation.retry.max_attempts;
             if !retryable {
                 final_result.status = result.status;
                 break 'steps;
             }
-            let backoff_seconds = retry_backoff_seconds(&automation.policy.retry, attempt);
+            let backoff_seconds = retry_backoff_seconds(&automation.retry, attempt);
             Registry::open(registry_path)?.append_event(&Event {
                 run_id: Some(run_id.clone()),
                 occurred_at: Utc::now(),
@@ -374,13 +351,13 @@ async fn execute_automation_at(
     Ok(final_result)
 }
 
-fn retry_backoff_seconds(policy: &crate::core::RetryPolicy, attempt: u32) -> u64 {
+fn retry_backoff_seconds(config: &crate::core::RetryPolicy, attempt: u32) -> u64 {
     let exponent = attempt.saturating_sub(1).min(63);
     let multiplier = 1_u64.checked_shl(exponent).unwrap_or(u64::MAX);
-    policy
+    config
         .initial_backoff_seconds
         .saturating_mul(multiplier)
-        .min(policy.max_backoff_seconds)
+        .min(config.max_backoff_seconds)
 }
 
 async fn wait_for_retry(backoff_seconds: u64, mut cancellation: watch::Receiver<bool>) -> bool {
@@ -460,7 +437,7 @@ pub async fn scheduled_pass(registry_path: impl AsRef<Path>) -> Result<Scheduler
                     payload: serde_json::json!({
                         "automation_id": updated.id,
                         "scheduled_at": scheduled.to_rfc3339(),
-                        "policy": "skip",
+                        "misfire": "skip",
                     }),
                 })?;
             }
@@ -511,7 +488,6 @@ mod tests {
                 id: "echo".into(),
                 command: CommandSpec::argv("/bin/echo", ["rpc-ok"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -522,38 +498,6 @@ mod tests {
         let result = run_named(&path, "service-test", false).await.unwrap();
         assert_eq!(result.status, "succeeded");
         assert_eq!(result.stdout.trim(), "rpc-ok");
-    }
-
-    #[tokio::test]
-    async fn step_budget_rejects_before_starting_a_run() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("registry.sqlite3");
-        let mut automation = Automation {
-            id: "budget-test".into(),
-            name: "budget-test".into(),
-            ownership: Ownership::Managed,
-            steps: vec![StepSpec {
-                id: "echo".into(),
-                command: CommandSpec::argv("/bin/echo", ["should-not-run"]),
-                responses: None,
-                risk: crate::core::Risk::R0Read,
-            }],
-            ..Automation::default()
-        };
-        automation.policy.budget.max_steps = 0;
-        Registry::open(&path)
-            .unwrap()
-            .save_automation(&automation)
-            .unwrap();
-        let error = execute_automation(&path, &automation).await.unwrap_err();
-        assert!(error.to_string().contains("budget allows at most 0"));
-        assert!(
-            Registry::open(&path)
-                .unwrap()
-                .list_runs(10, None)
-                .unwrap()
-                .is_empty()
-        );
     }
 
     #[tokio::test]
@@ -568,11 +512,10 @@ mod tests {
                 id: "false".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
-        automation.policy.retry.max_attempts = 3;
+        automation.retry.max_attempts = 3;
         Registry::open(&path)
             .unwrap()
             .save_automation(&automation)
@@ -609,7 +552,6 @@ mod tests {
                 id: "sleep".into(),
                 command: CommandSpec::argv("/bin/sleep", ["10"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -671,7 +613,6 @@ mod tests {
                 id: "echo".into(),
                 command: CommandSpec::argv("/bin/echo", ["scheduled"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -718,7 +659,6 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -740,7 +680,7 @@ mod tests {
         let events = registry.list_events(10).unwrap();
         assert!(events.iter().any(|event| {
             event.event_type == "scheduler.misfire_skipped"
-                && event.payload["policy"] == "skip"
+                && event.payload["misfire"] == "skip"
                 && event.payload["scheduled_at"] == scheduled_at.to_rfc3339()
         }));
     }
@@ -760,7 +700,6 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -804,7 +743,6 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };
@@ -850,7 +788,6 @@ mod tests {
                 id: "sleep".into(),
                 command: CommandSpec::argv("/bin/sleep", ["10"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             ..Automation::default()
         };

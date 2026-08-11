@@ -12,7 +12,7 @@ stored `MisfirePolicy` before starting work:
   leaves a still-due occurrence for a later pass.
 
 `catch_up.max_runs` must be at least one. A zero value is rejected by
-`policy-check` and by scheduler evaluation rather than being interpreted as a
+by scheduler evaluation rather than being interpreted as a
 silent skip.
 
 A scheduler pass leaves a future `next_run_at` unchanged. It only advances the

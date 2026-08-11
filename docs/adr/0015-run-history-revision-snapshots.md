@@ -16,8 +16,8 @@ Run output remains separate from the history read model and is not returned by
 
 ```text
 runs.list { limit?, automation_id? }
-auto runs --limit 100
-auto runs --automation weekly-clean
+taskrail runs --limit 100
+taskrail runs --automation weekly-clean
 ```
 
 The limit is bounded to 1–500. The SwiftUI client presents the same read-only

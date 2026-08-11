@@ -119,30 +119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "auto"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "chrono-tz",
- "clap",
- "cron",
- "crossterm",
- "plist",
- "ratatui",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2198,6 +2174,30 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "taskrail"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "cron",
+ "crossterm",
+ "plist",
+ "ratatui",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -1,15 +1,17 @@
 # Contributing
 
-Keep changes focused and preserve the safety model. The `core` module must not
-depend on launchd, systemd, Codex, OpenAI, GitHub or a UI framework.
+Keep changes focused on the local automation manager. The `core` module must
+not depend on launchd, systemd, Codex, OpenAI, GitHub, or a UI framework.
 
-Changes to adoption, rollback, scheduling, permissions, shell handling or
-persistent schema need regression tests and should describe:
+The main user journey is:
 
-- the invariant being protected;
-- the failure path and rollback behavior;
-- deterministic verification evidence;
-- any migration or permission impact.
+```text
+add/register → list → daemon → run → history/logs → tui
+```
+
+Changes to discovery, adoption, rollback, scheduling, command execution, or the
+persistent Registry need regression tests and should describe the invariant and
+the failure path being protected.
 
 Before submitting a change:
 
@@ -20,5 +22,5 @@ cargo test --workspace
 git diff --check
 ```
 
-Never add a generic root command or allow agent output to bypass policy,
-approval, capability restrictions or deterministic verification.
+Keep optional integrations at the edge. Do not add arbitrary shell execution,
+remote write operations, or a second source of truth for runs and logs.

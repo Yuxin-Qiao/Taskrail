@@ -1,6 +1,6 @@
 use crate::core::{
-    AdoptionState, ApprovalRequest, ApprovalState, Automation, DiscoveredSource, Event, Metric,
-    Ownership, RunResult, RuntimeState, canonical_json,
+    AdoptionState, Automation, DiscoveredSource, Event, Metric, Ownership, RunResult, RuntimeState,
+    canonical_json,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -166,16 +166,6 @@ impl Registry {
                last_error TEXT,
                updated_at TEXT NOT NULL
              );
-             CREATE TABLE IF NOT EXISTS approvals (
-               id TEXT PRIMARY KEY,
-               operation TEXT NOT NULL,
-               risk TEXT NOT NULL,
-               scope_json TEXT NOT NULL,
-               state TEXT NOT NULL,
-               requested_at TEXT NOT NULL,
-               resolved_at TEXT,
-               actor TEXT
-             );
              CREATE TABLE IF NOT EXISTS metrics (
                id TEXT PRIMARY KEY,
                run_id TEXT,
@@ -197,7 +187,6 @@ impl Registry {
              );
              CREATE INDEX IF NOT EXISTS runs_automation_idx ON runs(automation_id, started_at DESC);
              CREATE INDEX IF NOT EXISTS events_run_idx ON events(run_id, seq);
-             CREATE INDEX IF NOT EXISTS approvals_state_idx ON approvals(state, requested_at);
              CREATE INDEX IF NOT EXISTS metrics_recorded_idx ON metrics(recorded_at DESC);",
         )?;
         self.ensure_column(
@@ -791,89 +780,10 @@ impl Registry {
         Ok(previous)
     }
 
-    pub fn save_approval(&self, request: &ApprovalRequest) -> Result<()> {
-        let existed = self
-            .connection
-            .query_row(
-                "SELECT 1 FROM approvals WHERE id = ?1",
-                [request.id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .is_some();
-        self.connection.execute(
-            "INSERT INTO approvals (id, operation, risk, scope_json, state, requested_at, resolved_at, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(id) DO UPDATE SET operation=excluded.operation, risk=excluded.risk,
-               scope_json=excluded.scope_json, state=excluded.state, requested_at=excluded.requested_at,
-               resolved_at=excluded.resolved_at, actor=excluded.actor",
-            params![
-                request.id,
-                request.operation,
-                risk_db(request.risk),
-                serde_json::to_string(&request.scope)?,
-                approval_state_db(request.state),
-                request.requested_at.to_rfc3339(),
-                request.resolved_at.map(|value| value.to_rfc3339()),
-                request.actor,
-            ],
-        )?;
-        if !existed {
-            self.append_event(&Event {
-                run_id: None,
-                occurred_at: Utc::now(),
-                event_type: "approval.requested".into(),
-                payload: serde_json::json!({
-                    "approval_id": request.id,
-                    "operation": request.operation,
-                    "risk": request.risk,
-                }),
-            })?;
-        }
-        Ok(())
-    }
-
-    pub fn get_approval(&self, id: &str) -> Result<Option<ApprovalRequest>> {
-        self.connection
-            .query_row(
-                "SELECT id, operation, risk, scope_json, state, requested_at, resolved_at, actor FROM approvals WHERE id = ?1",
-                [id],
-                approval_from_row,
-            )
-            .optional()
-            .map_err(Into::into)
-    }
-
-    pub fn list_approvals(&self) -> Result<Vec<ApprovalRequest>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, operation, risk, scope_json, state, requested_at, resolved_at, actor FROM approvals ORDER BY requested_at DESC",
-        )?;
-        let rows = statement.query_map([], approval_from_row)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// Return a bounded, read-only aggregation of existing attention signals.
     pub fn list_inbox(&self, limit: usize) -> Result<Vec<InboxItem>> {
         let limit = limit.clamp(1, 500);
         let mut items = Vec::new();
-        for approval in self.list_approvals()?.into_iter() {
-            if approval.state == ApprovalState::Pending {
-                items.push(InboxItem {
-                    id: format!("approval:{}", approval.id),
-                    kind: "approval".into(),
-                    severity: approval.risk.label().into(),
-                    status: "pending".into(),
-                    title: approval.operation.clone(),
-                    created_at: Some(approval.requested_at.to_rfc3339()),
-                    detail: serde_json::json!({
-                        "approval_id": approval.id,
-                        "operation": approval.operation,
-                        "risk": approval.risk,
-                        "scope": approval.scope,
-                    }),
-                });
-            }
-        }
         for automation in self.list_automations()? {
             if automation.runtime_state == RuntimeState::NeedsAttention {
                 items.push(InboxItem {
@@ -941,27 +851,6 @@ impl Registry {
         });
         items.truncate(limit);
         Ok(items)
-    }
-
-    pub fn resolve_approval(&self, id: &str, state: ApprovalState, actor: &str) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE approvals SET state = ?2, resolved_at = ?3, actor = ?4 WHERE id = ?1 AND state = 'pending'",
-            params![id, approval_state_db(state), Utc::now().to_rfc3339(), actor],
-        )?;
-        if changed != 1 {
-            anyhow::bail!("approval {id} not found or is no longer pending");
-        }
-        self.append_event(&Event {
-            run_id: None,
-            occurred_at: Utc::now(),
-            event_type: "approval.resolved".into(),
-            payload: serde_json::json!({
-                "approval_id": id,
-                "state": state,
-                "actor": actor,
-            }),
-        })?;
-        Ok(())
     }
 
     pub fn record_metric(&self, metric: &Metric) -> Result<()> {
@@ -1100,85 +989,11 @@ fn adoption_state_db(value: AdoptionState) -> &'static str {
     }
 }
 
-fn risk_db(value: crate::core::Risk) -> &'static str {
-    match value {
-        crate::core::Risk::R0Read => "r0_read",
-        crate::core::Risk::R1WorkspaceWrite => "r1_workspace_write",
-        crate::core::Risk::R2ExternalWrite => "r2_external_write",
-        crate::core::Risk::R3SystemWrite => "r3_system_write",
-        crate::core::Risk::R4Destructive => "r4_destructive",
-    }
-}
-
-fn approval_state_db(value: ApprovalState) -> &'static str {
-    match value {
-        ApprovalState::Pending => "pending",
-        ApprovalState::Approved => "approved",
-        ApprovalState::Rejected => "rejected",
-        ApprovalState::Expired => "expired",
-    }
-}
-
-fn approval_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRequest> {
-    let risk: String = row.get(2)?;
-    let state: String = row.get(4)?;
-    let requested_at: String = row.get(5)?;
-    let resolved_at: Option<String> = row.get(6)?;
-    Ok(ApprovalRequest {
-        id: row.get(0)?,
-        operation: row.get(1)?,
-        risk: serde_json::from_value(serde_json::Value::String(risk)).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                2,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?,
-        scope: serde_json::from_str(&row.get::<_, String>(3)?).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                3,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?,
-        state: serde_json::from_value(serde_json::Value::String(state)).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                4,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?,
-        requested_at: DateTime::parse_from_rfc3339(&requested_at)
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    5,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?
-            .with_timezone(&Utc),
-        resolved_at: resolved_at
-            .map(|value| {
-                DateTime::parse_from_rfc3339(&value).map(|parsed| parsed.with_timezone(&Utc))
-            })
-            .transpose()
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    6,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?,
-        actor: row.get(7)?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::{
-        ApprovalRequest, ApprovalState, CommandSpec, DiscoveredSource, Metric, Ownership, Risk,
-        RuntimeState, StepSpec, Trigger,
+        CommandSpec, DiscoveredSource, Metric, Ownership, RuntimeState, StepSpec, Trigger,
     };
     use std::{sync::Arc, sync::Barrier, thread};
 
@@ -1191,7 +1006,6 @@ mod tests {
                 id: "main".into(),
                 command: CommandSpec::argv("echo", ["ok"]),
                 responses: None,
-                risk: crate::core::Risk::R0Read,
             }],
             trigger: Trigger::Manual,
             ..Automation::default()
@@ -1258,14 +1072,6 @@ mod tests {
         attention.runtime_state = RuntimeState::NeedsAttention;
         registry.save_automation(&attention).unwrap();
         registry
-            .save_approval(&ApprovalRequest::new(
-                "approval-inbox",
-                "external write",
-                Risk::R2ExternalWrite,
-                serde_json::json!({"path": "/tmp/example"}),
-            ))
-            .unwrap();
-        registry
             .begin_adoption("adopt-inbox", "cron:line-1", "{}")
             .unwrap();
         registry
@@ -1283,8 +1089,7 @@ mod tests {
             .unwrap();
 
         let inbox = registry.list_inbox(10).unwrap();
-        assert_eq!(inbox.len(), 4);
-        assert!(inbox.iter().any(|item| item.kind == "approval"));
+        assert_eq!(inbox.len(), 3);
         assert!(inbox.iter().any(|item| item.kind == "automation_attention"));
         assert!(inbox.iter().any(|item| item.kind == "adoption_recovery"));
         assert!(inbox.iter().any(|item| item.kind == "run_failure"));
@@ -1490,41 +1295,6 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].tx_id, "tx-1");
         assert!(registry.get_adoption("missing").unwrap().is_none());
-    }
-
-    #[test]
-    fn persists_and_resolves_approval_without_allowing_double_resolution() {
-        let registry = Registry::in_memory().unwrap();
-        let request = ApprovalRequest::new(
-            "approval_1",
-            "codex.exec",
-            Risk::R1WorkspaceWrite,
-            serde_json::json!({"cwd": "/tmp/repo", "prompt_sha256": "sha256:test"}),
-        );
-        registry.save_approval(&request).unwrap();
-        assert_eq!(
-            registry.list_events(10).unwrap()[0].event_type,
-            "approval.requested"
-        );
-        assert_eq!(
-            registry.get_approval("approval_1").unwrap().unwrap().state,
-            ApprovalState::Pending
-        );
-        registry
-            .resolve_approval("approval_1", ApprovalState::Approved, "tester")
-            .unwrap();
-        let resolved = registry.get_approval("approval_1").unwrap().unwrap();
-        assert_eq!(resolved.state, ApprovalState::Approved);
-        assert_eq!(resolved.actor.as_deref(), Some("tester"));
-        assert_eq!(
-            registry.list_events(10).unwrap()[0].event_type,
-            "approval.resolved"
-        );
-        assert!(
-            registry
-                .resolve_approval("approval_1", ApprovalState::Rejected, "tester")
-                .is_err()
-        );
     }
 
     #[test]

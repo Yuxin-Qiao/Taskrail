@@ -1,7 +1,7 @@
 [package]
-name = "auto"
+name = "taskrail"
 version = "0.1.0"
-description = "Local-first automation control plane for macOS"
+description = "A local automation manager for developers"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

@@ -23,75 +23,6 @@ pub enum RuntimeState {
     NeedsAttention,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Risk {
-    #[default]
-    R0Read,
-    R1WorkspaceWrite,
-    R2ExternalWrite,
-    R3SystemWrite,
-    R4Destructive,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalState {
-    #[default]
-    Pending,
-    Approved,
-    Rejected,
-    Expired,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalRequest {
-    pub id: String,
-    pub operation: String,
-    pub risk: Risk,
-    pub scope: serde_json::Value,
-    pub state: ApprovalState,
-    pub requested_at: DateTime<Utc>,
-    pub resolved_at: Option<DateTime<Utc>>,
-    pub actor: Option<String>,
-}
-
-impl ApprovalRequest {
-    pub fn new(
-        id: impl Into<String>,
-        operation: impl Into<String>,
-        risk: Risk,
-        scope: serde_json::Value,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            operation: operation.into(),
-            risk,
-            scope,
-            state: ApprovalState::Pending,
-            requested_at: Utc::now(),
-            resolved_at: None,
-            actor: None,
-        }
-    }
-}
-
-impl Risk {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::R0Read => "R0_READ",
-            Self::R1WorkspaceWrite => "R1_WORKSPACE_WRITE",
-            Self::R2ExternalWrite => "R2_EXTERNAL_WRITE",
-            Self::R3SystemWrite => "R3_SYSTEM_WRITE",
-            Self::R4Destructive => "R4_DESTRUCTIVE",
-        }
-    }
-
-    pub fn requires_approval(self) -> bool {
-        self >= Self::R2ExternalWrite
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
     pub executable: PathBuf,
@@ -200,12 +131,6 @@ pub enum ConcurrencyPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Budget {
-    #[serde(default = "default_max_steps")]
-    pub max_steps: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryPolicy {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
@@ -233,48 +158,6 @@ impl Default for RetryPolicy {
     }
 }
 
-fn default_max_steps() -> u32 {
-    100
-}
-
-impl Default for Budget {
-    fn default() -> Self {
-        Self {
-            max_steps: default_max_steps(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Policy {
-    #[serde(default)]
-    pub max_risk: Risk,
-    #[serde(default)]
-    pub approval_required: bool,
-    #[serde(default = "default_wall_time")]
-    pub wall_time_seconds: u64,
-    #[serde(default)]
-    pub budget: Budget,
-    #[serde(default)]
-    pub retry: RetryPolicy,
-}
-
-fn default_wall_time() -> u64 {
-    30 * 60
-}
-
-impl Default for Policy {
-    fn default() -> Self {
-        Self {
-            max_risk: Risk::R0Read,
-            approval_required: false,
-            wall_time_seconds: default_wall_time(),
-            budget: Budget::default(),
-            retry: RetryPolicy::default(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepSpec {
     pub id: String,
@@ -282,8 +165,6 @@ pub struct StepSpec {
     pub command: CommandSpec,
     #[serde(default)]
     pub responses: Option<ResponsesSpec>,
-    #[serde(default)]
-    pub risk: Risk,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,13 +203,19 @@ pub struct Automation {
     pub concurrency: ConcurrencyPolicy,
     #[serde(default)]
     pub steps: Vec<StepSpec>,
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
     #[serde(default)]
-    pub policy: Policy,
+    pub retry: RetryPolicy,
     #[serde(default = "default_revision")]
     pub revision: u64,
     pub source_id: Option<String>,
     pub fingerprint: Option<String>,
     pub next_run_at: Option<DateTime<Utc>>,
+}
+
+fn default_timeout_seconds() -> u64 {
+    30 * 60
 }
 
 fn default_revision() -> u64 {
@@ -347,7 +234,8 @@ impl Default for Automation {
             misfire_max_age_seconds: None,
             concurrency: ConcurrencyPolicy::default(),
             steps: Vec::new(),
-            policy: Policy::default(),
+            timeout_seconds: default_timeout_seconds(),
+            retry: RetryPolicy::default(),
             revision: 1,
             source_id: None,
             fingerprint: None,
@@ -388,7 +276,6 @@ impl DiscoveredSource {
             trigger: self.trigger.clone(),
             steps: vec![StepSpec {
                 id: "main".to_owned(),
-                risk: Risk::R0Read,
                 command,
                 responses: None,
             }],
@@ -507,18 +394,6 @@ mod tests {
             raw: "shell".into(),
         };
         assert!(source.as_observed_automation().is_none());
-    }
-
-    #[test]
-    fn policy_budget_defaults_for_older_definitions() {
-        let policy: Policy = serde_yaml::from_str(
-            "max_risk: r0_read\napproval_required: false\nwall_time_seconds: 5\n",
-        )
-        .unwrap();
-        assert_eq!(policy.budget.max_steps, 100);
-        assert_eq!(policy.retry.max_attempts, 1);
-        assert_eq!(policy.retry.initial_backoff_seconds, 0);
-        assert_eq!(policy.retry.max_backoff_seconds, 600);
     }
 
     #[test]

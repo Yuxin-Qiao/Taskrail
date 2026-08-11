@@ -5,7 +5,7 @@
 Recorded stdout/stderr are exposed only for a known Run ID:
 
 ```text
-auto logs <run-id>
+taskrail logs <run-id>
 run.logs { run_id }
 run_logs { run_id }
 ```

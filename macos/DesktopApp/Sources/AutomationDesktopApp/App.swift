@@ -6,7 +6,7 @@ struct AutomationDesktopApp: App {
     @StateObject private var model = ControlPlaneModel()
 
     var body: some Scene {
-        WindowGroup("Automation Control Plane") {
+        WindowGroup("Taskrail") {
             ContentView(model: model)
                 .frame(minWidth: 820, minHeight: 560)
         }
@@ -25,19 +25,17 @@ struct ContentView: View {
                     .tag(ControlPlaneSection.runs)
                 Label("Inbox", systemImage: "exclamationmark.bubble")
                     .tag(ControlPlaneSection.inbox)
-                Label("Approvals", systemImage: "checkmark.shield")
-                    .tag(ControlPlaneSection.approvals)
                 Label("Metrics", systemImage: "chart.xyaxis.line")
                     .tag(ControlPlaneSection.metrics)
                 Label("Events", systemImage: "list.bullet.rectangle")
                     .tag(ControlPlaneSection.events)
             }
-            .navigationTitle("Auto")
+            .navigationTitle("Taskrail")
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Local Automation Control Plane")
+                        Text("Local Automation Manager")
                             .font(.title2.weight(.semibold))
                         Text(model.connectionMessage)
                             .font(.caption)
@@ -61,8 +59,6 @@ struct ContentView: View {
                         RunsView(model: model, runs: model.runs)
                     case .inbox:
                         InboxView(items: model.inbox)
-                    case .approvals:
-                        ApprovalsView(model: model)
                     case .metrics:
                         MetricsView(metrics: model.metrics)
                     case .events:
@@ -100,7 +96,7 @@ struct InboxView: View {
             }
             .padding(.horizontal)
             if items.isEmpty {
-                ContentUnavailableView("Inbox is clear", systemImage: "checkmark.circle", description: Text("No pending approvals, recovery items, or failed runs.") )
+                ContentUnavailableView("Inbox is clear", systemImage: "checkmark.circle", description: Text("No recovery items or failed runs.") )
             } else {
                 List(items) { item in
                     VStack(alignment: .leading, spacing: 4) {
@@ -147,7 +143,7 @@ struct AutomationsView: View {
             }
             .padding(.horizontal)
             if model.automations.isEmpty {
-                ContentUnavailableView("No automations", systemImage: "bolt.slash", description: Text("Run auto scan or register a managed definition."))
+                ContentUnavailableView("No automations", systemImage: "bolt.slash", description: Text("Run taskrail scan or register a managed definition."))
             } else {
                 List(model.automations) { automation in
                     HStack {
@@ -275,51 +271,6 @@ private struct LogBlock: View {
     }
 }
 
-struct ApprovalsView: View {
-    @ObservedObject var model: ControlPlaneModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Approvals")
-                .font(.headline)
-                .padding(.horizontal)
-            if model.approvals.isEmpty {
-                ContentUnavailableView("No approval requests", systemImage: "checkmark.shield", description: Text("High-risk operations will appear here."))
-            } else {
-                List(model.approvals) { approval in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(approval.operation).font(.body.weight(.medium))
-                            Spacer()
-                            Text(approval.state.uppercased())
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(approval.state == "approved" ? .green : .orange)
-                        }
-                        Text("Risk: \(approval.risk) · \(approval.id)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Button("Approve") {
-                                model.resolve(approval, approved: true)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(approval.state != "pending")
-                            Button("Reject", role: .destructive) {
-                                model.resolve(approval, approved: false)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(approval.state != "pending")
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .listStyle(.inset)
-            }
-        }
-        .padding(.top)
-    }
-}
-
 struct MetricsView: View {
     let metrics: [MetricSummary]
 
@@ -359,7 +310,7 @@ struct EventsView: View {
                 .font(.headline)
                 .padding(.horizontal)
             if events.isEmpty {
-                ContentUnavailableView("No events", systemImage: "list.bullet.rectangle", description: Text("Run, adoption, approval, and watcher changes will appear here."))
+                ContentUnavailableView("No events", systemImage: "list.bullet.rectangle", description: Text("Run, adoption, and watcher changes will appear here."))
             } else {
                 List(events) { event in
                     VStack(alignment: .leading, spacing: 4) {

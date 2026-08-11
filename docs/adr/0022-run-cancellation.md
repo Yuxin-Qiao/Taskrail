@@ -14,6 +14,6 @@ that is no longer active cannot be marked cancelled retroactively.
 ## Interfaces
 
 ```text
-auto cancel <run-id>
+taskrail cancel <run-id>
 run.cancel { run_id }
 ```

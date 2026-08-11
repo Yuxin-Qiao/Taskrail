@@ -1,8 +1,4 @@
-use crate::{
-    core::{ApprovalState, RuntimeState},
-    service,
-    storage::Registry,
-};
+use crate::{core::RuntimeState, service, storage::Registry};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -101,7 +97,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
     let result = match request.method.as_str() {
         "daemon.ping" => Ok(serde_json::json!({
             "protocol_version": PROTOCOL_VERSION,
-            "service": "auto"
+            "service": "taskrail"
         })),
         "automation.list" => with_registry(registry_path, |registry| {
             Ok(serde_json::to_value(registry.list_automations()?)?)
@@ -116,18 +112,6 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     Some(value) => Ok(serde_json::to_value(value)?),
                     None => anyhow::bail!("automation not found: {id}"),
                 }
-            })
-        }
-        "automation.policy_check" => {
-            let id = match string_param(&request.params, "id") {
-                Ok(id) => id,
-                Err(error) => return invalid_params(request.id, error),
-            };
-            with_registry(registry_path, move |registry| {
-                let automation = registry
-                    .get_automation(&id)?
-                    .with_context(|| format!("automation not found: {id}"))?;
-                Ok(serde_json::to_value(crate::policy::check(&automation))?)
             })
         }
         "automation.pause" | "automation.resume" => {
@@ -243,9 +227,6 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(logs)?)
             })
         }
-        "approvals.list" => with_registry(registry_path, |registry| {
-            Ok(serde_json::to_value(registry.list_approvals()?)?)
-        }),
         "events.list" => {
             let limit = match request.params.get("limit") {
                 None => 100,
@@ -291,37 +272,6 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             with_registry(registry_path, move |registry| {
                 Ok(serde_json::to_value(
                     registry.list_runs(limit, automation_id.as_deref())?,
-                )?)
-            })
-        }
-        "approval.approve" | "approval.reject" => {
-            let id = match string_param(&request.params, "id") {
-                Ok(id) => id,
-                Err(error) => return invalid_params(request.id, error),
-            };
-            let actor = match request.params.get("actor") {
-                None => "local-user".to_owned(),
-                Some(value) => match value.as_str() {
-                    Some(actor) if !actor.trim().is_empty() => actor.to_owned(),
-                    _ => {
-                        return invalid_params(
-                            request.id,
-                            "params.actor must be a non-empty string".into(),
-                        );
-                    }
-                },
-            };
-            let state = if request.method == "approval.approve" {
-                ApprovalState::Approved
-            } else {
-                ApprovalState::Rejected
-            };
-            with_registry(registry_path, move |registry| {
-                registry.resolve_approval(&id, state, &actor)?;
-                Ok(serde_json::to_value(
-                    registry
-                        .get_approval(&id)?
-                        .context("resolved approval disappeared")?,
                 )?)
             })
         }
@@ -447,9 +397,7 @@ fn set_directory_permissions(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{
-        ApprovalRequest, CommandSpec, DiscoveredSource, Ownership, Risk, StepSpec, Trigger,
-    };
+    use crate::core::{CommandSpec, DiscoveredSource, Ownership, StepSpec, Trigger};
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -494,7 +442,6 @@ mod tests {
                     id: "echo".into(),
                     command: CommandSpec::argv("/bin/echo", ["rpc"]),
                     responses: None,
-                    risk: crate::core::Risk::R0Read,
                 }],
                 ..Default::default()
             })
@@ -510,17 +457,6 @@ mod tests {
         )
         .await;
         assert_eq!(list.result.unwrap().as_array().unwrap().len(), 1);
-        let policy = handle_request(
-            Request {
-                jsonrpc: "2.0".into(),
-                id: serde_json::json!(14),
-                method: "automation.policy_check".into(),
-                params: serde_json::json!({"id":"rpc-a"}),
-            },
-            &path,
-        )
-        .await;
-        assert_eq!(policy.result.unwrap()["status"], "pass");
         let run = handle_request(
             Request {
                 jsonrpc: "2.0".into(),
@@ -647,71 +583,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn inbox_rpc_returns_bounded_attention_items() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("registry.sqlite3");
-        Registry::open(&path)
-            .unwrap()
-            .save_approval(&ApprovalRequest::new(
-                "rpc-inbox-approval",
-                "external write",
-                Risk::R2ExternalWrite,
-                serde_json::json!({"path": "/tmp/example"}),
-            ))
-            .unwrap();
-        let response = handle_request(
-            Request {
-                jsonrpc: "2.0".into(),
-                id: serde_json::json!(14),
-                method: "inbox.list".into(),
-                params: serde_json::json!({"limit": 1}),
-            },
-            &path,
-        )
-        .await;
-        let items = response.result.unwrap();
-        assert_eq!(items.as_array().unwrap().len(), 1);
-        assert_eq!(items[0]["kind"], "approval");
-    }
-
-    #[tokio::test]
-    async fn approval_rpc_resolves_only_pending_requests() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("registry.sqlite3");
-        Registry::open(&path)
-            .unwrap()
-            .save_approval(&crate::core::ApprovalRequest::new(
-                "rpc-approval",
-                "codex.app_server.item/fileChange/requestApproval",
-                crate::core::Risk::R1WorkspaceWrite,
-                serde_json::json!({"path":"/tmp/example"}),
-            ))
-            .unwrap();
-        let approved = handle_request(
-            Request {
-                jsonrpc: "2.0".into(),
-                id: serde_json::json!(3),
-                method: "approval.approve".into(),
-                params: serde_json::json!({"id":"rpc-approval","actor":"ui-test"}),
-            },
-            &path,
-        )
-        .await;
-        assert_eq!(approved.result.unwrap()["state"], "approved");
-        let rejected_again = handle_request(
-            Request {
-                jsonrpc: "2.0".into(),
-                id: serde_json::json!(4),
-                method: "approval.reject".into(),
-                params: serde_json::json!({"id":"rpc-approval"}),
-            },
-            &path,
-        )
-        .await;
-        assert_eq!(rejected_again.error.unwrap().code, -32000);
-    }
-
-    #[tokio::test]
     async fn events_rpc_returns_newest_events_with_bounded_limit() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
@@ -766,7 +637,6 @@ mod tests {
                     id: "echo".into(),
                     command: CommandSpec::argv("/bin/echo", ["snapshot"]),
                     responses: None,
-                    risk: crate::core::Risk::R0Read,
                 }],
                 ..Default::default()
             })
@@ -822,7 +692,7 @@ mod tests {
             .await
             .unwrap();
         let response: Response = serde_json::from_str(&response).unwrap();
-        assert_eq!(response.result.unwrap()["service"], "auto");
+        assert_eq!(response.result.unwrap()["service"], "taskrail");
         server.await.unwrap();
         #[cfg(unix)]
         {

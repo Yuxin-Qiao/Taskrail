@@ -2,10 +2,9 @@
 
 ## Decision
 
-The control plane exposes `auto inbox --limit N`, RPC `inbox.list`, and MCP
-`inbox_list`. The read model aggregates existing Registry state:
+Taskrail exposes `taskrail inbox --limit N` and RPC `inbox.list`. The read model
+aggregates existing Registry state:
 
-- pending approval requests;
 - automations in `needs_attention`;
 - non-terminal adoption journal transactions;
 - failed, timed-out, or interrupted Runs.
