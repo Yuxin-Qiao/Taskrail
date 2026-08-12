@@ -66,6 +66,6 @@ vulnerability reporting form:
 
 <https://github.com/Yuxin-Qiao/Taskrail/security/advisories/new>
 
-If the form is unavailable, contact the project maintainer directly with a
-minimal reproduction. Do not include credentials or private automation
-definitions in public communication.
+If the form is unavailable, use the [support page](docs/SUPPORT.md) and its
+private security-advisory link with a minimal reproduction. Do not include
+credentials or private automation definitions in public communication.

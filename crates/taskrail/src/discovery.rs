@@ -483,11 +483,21 @@ fn parse_windows_command(value: &str) -> Option<CommandSpec> {
 
 fn homebrew_source(service: HomebrewService) -> Result<DiscoveredSource> {
     let raw = serde_json::to_string(&service)?;
-    if let Some(path) = service.file.as_deref()
-        && let Ok(Some(mut native)) = parse_launchd_plist(path)
+    if service
+        .file
+        .as_deref()
+        .and_then(|path| path.extension())
+        .and_then(|extension| extension.to_str())
+        == Some("plist")
     {
-        native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
-        return Ok(native);
+        let path = service
+            .file
+            .as_deref()
+            .expect("extension implies file path");
+        if let Ok(Some(mut native)) = parse_launchd_plist(path) {
+            native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
+            return Ok(native);
+        }
     }
     Ok(DiscoveredSource {
         source_id: format!("homebrew:{}", service.name),

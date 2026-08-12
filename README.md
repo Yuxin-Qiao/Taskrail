@@ -124,6 +124,17 @@ HTTPS proxy with end-user authentication and per-user host binding; a local
 tunnel is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md)
 and the [single-host deployment example](deploy/README.md).
 
+For a future public MCP deployment, use the enforced read-only review profile:
+
+```bash
+TASKRAIL_MCP_PROFILE=public taskrail mcp
+```
+
+This profile omits creation, deletion, execution, adoption, and approval
+tools. It must run behind a production HTTPS endpoint with authentication and
+per-user host binding; a local tunnel is only a developer connection. See the
+[OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
+
 Open the live terminal dashboard:
 
 ```bash
