@@ -47,7 +47,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           tmp="$(mktemp -d)"
+          rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
           export HOME="$tmp/home"
+          export RUSTUP_HOME="$rustup_home"
           export XDG_DATA_HOME="$tmp/data"
           export XDG_RUNTIME_DIR="$tmp/runtime"
           mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
