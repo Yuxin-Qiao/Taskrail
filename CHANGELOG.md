@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- Harden CI with a pinned Rust toolchain, MSRV coverage, dependency review, and
+  Rust supply-chain audits.
+- Make tagged releases version-checked, checksummed, SBOM-backed, and
+  provenance-attested.
+
 ## [0.1.0] - 2026-08-12
 
 Initial open-source release.

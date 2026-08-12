@@ -168,8 +168,7 @@ impl NativeController for CronController {
         };
         if matched_line.trim() != source.raw.trim() {
             anyhow::bail!(
-                "native source changed before adoption; line {} no longer matches the scanned snapshot",
-                line_number
+                "native source changed before adoption; line {line_number} no longer matches the scanned snapshot"
             );
         }
         let fingerprint = fingerprint_bytes(matched_line.trim().as_bytes());

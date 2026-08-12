@@ -1,10 +1,15 @@
 [package]
 name = "taskrail"
-version = "0.1.0"
+version = "0.1.3"
 description = "A local automation manager for developers"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/Yuxin-Qiao/taskrail"
+homepage = "https://github.com/Yuxin-Qiao/taskrail"
+readme = "../../README.md"
+keywords = ["automation", "scheduler", "cli", "macos", "linux"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow.workspace = true
