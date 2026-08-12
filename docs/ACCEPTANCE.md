@@ -33,8 +33,8 @@ Execution date: 2026-08-13
 | C5 | Daemon/RPC | ARM64 macOS/Linux Unix-socket daemons expose lifecycle/log/run APIs with local-only boundaries | Apple Silicon temporary daemon/MCP smoke; Linux ARM64 CI build/test and XDG/runtime smoke | PASS |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, exposes the read-only Taskrail Apps dashboard resource, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 39 local tools including the dashboard render tool; 19 public read-only tools; resource read/origin tests; real stdio and authenticated private/public HTTP probes completed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
-| D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | `taskrail integration chatgpt-doctor --profile taskrail-local`: daemon/MCP/tunnel-client pass; runtime key is absent and `tunnel_inputs` is not ready | BLOCKED (local runtime credential) |
-| D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Historical Scheduled-task evidence passed; current UI re-check waits for D3 runtime recovery | BLOCKED (depends on D3) |
+| D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; the MCP connection can return Taskrail data | Managed runtime `taskrail-local` reports `runtime_state=ready`, `process_running=true`, `healthy=true`, `ready=true`; `taskrail integration chatgpt-doctor` is ready; direct MCP stdio initialize, `taskrail_overview`, and `taskrail_discover_local_automations` calls succeeded | PASS |
+| D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | The runtime and MCP contract are ready, but the final ChatGPT desktop/UI call is not yet rechecked because the Mac was locked during this run | BLOCKED (desktop UI unavailable) |
 | D5 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 39 fleet tools including the read-only dashboard render tool; explicit `host_id` schemas; localhost MCP routing test; adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
 | D6 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 39 Fleet descriptors (37 require `host_id`); versioned read-only Fleet Apps resource; route-completeness contract; private HTTP target exposed the same local data/action boundaries; action-aware write gate and read-only default preserved | PASS |
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
@@ -67,9 +67,11 @@ following remain intentionally remote or external release gates:
 
 - Docker/container smoke testing, a stable public HTTPS MCP deployment, and
   ChatGPT app review/publication remain external deployment gates.
-- The private Tunnel runtime is currently stopped because this host does not
-  have the configured runtime key in its environment or launchd environment;
-  the key must be restored locally before rechecking ChatGPT rendering.
+- The private Tunnel runtime is currently managed and healthy for this session;
+  its key was supplied only to the short-lived connect process and was not
+  written to the repository, profile, launchd environment, or logs. A
+  production/unattended setup must still provision the key through the
+  operator's protected environment mechanism.
 - The validated feature branch was squash-merged into protected `main` as
   `a553be0`; the main-branch CI, security, CodeQL, and release workflows are
   green. Subsequent documentation-only corrections must continue through the
@@ -147,19 +149,19 @@ validated branch history.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
-The current local Tunnel re-check is not ready: `tunnel-client runtimes status
-taskrail-local --json` reports `runtime_state=stopped` and explains that the
-configured runtime-key environment variable is missing. The integration
-doctor reports the daemon, MCP adapter, tunnel client, and managed tunnel
-identity, but not the runtime key or tunnel inputs. No credential value was
-printed, persisted, or changed by this check.
+The current local Tunnel re-check is ready: `tunnel-client runtimes status
+taskrail-local --json` reports `runtime_state=ready`, `process_running=true`,
+`healthy=true`, and `ready=true`. `tunnel-client health --require-control-plane-poll`
+returned HTTP 200 for both `/healthz` and `/readyz`. The Taskrail MCP stdio
+probe completed initialize, overview, and fresh local discovery; the discovery
+call returned 26 native sources. No credential value was printed or persisted.
 
 ## Release decision
 
 The repository-level control-plane implementation is published as `v0.1.6`
 for the ARM64-only contract, with the release archives and signed SBOM
 attestations available from GitHub. The repository-controlled release gates
-are complete. A fresh ChatGPT/MCP Apps end-to-end check still requires the
-private Tunnel runtime key to be restored on the operator host.
+and the local MCP/Tunnel runtime gates are complete. A final ChatGPT Scheduled
+task/UI call remains to be rechecked after the operator unlocks the Mac.
 Public HTTPS hosting, OpenAI review/publication, and real destructive/adoption
 operations remain explicit external or approval-gated steps.
