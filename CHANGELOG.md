@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.4] - 2026-08-12
+
+- Upgrade `rusqlite` to 0.40.2 with checked revision conversion at the SQLite boundary.
+- Upgrade `sha2` to 0.11.0 while preserving stable SHA-256 fingerprints.
+
 ## [0.1.3] - 2026-08-12
 
 - Harden CI with a pinned Rust toolchain, MSRV coverage, dependency review, and
