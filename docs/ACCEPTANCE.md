@@ -40,7 +40,7 @@ Execution date: 2026-08-12
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Desktop runtime | Installed daemon is running, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; Tunnel ready; socket mode 0600 | PASS |
-| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging, Apple Silicon Swift, dependency review, and supply-chain audit jobs | CI run `31608234840`, Security run `31608241507`, and CodeQL run `31608247292` passed on `02c9ec6`; dependency-review workflow present and prior run passed | PASS |
+| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging, Apple Silicon Swift, dependency review, and supply-chain audit jobs | CI run `31609200189`, Security run `31609206606`, and CodeQL run `31609216549` passed on `e1ebcc6`; dependency-review workflow present and prior run passed | PASS |
 | F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives, unsigned Apple Silicon desktop bundle, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
@@ -121,9 +121,9 @@ Mole clean was blocked before network access on a read-only host. The SwiftUI
 desktop client and its 2 tests pass on Apple Silicon. The public HTTP adapter
 unit tests cover health, authentication, origin, MCP headers, public-profile
 allowlisting, private profile authentication, and protocol version boundaries.
-GitHub Actions run `31608234840` passed the updated ARM64 matrix, MSRV,
-package, and Swift jobs; run `31608241507` passed audit and deny; run
-`31608247292` passed CodeQL. Docker Compose execution remains an external
+GitHub Actions run `31609200189` passed the updated ARM64 matrix, MSRV,
+package, and Swift jobs; run `31609206606` passed audit and deny; run
+`31609216549` passed CodeQL on final branch head `e1ebcc6`. Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
 ## Release decision
