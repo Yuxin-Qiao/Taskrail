@@ -303,11 +303,11 @@ impl DiscoveryProvider for HomebrewProvider {
 
 fn homebrew_source(service: HomebrewService) -> Result<DiscoveredSource> {
     let raw = serde_json::to_string(&service)?;
-    if let Some(path) = service.file.as_deref() {
-        if let Ok(Some(mut native)) = parse_launchd_plist(path) {
-            native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
-            return Ok(native);
-        }
+    if let Some(path) = service.file.as_deref()
+        && let Ok(Some(mut native)) = parse_launchd_plist(path)
+    {
+        native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
+        return Ok(native);
     }
     Ok(DiscoveredSource {
         source_id: format!("homebrew:{}", service.name),

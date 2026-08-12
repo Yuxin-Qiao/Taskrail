@@ -486,10 +486,10 @@ async fn execute_automation_at(
         if has_command && has_responses {
             anyhow::bail!("step {} configures multiple executors", step.id);
         }
-        if let Some(spec) = &step.responses {
-            if spec.prompt.trim().is_empty() {
-                anyhow::bail!("step {} has an empty Responses API prompt", step.id);
-            }
+        if let Some(spec) = &step.responses
+            && spec.prompt.trim().is_empty()
+        {
+            anyhow::bail!("step {} has an empty Responses API prompt", step.id);
         }
     }
     let run_id = format!("run_{}", Uuid::new_v4());
