@@ -2990,9 +2990,7 @@ fn taskrail_dashboard_endpoint(bind: SocketAddr) -> Option<SocketAddr> {
             }
         }
     }
-    candidates
-        .into_iter()
-        .find(|candidate| taskrail_dashboard_is_ready(candidate))
+    candidates.into_iter().find(taskrail_dashboard_is_ready)
 }
 
 fn taskrail_dashboard_is_ready(bind: &SocketAddr) -> bool {
