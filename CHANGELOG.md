@@ -2,13 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-12
+
 - Add an optional loopback browser dashboard served by the local daemon;
   `taskrail gui` opens the dashboard and `taskrail tui` remains the terminal
   fallback.
 - Add versioned MCP Apps dashboard resources and read-only render tools so
   ChatGPT can present local and multi-host Taskrail overviews interactively.
-
-## [0.1.6] - 2026-08-12
 
 - Make ARM64 macOS (Apple Silicon) and ARM64 Linux the only supported release
   targets; x86_64 and Windows builds are no longer published or tested.
