@@ -8,9 +8,17 @@ private paths are present.
 
 ## GitHub release
 
-Pushing a tag such as `v0.1.0` runs `.github/workflows/release.yml`. It builds
-the Rust CLI for Linux and macOS and packages an unsigned `Taskrail.app` for
-macOS. The workflow then creates the GitHub release and uploads the assets.
+Pushing a tag such as `v0.1.3` runs `.github/workflows/release.yml`. The tag
+must match the `taskrail` Cargo package version and the macOS bundle version.
+The workflow builds the Rust CLI for Linux and macOS, packages an unsigned
+`Taskrail.app`, publishes SHA-256 checksums and SPDX SBOMs, and creates GitHub
+artifact attestations for the CLI archives.
+
+The final publish job is attached to the `release` GitHub Environment. The
+repository currently restricts that environment to `v*` tags and applies a
+15-minute wait timer before publishing. A maintainer should inspect the
+workflow run and tag before that timer elapses; add an independent reviewer
+once the repository has more than one release maintainer.
 
 The desktop bundle is intentionally unsigned in the public workflow. Apple
 Developer signing identities, entitlements, provisioning, and notarization

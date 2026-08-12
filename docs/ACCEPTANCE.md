@@ -38,9 +38,9 @@ Execution date: 2026-08-12
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Desktop runtime | Installed daemon is running, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; Tunnel ready; socket mode 0600 | PASS |
-| F2 | CI definition | GitHub Actions YAML parses and contains Ubuntu/macOS Rust plus macOS Swift jobs | YAML parse passed; workflow inspected | PASS |
-| F3 | Release packaging | A version tag has a reproducible Linux CLI, macOS CLI, and unsigned desktop bundle workflow | local unsigned app bundle build passed; release workflow inspected | PASS |
-| F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, and contribution checks are configured | `.github` governance files parse and are staged | PASS |
+| F2 | CI definition | GitHub Actions YAML parses and contains pinned Ubuntu/macOS Rust, MSRV, crate packaging, macOS Swift, dependency review, and supply-chain audit jobs | YAML parse passed; workflow inspected | PASS |
+| F3 | Release packaging | A matching version tag produces Linux/macOS CLI archives, unsigned desktop bundle, SHA-256 checksums, SPDX SBOMs, and provenance attestations | local unsigned app bundle build passed; release workflow inspected | PASS |
+| F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | `.github` governance files parse and are staged | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
 | G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
 | G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
@@ -51,11 +51,16 @@ Execution date: 2026-08-12
 ## Commands to execute
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo test --workspace --doc
-cargo build --workspace
+cargo +1.88.0 fmt --all -- --check
+cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo +1.88.0 test --locked --workspace --all-features
+cargo +1.88.0 test --locked --workspace --doc
+cargo +1.88.0 build --locked --workspace
+
+cargo audit -D warnings
+cargo deny check advisories bans licenses sources
+
+cargo package --locked --package taskrail
 
 cd macos/DesktopApp
 swift build

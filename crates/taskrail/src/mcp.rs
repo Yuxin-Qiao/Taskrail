@@ -823,10 +823,7 @@ fn summarize(name: &str, value: &Value) -> String {
                 .get("verification")
                 .and_then(|item| item.get("status"))
             {
-                format!(
-                    "Mole integration completed; verification status {}.",
-                    status
-                )
+                format!("Mole integration completed; verification status {status}.")
             } else if let Some(status) = value.get("status").and_then(Value::as_str) {
                 format!("Mole integration status: {status}.")
             } else {

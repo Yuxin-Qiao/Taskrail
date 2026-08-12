@@ -341,18 +341,17 @@ fn collect_metrics(value: &Value, metrics: &mut BTreeMap<String, MetricValue>) {
                             },
                         );
                     }
-                } else if let Some(text) = child.as_str() {
-                    if key.contains("reclaim") || key == "size" {
-                        if let Some(bytes) = parse_reported_bytes(text) {
-                            metrics.insert(
-                                format!("{key}_bytes"),
-                                MetricValue {
-                                    value: bytes,
-                                    unit: "bytes".into(),
-                                },
-                            );
-                        }
-                    }
+                } else if let Some(text) = child.as_str()
+                    && (key.contains("reclaim") || key == "size")
+                    && let Some(bytes) = parse_reported_bytes(text)
+                {
+                    metrics.insert(
+                        format!("{key}_bytes"),
+                        MetricValue {
+                            value: bytes,
+                            unit: "bytes".into(),
+                        },
+                    );
                 }
                 collect_metrics(child, metrics);
             }

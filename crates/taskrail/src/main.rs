@@ -1336,12 +1336,11 @@ fn configured_runtime_key() -> Option<String> {
         if let Ok(output) = ProcessCommand::new("launchctl")
             .args(["getenv", "CONTROL_PLANE_API_KEY"])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if !value.is_empty() {
-                    return Some(value);
-                }
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !value.is_empty() {
+                return Some(value);
             }
         }
     }
@@ -2180,11 +2179,11 @@ async fn daemon(
         }))
     };
     loop {
-        if let Some(server) = server.as_mut() {
-            if server.is_finished() {
-                server.await??;
-                anyhow::bail!("RPC server stopped unexpectedly");
-            }
+        if let Some(server) = server.as_mut()
+            && server.is_finished()
+        {
+            server.await??;
+            anyhow::bail!("RPC server stopped unexpectedly");
         }
         let pass = service::scheduled_pass(registry.path()).await?;
         println!(

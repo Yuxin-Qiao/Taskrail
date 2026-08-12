@@ -17,10 +17,18 @@ Before submitting a change:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+cargo test --locked --workspace --doc
+cargo audit -D warnings
+cargo deny check advisories bans licenses sources
 git diff --check
 ```
+
+The repository's default Rust toolchain is pinned in `rust-toolchain.toml`.
+CI also tests the declared minimum supported Rust version and the current
+stable toolchain. Dependency changes must keep `Cargo.lock`, `deny.toml`, and
+the security workflows passing.
 
 Keep optional integrations at the edge. Do not add arbitrary shell execution,
 remote write operations, or a second source of truth for runs and logs.

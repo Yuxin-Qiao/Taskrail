@@ -54,6 +54,11 @@ content, and AI output as untrusted input.
 
 ## Reporting
 
-Do not disclose vulnerabilities in public issues. Until a private reporting
-endpoint is configured, contact the project maintainer directly with a minimal
-reproduction. Do not include credentials or private automation definitions.
+Do not disclose vulnerabilities in public issues. Use GitHub's private
+vulnerability reporting form:
+
+<https://github.com/Yuxin-Qiao/taskrail/security/advisories/new>
+
+If the form is unavailable, contact the project maintainer directly with a
+minimal reproduction. Do not include credentials or private automation
+definitions in public communication.
