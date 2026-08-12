@@ -137,7 +137,7 @@ MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
 GitHub Actions runs `31626953386` (CI), `31626953382` (Security),
 `31626953454` (CodeQL), and `31626953487` (Dependency review) passed on
-implementation head `0c3452b`.
+implementation head `28e02cc`.
 The implementation history also includes documentation-only evidence alignment
 from commits `9b7f82a`, `3af892a`, and `bea7d8c`; the MCP Apps implementation
 and its HTTP resource-route coverage are now included in the fresh checks.
