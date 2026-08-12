@@ -237,8 +237,9 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   discovery, Taskrail automations, recent runs, and attention items.
 - `taskrail_render_overview` — after `taskrail_overview`, render the same
   read-only snapshot as an interactive MCP Apps control-plane view inside
-  ChatGPT; its refresh and native-scan buttons call typed read-only tools and
-  never expose the local browser HTTP API.
+  ChatGPT. It shows the discovered native-task list as well as Taskrail-owned
+  automations and attention items; its refresh and native-scan buttons call
+  typed read-only tools and never expose the local browser HTTP API.
 - `taskrail_fleet_render_overview` — after `taskrail_fleet_overview`, render
   configured host status as an interactive read-only MCP Apps view; it never
   bypasses per-host routing, policy, approval, or execution boundaries.

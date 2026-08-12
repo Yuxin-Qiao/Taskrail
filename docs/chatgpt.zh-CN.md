@@ -207,7 +207,8 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 - taskrail_status — 检查守护进程连通性并识别主机；
 - taskrail_overview — 返回合并了身份、发现、Taskrail 自动化、最近运行和待处理事项的安全主机摘要；
 - taskrail_render_overview — 在 taskrail_overview 之后，将同一份只读摘要渲染为 ChatGPT 内的
-  MCP Apps 控制面视图；刷新和原生扫描按钮只调用类型化只读工具，不会暴露本地浏览器 HTTP API；
+  MCP Apps 控制面视图；其中包含已发现的原生任务清单、Taskrail 自动化和待处理事项。刷新和
+  原生扫描按钮只调用类型化只读工具，不会暴露本地浏览器 HTTP API；
 - taskrail_fleet_render_overview — 在 taskrail_fleet_overview 之后，将配置主机状态渲染为只读的
   多主机 MCP Apps 控制面视图；不会绕过每台主机的路由、策略、审批或执行边界；
 - taskrail_list_automations / taskrail_get_automation — 查看本地清单；

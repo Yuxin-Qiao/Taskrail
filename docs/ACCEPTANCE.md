@@ -40,7 +40,7 @@ Execution date: 2026-08-13
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
-| F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; browser shows connected host and 26 native rows; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
+| F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; browser shows connected host and 26 native rows; the MCP Apps resource now renders the discovered native-task list; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
 | F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging with embedded browser and MCP Apps assets, dependency review, and supply-chain audit jobs | CI workflow and package asset checks inspected; browser and both MCP Apps resources are checked; security workflows retained | PASS |
 | F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
@@ -135,12 +135,10 @@ logs; the in-app browser loaded the connected dashboard and returned 26 native
 discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-GitHub Actions runs `31626953386` (CI), `31626953382` (Security),
-`31626953454` (CodeQL), and `31626953487` (Dependency review) passed on the
-code-bearing implementation head `0c3452b`. Commits `1cf5e08`, `28e02cc`,
-and `bdd4628` only reconcile acceptance evidence and current runtime status;
-the MCP Apps implementation and its HTTP resource-route coverage are included
-in those fresh checks.
+GitHub Actions runs `31630558563` (CI), `31630558431` (Security),
+`31630558557` (CodeQL), and `31630558444` (Dependency review) passed on
+implementation head `48d3521`. The MCP Apps implementation, HTTP resource-route
+coverage, and native-task-list Widget are included in those fresh checks.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
