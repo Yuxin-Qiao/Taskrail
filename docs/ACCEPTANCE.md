@@ -42,7 +42,7 @@ Execution date: 2026-08-13
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; browser shows connected host and 26 native rows; the MCP Apps resource now renders the discovered native-task list; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
 | F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging with embedded browser and MCP Apps assets, dependency review, and supply-chain audit jobs | CI workflow and package asset checks inspected; browser and both MCP Apps resources are checked; security workflows retained | PASS |
-| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
+| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and signed release/SBOM attestations | Tag `v0.1.6` points to `a553be0`; release workflow run `31635879714` completed successfully; both ARM64 archives, checksums, SPDX SBOMs, and signed GitHub SBOM attestations were published and independently downloaded/checked | PASS |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
 | G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
@@ -54,9 +54,11 @@ Execution date: 2026-08-13
 | G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 171 tests passed | PASS |
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
-ARM64-only release contract. The updated ARM64 runner evidence is now
-complete; a matching release tag and its generated assets are still required
-before an ARM64 release is declared ready.
+ARM64-only release contract. The updated ARM64 runner evidence and the
+matching `v0.1.6` release assets are now complete. The release workflow's
+attestation step recorded signed in-toto SBOM attestations in GitHub and the
+Sigstore transparency log; the local asset check verified both SHA-256 files,
+archive contents, and SBOM JSON structure.
 
 ## External release gates
 
@@ -68,10 +70,10 @@ following remain intentionally remote or external release gates:
 - The private Tunnel runtime is currently stopped because this host does not
   have the configured runtime key in its environment or launchd environment;
   the key must be restored locally before rechecking ChatGPT rendering.
-- The current feature branch is pushed and all latest branch CI/security
-  evidence is green, but `main` is protected and rejects direct updates,
-  including histories with merge commits; the changes therefore are not yet
-  part of the default branch.
+- The validated feature branch was squash-merged into protected `main` as
+  `a553be0`; the main-branch CI, security, CodeQL, and release workflows are
+  green. Subsequent documentation-only corrections must continue through the
+  protected pull-request path.
 - Real destructive integration writes and native adoption remain approval- and
   host-specific; the checklist keeps them dry-run or fixture-only.
 
@@ -135,9 +137,11 @@ logs; the in-app browser loaded the connected dashboard and returned 26 native
 discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-GitHub Actions runs `31632819911` (CI), `31632819967` (Security),
-`31632819899` (CodeQL), and `31632819885` (Dependency review) passed on
-release-documentation head `5fe7920`. The MCP Apps implementation,
+GitHub Actions runs `31635284025` (CI), `31635283861` (Security), and
+`31635284140` (CodeQL) passed on main commit `a553be0`; the pull request's
+dependency review also passed in run `31634056819`. Release workflow run
+`31635879714` passed and published the `v0.1.6` assets described in F3. The
+MCP Apps implementation,
 HTTP resource-route coverage, and native-task-list Widget are included in the
 validated branch history.
 Docker Compose execution remains an external
@@ -145,15 +149,17 @@ deployment-host check because Docker is not installed on this host.
 
 The current local Tunnel re-check is not ready: `tunnel-client runtimes status
 taskrail-local --json` reports `runtime_state=stopped` and explains that the
-`CONTROL_PLANE_API_KEY` environment variable referenced by the profile is
-missing. No credential value was printed, persisted, or changed by this check.
+configured runtime-key environment variable is missing. The integration
+doctor reports the daemon, MCP adapter, tunnel client, and managed tunnel
+identity, but not the runtime key or tunnel inputs. No credential value was
+printed, persisted, or changed by this check.
 
 ## Release decision
 
-The repository-level control-plane implementation is release-candidate-shaped
-for the ARM64-only contract. The current branch is not release-complete until
-a matching tag has produced and published the CLI archives with the embedded
-dashboard, and the private Tunnel runtime has been restored for a fresh
-ChatGPT/MCP Apps end-to-end check.
+The repository-level control-plane implementation is published as `v0.1.6`
+for the ARM64-only contract, with the release archives and signed SBOM
+attestations available from GitHub. The repository-controlled release gates
+are complete. A fresh ChatGPT/MCP Apps end-to-end check still requires the
+private Tunnel runtime key to be restored on the operator host.
 Public HTTPS hosting, OpenAI review/publication, and real destructive/adoption
 operations remain explicit external or approval-gated steps.
