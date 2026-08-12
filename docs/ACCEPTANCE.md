@@ -25,7 +25,7 @@ Execution date: 2026-08-13
 | B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 171 tests passed | PASS |
 | B2 | Browser dashboard | Dashboard source is embedded in the published crate and its HTTP route/origin mapping tests pass | `cargo package --locked --package taskrail`; `cargo test --locked --workspace --lib web`; loopback browser smoke | PASS |
 | B3 | Desktop client | The current branch intentionally uses the daemon-hosted browser dashboard as its local UI; the historical SwiftUI client is not part of this release surface | Not applicable to the current CLI/browser release; dashboard coverage is recorded in B2 and F1 | N/A |
-| B4 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31602413568`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
+| B4 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31626953386`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
 | C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures; background reconciliation and missing-source tests | PASS |
@@ -33,8 +33,8 @@ Execution date: 2026-08-13
 | C5 | Daemon/RPC | ARM64 macOS/Linux Unix-socket daemons expose lifecycle/log/run APIs with local-only boundaries | Apple Silicon temporary daemon/MCP smoke; Linux ARM64 CI build/test and XDG/runtime smoke | PASS |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, exposes the read-only Taskrail Apps dashboard resource, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 39 local tools including the dashboard render tool; 19 public read-only tools; resource read/origin tests; real stdio and authenticated private/public HTTP probes completed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
-| D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
-| D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
+| D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | Historical doctor/session evidence passed; current re-check reports `taskrail-local` stopped because the local `CONTROL_PLANE_API_KEY` reference is not populated | BLOCKED (local runtime credential) |
+| D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Historical Scheduled-task evidence passed; current UI re-check waits for D3 runtime recovery | BLOCKED (depends on D3) |
 | D5 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 39 fleet tools including the read-only dashboard render tool; explicit `host_id` schemas; localhost MCP routing test; adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
 | D6 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 39 Fleet descriptors (37 require `host_id`); versioned read-only Fleet Apps resource; route-completeness contract; private HTTP target exposed the same local data/action boundaries; action-aware write gate and read-only default preserved | PASS |
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
@@ -65,6 +65,9 @@ following remain intentionally remote or external release gates:
 
 - Docker/container smoke testing, a stable public HTTPS MCP deployment, and
   ChatGPT app review/publication remain external deployment gates.
+- The private Tunnel runtime is currently stopped because this host does not
+  have the configured runtime key in its environment or launchd environment;
+  the key must be restored locally before rechecking ChatGPT rendering.
 - The current feature branch is pushed and all latest branch CI/security
   evidence is green, but `main` is protected and rejects direct updates,
   including histories with merge commits; the changes therefore are not yet
@@ -132,19 +135,26 @@ logs; the in-app browser loaded the connected dashboard and returned 26 native
 discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-GitHub Actions runs `31625167397` (CI), `31625167393` (Security),
-`31625167457` (CodeQL), and `31625167381` (Dependency review) passed on
-implementation head `9e97f84`.
+GitHub Actions runs `31626953386` (CI), `31626953382` (Security),
+`31626953454` (CodeQL), and `31626953487` (Dependency review) passed on
+implementation head `0c3452b`.
 The implementation history also includes documentation-only evidence alignment
-from commits `9b7f82a`, `3af892a`, and `bea7d8c`; this follow-up records the
-fresh checks for the browser-dashboard implementation.
+from commits `9b7f82a`, `3af892a`, and `bea7d8c`; the MCP Apps implementation
+and its HTTP resource-route coverage are now included in the fresh checks.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
+
+The current local Tunnel re-check is not ready: `tunnel-client runtimes status
+taskrail-local --json` reports `runtime_state=stopped` and explains that the
+`CONTROL_PLANE_API_KEY` environment variable referenced by the profile is
+missing. No credential value was printed, persisted, or changed by this check.
 
 ## Release decision
 
 The repository-level control-plane implementation is release-candidate-shaped
-for the ARM64-only contract. It is not release-complete until a matching tag
-has produced and published the CLI archives with the embedded dashboard.
+for the ARM64-only contract. The current branch is not release-complete until
+a matching tag has produced and published the CLI archives with the embedded
+dashboard, and the private Tunnel runtime has been restored for a fresh
+ChatGPT/MCP Apps end-to-end check.
 Public HTTPS hosting, OpenAI review/publication, and real destructive/adoption
 operations remain explicit external or approval-gated steps.

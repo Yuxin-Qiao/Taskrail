@@ -312,7 +312,7 @@ add/register → list → daemon → run → history/logs → tui
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
 | 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |
-| 私有 ChatGPT MCP/Tunnel 和 Scheduled 任务控制 | 🟢 已验证 |
+| 私有 ChatGPT MCP/Tunnel 和 Scheduled 任务控制 | 🟡 等待运行时复核 |
 | ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
 | 公开 ChatGPT 应用托管、审核和发布 | 🟡 外部门槛 |
