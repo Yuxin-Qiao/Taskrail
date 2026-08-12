@@ -6,7 +6,7 @@ Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
 
 The connection is deliberately per host: run one Taskrail daemon and one MCP
-tunnel profile on each Mac or Linux machine. Set a stable label so ChatGPT can
+tunnel profile on each macOS, Linux, or Windows machine. Set a stable label so ChatGPT can
 distinguish them:
 
 ```bash
@@ -15,7 +15,9 @@ export TASKRAIL_HOST_LABEL="macbook-pro"
 
 ## Start the local backend
 
-The daemon owns the SQLite Registry and listens on a user-only Unix socket.
+The daemon owns the SQLite Registry and listens on a user-scoped local endpoint:
+a restricted Unix socket on macOS/Linux or a named pipe that rejects remote
+clients on Windows.
 On macOS, install the LaunchAgent:
 
 ```bash
@@ -37,6 +39,12 @@ directory selected by `XDG_CONFIG_HOME`). The Registry uses `XDG_DATA_HOME`
 and the socket uses `XDG_RUNTIME_DIR` when those variables are absolute;
 otherwise taskrail falls back to `~/.local/share/taskrail/`. The install command
 fails closed if a systemd user manager is not available.
+
+On Windows, `taskrail daemon --install` creates and starts the current-user
+`Taskrail\\Daemon` Task Scheduler task. The Registry defaults to
+`%LOCALAPPDATA%\\taskrail\\registry.sqlite3`; the local RPC endpoint is a
+per-user named pipe. Windows Task Scheduler is discovery-only for now, so
+`taskrail scan --source task-scheduler` never changes a native task.
 
 If you manage systemd units yourself, the explicit foreground form remains:
 
@@ -183,9 +191,10 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
-  and Homebrew services and return safe observed-task summaries.
-- `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd, or
-  Homebrew scan without mutating native definitions or the Registry.
+  Windows Task Scheduler, and Homebrew services and return safe observed-task summaries.
+- `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd,
+  Windows Task Scheduler, or Homebrew scan without mutating native definitions
+  or the Registry.
 - `taskrail_list_integrations` — inspect the built-in integration catalog,
   executable detection, and doctor status on this host.
 - `taskrail_schedule_integration` — persist a typed read-only or dry-run

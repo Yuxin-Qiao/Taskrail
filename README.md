@@ -62,9 +62,12 @@ taskrail status
 ```
 
 On macOS this installs a LaunchAgent. On Linux this installs a systemd user
-unit under `~/.config/systemd/user/`; the Registry is stored under
-`$XDG_DATA_HOME/taskrail/` (or `~/.local/share/taskrail/`) and the daemon socket
-uses `$XDG_RUNTIME_DIR/taskrail/` when available. For a headless Linux host,
+unit under `~/.config/systemd/user/`. On Windows this installs the per-user
+`Taskrail\\Daemon` Task Scheduler task and uses a user-scoped named pipe. The
+Registry is stored under `$XDG_DATA_HOME/taskrail/` (or
+`~/.local/share/taskrail/`) on Linux and `%LOCALAPPDATA%\\taskrail\\` on
+Windows; the Unix daemon socket uses `$XDG_RUNTIME_DIR/taskrail/` when
+available. For a headless Linux host,
 enable user lingering before installing:
 
 ```bash
@@ -74,15 +77,16 @@ taskrail daemon --install
 
 ## ChatGPT Scheduled tasks
 
-Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT's Scheduled
+Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT Web, Desktop,
+and Mobile use the same MCP tool contract; ChatGPT's Scheduled
 page remains the natural-language scheduler and notification surface; Taskrail
-is the local execution backend that ChatGPT calls on the selected Mac or Linux
-host.
+is the local execution backend that ChatGPT calls on the selected macOS, Linux,
+or Windows host.
 
 Start the local MCP adapter after the Taskrail daemon is running:
 
 ```bash
-taskrail daemon --install       # LaunchAgent on macOS; systemd user unit on Linux
+taskrail daemon --install       # LaunchAgent/systemd/Task Scheduler by platform
 taskrail mcp                    # MCP stdio adapter for the current host
 taskrail integration chatgpt-doctor
 ```
@@ -94,7 +98,7 @@ so an already-connected ChatGPT app with cached tool metadata can still answer
 what is present on the host. Commands remain direct argv; ChatGPT cannot turn a
 free-form string into a shell pipeline through this interface.
 
-For a private Mac or Linux host, connect `taskrail mcp` through OpenAI Secure
+For a private macOS, Linux, or Windows host, connect `taskrail mcp` through OpenAI Secure
 MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app. Once the app
 is connected, a Scheduled task can use prompts such as:
 
@@ -105,7 +109,7 @@ If it fails, inspect the run logs and tell me what needs attention.
 
 See [ChatGPT integration](docs/chatgpt.md) for the tunnel, permissions, and
 multi-host setup details. Set `TASKRAIL_HOST_LABEL` for a stable label when
-more than one Mac or Linux host is connected.
+more than one host is connected.
 
 For a future public MCP deployment, use the enforced read-only review profile:
 
@@ -143,7 +147,7 @@ Taskrail can manage commands and scripts you already use:
 
 - one-shot commands and recurring interval or cron jobs;
 - local run history, stdout, stderr, and operational events;
-- launchd, cron, systemd user services, and Homebrew service discovery;
+- launchd, cron, systemd user services, Windows Task Scheduler, and Homebrew service discovery;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;

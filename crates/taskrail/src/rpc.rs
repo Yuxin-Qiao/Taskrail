@@ -125,7 +125,7 @@ pub async fn serve_once(
     }
     #[cfg(windows)]
     {
-        let mut server = ServerOptions::new()
+        let server = ServerOptions::new()
             .first_pipe_instance(true)
             .reject_remote_clients(true)
             .create(&socket_path)
@@ -1140,11 +1140,6 @@ fn prepare_socket(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn prepare_socket(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
 #[cfg(unix)]
 fn set_socket_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -1152,20 +1147,10 @@ fn set_socket_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn set_socket_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
 #[cfg(unix)]
 fn set_directory_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_directory_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 

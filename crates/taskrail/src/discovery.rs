@@ -829,6 +829,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_windows_task_scheduler_csv_as_read_only_observations() {
+        let csv = r#""TaskName","Status","Task To Run","Scheduled Task State"
+"\Taskrail\Daily","Ready","""C:\Program Files\Taskrail\taskrail.exe"" scan --source task-scheduler","Enabled"
+"\Taskrail\Disabled","Disabled","C:\disabled.exe","Disabled"
+"#;
+        let sources = parse_task_scheduler_csv(csv).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].source_id, r"task-scheduler:Taskrail\Daily");
+        assert!(sources[0].enabled);
+        assert_eq!(
+            sources[0].command.as_ref().unwrap().executable,
+            PathBuf::from(r"C:\Program Files\Taskrail\taskrail.exe")
+        );
+        assert!(!sources[1].enabled);
+    }
+
+    #[test]
     fn missing_systemd_user_manager_is_an_empty_observation() {
         assert!(systemd_user_manager_unavailable(
             "Failed to connect to bus: No medium found"
