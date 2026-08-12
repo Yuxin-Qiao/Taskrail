@@ -3471,6 +3471,12 @@ mod tests {
             headers: headers.clone(),
             body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#.to_vec(),
         };
+        let request_with_body = |body: &[u8]| HttpRequest {
+            method: initialize_request.method.clone(),
+            path: initialize_request.path.clone(),
+            headers: initialize_request.headers.clone(),
+            body: body.to_vec(),
+        };
         let initialize = http_response_for_request(
             &initialize_request,
             &PathBuf::from("/tmp/taskrail-http-test.sock"),
@@ -3487,10 +3493,7 @@ mod tests {
         );
 
         let tools = http_response_for_request(
-            &HttpRequest {
-                body: br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#.to_vec(),
-                ..initialize_request
-            },
+            &request_with_body(br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#),
             &PathBuf::from("/tmp/taskrail-http-test.sock"),
             "review-token",
             &[],
@@ -3505,6 +3508,38 @@ mod tests {
             tool["annotations"]["readOnlyHint"] == true
                 && tool["annotations"]["destructiveHint"] == false
         }));
+
+        let resources = http_response_for_request(
+            &request_with_body(
+                br#"{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}"#,
+            ),
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(resources.0, "200 OK");
+        let resources: Value = serde_json::from_slice(&resources.2).unwrap();
+        assert_eq!(
+            resources["result"]["resources"][0]["uri"],
+            MCP_APP_RESOURCE_URI
+        );
+
+        let resource = http_response_for_request(
+            &request_with_body(br#"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"ui://taskrail/dashboard/v1.html"}}"#),
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(resource.0, "200 OK");
+        let resource: Value = serde_json::from_slice(&resource.2).unwrap();
+        assert_eq!(
+            resource["result"]["contents"][0]["mimeType"],
+            MCP_APP_RESOURCE_MIME_TYPE
+        );
 
         let missing_accept = http_response_for_request(
             &HttpRequest {
