@@ -316,7 +316,7 @@ add/register → list → daemon → run → history/logs → tui
 | ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
 | 公开 ChatGPT 应用托管、审核和发布 | 🟡 外部门槛 |
-| ARM64 CLI 发布 | 🟡 标签触发的工作流，尚未实际运行发布 |
+| ARM64 CLI 发布 | 🟢 [v0.1.6 已发布](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.6) |
 | Homebrew formula | 🟡 未来 |
 
 ## 文档
