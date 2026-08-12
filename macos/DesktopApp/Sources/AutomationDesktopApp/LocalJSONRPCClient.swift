@@ -12,11 +12,11 @@ enum LocalJSONRPCError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .socketPathTooLong: return "The Unix socket path is too long."
-        case .connectFailed(let message): return "Could not connect to taskrail daemon: \(message)"
-        case .writeFailed(let message): return "Could not write to taskrail daemon: \(message)"
-        case .readFailed(let message): return "Could not read from taskrail daemon: \(message)"
+        case .connectFailed(let message): return "Could not connect to Taskrail daemon: \(message)"
+        case .writeFailed(let message): return "Could not write to Taskrail daemon: \(message)"
+        case .readFailed(let message): return "Could not read from Taskrail daemon: \(message)"
         case .responseError(let message): return message
-        case .invalidResponse: return "taskrail daemon returned an invalid JSON-RPC response."
+        case .invalidResponse: return "Taskrail daemon returned an invalid JSON-RPC response."
         }
     }
 }

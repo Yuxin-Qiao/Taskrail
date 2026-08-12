@@ -5,8 +5,8 @@ use crate::{
         merge_homebrew_sources, same_native_path,
     },
     integrations::{
-        GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, MasIntegration,
-        MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
+        GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
+        MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
         TopgradeIntegration,
     },
     service,
@@ -182,6 +182,15 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
         "automation.list" => with_registry(registry_path, |registry| {
             Ok(serde_json::to_value(registry.list_automations()?)?)
         }),
+        "automation.delete" => {
+            let id = match string_param(&request.params, "id") {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(registry.delete_automation(&id)?)?)
+            })
+        }
         "automation.inspect" => {
             let id = match string_param(&request.params, "id") {
                 Ok(id) => id,
@@ -203,7 +212,43 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(create_automation(registry, params)?)?)
             })
         }
-        "automation.scan" => {
+        "integration.create" => {
+            let params = match CreateIntegrationAutomationParams::parse(&request.params) {
+                Ok(params) => params,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let id = match IntegrationId::new(params.integration.clone()) {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error.to_string()),
+            };
+            let integrations = match crate::integrations::built_in_registry() {
+                Ok(registry) => registry,
+                Err(error) => return internal_error(request.id, error),
+            };
+            let Some(integration) = integrations.get(&id) else {
+                return invalid_params(
+                    request.id,
+                    format!("integration not registered: {}", params.integration),
+                );
+            };
+            let action = match IntegrationAction::with_parameters(params.action, params.parameters)
+            {
+                Ok(action) => action,
+                Err(error) => return invalid_params(request.id, error.to_string()),
+            };
+            match service::create_integration_automation(
+                registry_path,
+                integration.as_ref(),
+                &action,
+                params.id,
+                params.name,
+                params.trigger,
+            ) {
+                Ok(automation) => serde_json::to_value(automation).map_err(Into::into),
+                Err(error) => Err(error),
+            }
+        }
+        "automation.discover" | "automation.scan" => {
             let source = match request.params.get("source") {
                 None => "all".to_owned(),
                 Some(value) => match value.as_str() {
@@ -232,6 +277,18 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     };
                 }
             };
+            if request.method == "automation.discover" {
+                let result = match serde_json::to_value(discovered) {
+                    Ok(result) => result,
+                    Err(error) => return internal_error(request.id, error.into()),
+                };
+                return Response {
+                    jsonrpc: "2.0".into(),
+                    id: request.id,
+                    result: Some(result),
+                    error: None,
+                };
+            }
             with_registry(registry_path, move |registry| {
                 for item in &discovered {
                     registry.reconcile_discovered_source(item)?;
@@ -283,6 +340,32 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(registry.list_adoptions(limit)?)?)
             })
         }
+        "adoption.apply" => {
+            let id = match string_param(&request.params, "id") {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let apply = request
+                .params
+                .get("apply")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(crate::adoption::adopt_source(
+                    registry, &id, apply,
+                )?)?)
+            })
+        }
+        "adoption.rollback" => {
+            let tx_id = match string_param(&request.params, "tx_id") {
+                Ok(tx_id) => tx_id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            with_registry(registry_path, move |registry| {
+                crate::adoption::rollback_source(registry, &tx_id)?;
+                Ok(serde_json::json!({"tx_id": tx_id, "status": "rolled_back"}))
+            })
+        }
         "approval.request" => request_approval(registry_path, &request.params),
         "approval.execute" => execute_approved(registry_path, &request.params).await,
         "approvals.list" => {
@@ -302,6 +385,14 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(registry.list_approvals(limit)?)?)
             })
         }
+        "integration.list" => match crate::integrations::built_in_registry() {
+            Ok(integrations) => Ok(serde_json::json!({
+                "descriptors": integrations.descriptors(),
+                "detection": integrations.detect(),
+                "doctor": integrations.doctor(),
+            })),
+            Err(error) => Err(error),
+        },
         "approval.approve" | "approval.reject" => {
             let id = match string_param(&request.params, "approval_id") {
                 Ok(id) => id,
@@ -635,6 +726,70 @@ struct CreateAutomationParams {
     timeout_seconds: u64,
 }
 
+#[derive(Debug, Clone)]
+struct CreateIntegrationAutomationParams {
+    id: String,
+    name: Option<String>,
+    integration: String,
+    action: String,
+    parameters: Value,
+    trigger: Trigger,
+}
+
+impl CreateIntegrationAutomationParams {
+    fn parse(params: &Value) -> Result<Self, String> {
+        let id = required_string(params, "id")?;
+        let integration = required_string(params, "integration")?;
+        let action = required_string(params, "action")?;
+        let parameters = params
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if !parameters.is_object() {
+            return Err("params.parameters must be an object".into());
+        }
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned);
+        let trigger_kind = params
+            .get("trigger")
+            .and_then(Value::as_str)
+            .unwrap_or("manual");
+        let trigger = match trigger_kind {
+            "manual" => Trigger::Manual,
+            "interval" => Trigger::Interval {
+                seconds: params
+                    .get("interval_seconds")
+                    .and_then(Value::as_u64)
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| {
+                        "params.interval_seconds must be greater than zero".to_owned()
+                    })?,
+            },
+            "cron" => Trigger::Cron {
+                expression: required_string(params, "cron")?,
+                timezone: params
+                    .get("timezone")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("local")
+                    .to_owned(),
+            },
+            _ => return Err("params.trigger must be one of manual, interval, or cron".into()),
+        };
+        Ok(Self {
+            id,
+            name,
+            integration,
+            action,
+            parameters,
+            trigger,
+        })
+    }
+}
+
 impl CreateAutomationParams {
     fn parse(params: &Value) -> Result<Self, String> {
         let id = required_string(params, "id")?;
@@ -771,6 +926,7 @@ fn create_automation(registry: &Registry, params: CreateAutomationParams) -> Res
                 ..CommandSpec::default()
             },
             responses: None,
+            integration: None,
         }],
         ..Automation::default()
     };
@@ -857,6 +1013,19 @@ fn invalid_params(id: Value, message: String) -> Response {
         error: Some(ErrorObject {
             code: -32602,
             message,
+            data: None,
+        }),
+    }
+}
+
+fn internal_error(id: Value, error: anyhow::Error) -> Response {
+    Response {
+        jsonrpc: "2.0".into(),
+        id,
+        result: None,
+        error: Some(ErrorObject {
+            code: -32000,
+            message: error.to_string(),
             data: None,
         }),
     }
@@ -987,6 +1156,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discover_rpc_is_read_only_and_does_not_reconcile_registry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let response = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "automation.discover".into(),
+                params: serde_json::json!({"source":"all"}),
+            },
+            &path,
+        )
+        .await;
+        assert!(response.error.is_none());
+        assert!(response.result.unwrap().is_array());
+
+        let registry = Registry::open(&path).unwrap();
+        assert!(registry.list_sources().unwrap().is_empty());
+        assert!(registry.list_automations().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn create_rpc_registers_managed_direct_argv_automation() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
@@ -1046,6 +1237,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_rpc_persists_typed_read_only_schedule_and_rejects_writes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let created = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(20),
+                method: "integration.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-mole-version",
+                    "integration": "mole",
+                    "action": "version",
+                    "trigger": "interval",
+                    "interval_seconds": 3600
+                }),
+            },
+            &path,
+        )
+        .await;
+        let automation = created.result.unwrap();
+        assert_eq!(automation["ownership"], "managed");
+        assert_eq!(automation["steps"][0]["integration"]["integration"], "mole");
+        assert!(
+            automation["steps"][0]["command"]["executable"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+
+        let rejected = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(21),
+                method: "integration.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-mole-clean",
+                    "integration": "mole",
+                    "action": "clean",
+                    "parameters": {"dry_run": false},
+                    "trigger": "interval",
+                    "interval_seconds": 3600
+                }),
+            },
+            &path,
+        )
+        .await;
+        assert_eq!(rejected.error.unwrap().code, -32000);
+        assert!(
+            Registry::open(&path)
+                .unwrap()
+                .get_automation("rpc-mole-clean")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_catalog_rpc_exposes_descriptors_detection_and_doctor() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let response = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(22),
+                method: "integration.list".into(),
+                params: Value::Null,
+            },
+            &path,
+        )
+        .await;
+        let value = response.result.unwrap();
+        assert!(value["descriptors"].as_array().unwrap().len() >= 10);
+        assert_eq!(
+            value["descriptors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["id"] == "mole")
+                .count(),
+            1
+        );
+        assert!(value["detection"].is_array());
+        assert!(value["doctor"].is_array());
+    }
+
+    #[tokio::test]
     async fn list_and_run_use_the_same_registry_service() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
@@ -1059,6 +1336,7 @@ mod tests {
                     id: "echo".into(),
                     command: CommandSpec::argv("/bin/echo", ["rpc"]),
                     responses: None,
+                    integration: None,
                 }],
                 ..Default::default()
             })
@@ -1254,6 +1532,7 @@ mod tests {
                     id: "echo".into(),
                     command: CommandSpec::argv("/bin/echo", ["snapshot"]),
                     responses: None,
+                    integration: None,
                 }],
                 ..Default::default()
             })

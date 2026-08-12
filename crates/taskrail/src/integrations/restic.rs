@@ -174,6 +174,7 @@ impl Integration for ResticIntegration {
             requires_approval: risk.requires_approval(),
             supports_dry_run: false,
             dry_run: false,
+            plan_only: false,
             timeout_seconds: self.timeout_seconds,
             verification: None,
         };

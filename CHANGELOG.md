@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Persist typed native integration steps as managed, schedulable Automations.
+- Add integration catalog/doctor status, adoption lifecycle, drift, deletion,
+  and approval controls to JSON-RPC and MCP.
+- Add macOS desktop discovery, integration health, and approval views.
+- Keep plan-only Topgrade actions semantic and never spawn a placeholder command.
+
 ## [0.1.0] - 2026-08-12
 
 Initial open-source release.

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "taskrail": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--quiet",
+        "--package",
+        "taskrail",
+        "--",
+        "mcp"
+      ],
+      "env": {
+        "TASKRAIL_MCP_PROFILE": "public"
+      },
+      "cwd": "."
+    }
+  }
+}

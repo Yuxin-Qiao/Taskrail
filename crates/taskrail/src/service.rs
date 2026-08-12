@@ -1,5 +1,7 @@
 use crate::{
-    core::{Automation, Event, Ownership, RunResult, RuntimeState, Trigger},
+    core::{
+        Automation, Event, IntegrationSpec, Ownership, RunResult, RuntimeState, StepSpec, Trigger,
+    },
     executor,
     integrations::{
         DefaultPolicy, Integration, IntegrationAction, IntegrationResult, IntegrationStatus,
@@ -120,9 +122,14 @@ pub async fn execute_integration(
             }
         }
     }
-    let automation = integration_automation(&plan);
+    let mut automation = integration_automation(&plan, action)?;
     {
         let registry = Registry::open(registry_path)?;
+        if let Some(existing) = registry.get_automation(&automation.id)?
+            && !matches_same_integration_automation(&existing, &automation)
+        {
+            automation.id = format!("{}.{}", automation.id, Uuid::new_v4());
+        }
         registry.save_automation(&automation)?;
         registry.append_event(&Event {
             run_id: None,
@@ -137,22 +144,70 @@ pub async fn execute_integration(
             }),
         })?;
     }
-    let run = execute_automation(registry_path, &automation).await?;
+    let run_id = format!("run_{}", Uuid::new_v4());
+    let (cancellation, _active_run) = register_active_run(&run_id);
+    {
+        let registry = Registry::open(registry_path)?;
+        if !registry.try_record_run_start(&run_id, &automation, None)? {
+            anyhow::bail!("integration action has an active run: {}", automation.name);
+        }
+        registry.append_event(&Event {
+            run_id: Some(run_id.clone()),
+            occurred_at: Utc::now(),
+            event_type: "run.started".into(),
+            payload: serde_json::json!({
+                "automation": automation.name,
+                "revision": automation.revision,
+                "executor": "integration",
+            }),
+        })?;
+    }
+    let mut raw_run = if plan.plan_only {
+        RunResult {
+            run_id: run_id.clone(),
+            status: "succeeded".into(),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+        }
+    } else {
+        match executor::execute_with_cancellation(&plan.command, plan.timeout_seconds, cancellation)
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => RunResult {
+                run_id: run_id.clone(),
+                status: "failed".into(),
+                exit_code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+                duration_ms: 0,
+            },
+        }
+    };
+    raw_run.run_id = run_id.clone();
+    let mut run = raw_run.clone();
+    run.stdout = redacted_integration_output(&plan, &run.stdout);
+    run.stderr = redacted_integration_output(&plan, &run.stderr);
     let process_output = ProcessOutput {
-        status: match run.status.as_str() {
+        status: match raw_run.status.as_str() {
             "succeeded" => ProcessStatus::Succeeded,
             "timed_out" => ProcessStatus::TimedOut,
             "cancelled" => ProcessStatus::Cancelled,
             _ => ProcessStatus::Failed,
         },
-        exit_code: run.exit_code,
-        stdout: run.stdout.clone(),
-        stderr: run.stderr.clone(),
-        duration_ms: run.duration_ms,
+        exit_code: raw_run.exit_code,
+        stdout: raw_run.stdout.clone(),
+        stderr: raw_run.stderr.clone(),
+        duration_ms: raw_run.duration_ms,
     };
     let result = match integration.parse(action, process_output) {
         Ok(result) => result,
         Err(error) => {
+            run.status = "failed".into();
+            run.stderr = format!("{}\n[integration parse failed: {error}]", run.stderr);
+            persist_integration_run(registry_path, &plan, &run)?;
             Registry::open(registry_path)?.append_event(&Event {
                 run_id: Some(run.run_id.clone()),
                 occurred_at: Utc::now(),
@@ -166,7 +221,31 @@ pub async fn execute_integration(
             return Err(error).context("parse integration output");
         }
     };
-    let verification = integration.verify(action, &result)?;
+    let verification = match integration.verify(action, &result) {
+        Ok(verification) => verification,
+        Err(error) => {
+            run.status = "failed".into();
+            run.stderr = format!("{}\n[integration verification failed: {error}]", run.stderr);
+            persist_integration_run(registry_path, &plan, &run)?;
+            Registry::open(registry_path)?.append_event(&Event {
+                run_id: Some(run.run_id.clone()),
+                occurred_at: Utc::now(),
+                event_type: "integration.verification.failed".into(),
+                payload: serde_json::json!({"error": error.to_string()}),
+            })?;
+            return Err(error).context("verify integration result");
+        }
+    };
+    run.status = if result.status == IntegrationStatus::Failed
+        || verification.status == VerificationStatus::Failed
+    {
+        "failed".into()
+    } else if result.status == IntegrationStatus::NeedsAttention {
+        "needs_attention".into()
+    } else {
+        raw_run.status.clone()
+    };
+    persist_integration_run(registry_path, &plan, &run)?;
     let registry = Registry::open(registry_path)?;
     registry.append_event(&Event {
         run_id: Some(run.run_id.clone()),
@@ -258,6 +337,84 @@ pub fn request_integration_approval(
         }),
     })?;
     Ok(approval)
+}
+
+/// Create a durable, scheduler-owned automation for a typed integration.
+///
+/// Scheduled native actions are deliberately limited to read-only plans. A
+/// recurring filesystem/system/network write must be surfaced as a fresh
+/// approval decision for each execution instead of inheriting an old grant.
+pub fn create_integration_automation(
+    registry_path: &Path,
+    integration: &dyn Integration,
+    action: &IntegrationAction,
+    id: String,
+    name: Option<String>,
+    trigger: Trigger,
+) -> Result<Automation> {
+    if id.trim().is_empty() {
+        anyhow::bail!("integration automation id must not be empty");
+    }
+    let plan = integration.plan(action)?;
+    if !matches!(DefaultPolicy.evaluate(&plan), PolicyDecision::Allowed) {
+        anyhow::bail!(
+            "scheduled integration actions must be read-only or dry-run; request approval for a one-time write"
+        );
+    }
+    let integration_spec = IntegrationSpec::new(
+        plan.integration.to_string(),
+        plan.action.clone(),
+        action.parameters.clone(),
+    )?;
+    let next_run_at = scheduler::next_run(&trigger, Utc::now())?;
+    let display_name = name.unwrap_or_else(|| format!("{} · {}", plan.integration, plan.action));
+    if display_name.trim().is_empty() {
+        anyhow::bail!("integration automation name must not be empty");
+    }
+    let automation = Automation {
+        id,
+        name: display_name,
+        ownership: Ownership::Managed,
+        runtime_state: RuntimeState::Enabled,
+        trigger,
+        next_run_at,
+        timeout_seconds: plan.timeout_seconds,
+        steps: vec![StepSpec {
+            id: "integration".into(),
+            command: Default::default(),
+            responses: None,
+            integration: Some(integration_spec),
+        }],
+        ..Automation::default()
+    };
+    let registry = Registry::open(registry_path)?;
+    if registry.get_automation(&automation.id)?.is_some()
+        || registry.get_automation(&automation.name)?.is_some()
+    {
+        anyhow::bail!(
+            "automation id or name already exists: {}",
+            if registry.get_automation(&automation.id)?.is_some() {
+                automation.id
+            } else {
+                automation.name
+            }
+        );
+    }
+    registry.save_automation(&automation)?;
+    registry.append_event(&Event {
+        run_id: None,
+        occurred_at: Utc::now(),
+        event_type: "integration.automation.created".into(),
+        payload: serde_json::json!({
+            "automation_id": automation.id,
+            "integration": plan.integration,
+            "action": plan.action,
+            "trigger": automation.trigger,
+            "risk": plan.risk,
+            "dry_run": plan.dry_run,
+        }),
+    })?;
+    Ok(automation)
 }
 
 /// Keep the durable approval request to the typed parameter surface of the
@@ -354,8 +511,11 @@ pub async fn execute_approved_integration(
     }
 }
 
-fn integration_automation(plan: &crate::integrations::ExecutionPlan) -> Automation {
-    Automation {
+fn integration_automation(
+    plan: &crate::integrations::ExecutionPlan,
+    action: &IntegrationAction,
+) -> Result<Automation> {
+    Ok(Automation {
         id: format!("integration.{}.{}", plan.integration, plan.action),
         name: format!("{} · {}", plan.integration, plan.action),
         ownership: Ownership::Managed,
@@ -364,11 +524,321 @@ fn integration_automation(plan: &crate::integrations::ExecutionPlan) -> Automati
         timeout_seconds: plan.timeout_seconds,
         steps: vec![crate::core::StepSpec {
             id: "integration".into(),
-            command: plan.command.clone(),
+            command: Default::default(),
             responses: None,
+            integration: Some(IntegrationSpec::new(
+                plan.integration.to_string(),
+                plan.action.clone(),
+                action.parameters.clone(),
+            )?),
         }],
         ..Automation::default()
+    })
+}
+
+fn matches_same_integration_automation(left: &Automation, right: &Automation) -> bool {
+    left.ownership == Ownership::Managed
+        && left.source_id.is_none()
+        && left.steps.len() == 1
+        && right.steps.len() == 1
+        && left.steps[0].command.executable.as_os_str().is_empty()
+        && right.steps[0].command.executable.as_os_str().is_empty()
+        && left.steps[0].integration.as_ref().map(|spec| {
+            (
+                spec.integration.as_str(),
+                spec.action.as_str(),
+                &spec.parameters,
+            )
+        }) == right.steps[0].integration.as_ref().map(|spec| {
+            (
+                spec.integration.as_str(),
+                spec.action.as_str(),
+                &spec.parameters,
+            )
+        })
+}
+
+fn integration_action_from_spec(spec: &IntegrationSpec) -> Result<IntegrationAction> {
+    let validated = IntegrationSpec::new(
+        spec.integration.clone(),
+        spec.action.clone(),
+        spec.parameters.clone(),
+    )?;
+    let action = IntegrationAction::with_parameters(validated.action, validated.parameters)?;
+    Ok(match &spec.approval_id {
+        Some(approval_id) => action.with_approval(approval_id.clone()),
+        None => action,
+    })
+}
+
+fn redacted_integration_output(plan: &crate::integrations::ExecutionPlan, output: &str) -> String {
+    let mut output = if matches!(
+        plan.integration.as_str(),
+        "gitleaks" | "trivy" | "osv-scanner"
+    ) {
+        if output.is_empty() {
+            String::new()
+        } else {
+            "[scanner output redacted; see normalized findings]".into()
+        }
+    } else {
+        output.to_owned()
+    };
+    for environment in &plan.environment_refs {
+        if let Ok(secret) = std::env::var(&environment.name)
+            && !secret.is_empty()
+        {
+            output = output.replace(&secret, "[REDACTED]");
+        }
     }
+    output
+}
+
+fn persist_integration_run(
+    registry_path: &Path,
+    plan: &crate::integrations::ExecutionPlan,
+    run: &RunResult,
+) -> Result<()> {
+    let registry = Registry::open(registry_path)?;
+    registry.record_run_end(run)?;
+    registry.append_event(&Event {
+        run_id: Some(run.run_id.clone()),
+        occurred_at: Utc::now(),
+        event_type: format!(
+            "executor.integration.{}",
+            if run.status == "succeeded" {
+                "completed"
+            } else {
+                "failed"
+            }
+        ),
+        payload: serde_json::json!({
+            "integration": plan.integration,
+            "action": plan.action,
+            "exit_code": run.exit_code,
+        }),
+    })?;
+    registry.append_event(&Event {
+        run_id: Some(run.run_id.clone()),
+        occurred_at: Utc::now(),
+        event_type: format!("run.{}", run.status),
+        payload: serde_json::json!({
+            "exit_code": run.exit_code,
+            "duration_ms": run.duration_ms,
+        }),
+    })?;
+    Ok(())
+}
+
+async fn execute_scheduled_integration_step(
+    registry_path: &Path,
+    spec: &IntegrationSpec,
+    run_id: &str,
+    timeout_seconds: u64,
+    cancellation: watch::Receiver<bool>,
+) -> Result<RunResult> {
+    let integrations = crate::integrations::built_in_registry()?;
+    let integration_id = crate::integrations::IntegrationId::new(spec.integration.clone())?;
+    let integration = integrations
+        .get(&integration_id)
+        .with_context(|| format!("integration not registered: {}", spec.integration))?;
+    let action = integration_action_from_spec(spec)?;
+    let plan = integration.plan(&action)?;
+    let plan_fingerprint = plan.fingerprint()?;
+
+    match DefaultPolicy.evaluate(&plan) {
+        PolicyDecision::Allowed => {}
+        PolicyDecision::RequiresApproval { reason } => {
+            Registry::open(registry_path)?.append_event(&Event {
+                run_id: Some(run_id.to_owned()),
+                occurred_at: Utc::now(),
+                event_type: "integration.approval_required".into(),
+                payload: serde_json::json!({
+                    "integration": plan.integration,
+                    "action": plan.action,
+                    "risk": plan.risk,
+                    "plan_fingerprint": plan_fingerprint,
+                    "approval_id": action.approval_id,
+                    "reason": reason,
+                }),
+            })?;
+            let Some(approval_id) = action.approval_id.as_deref() else {
+                return Ok(RunResult {
+                    run_id: run_id.to_owned(),
+                    status: "failed".into(),
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!("integration action held for approval: {reason}"),
+                    duration_ms: 0,
+                });
+            };
+            let registry = Registry::open(registry_path)?;
+            let approval = registry
+                .get_approval(approval_id)?
+                .with_context(|| format!("approval not found: {approval_id}"))?;
+            if approval.integration != plan.integration.to_string()
+                || approval.action != plan.action
+                || approval.plan_fingerprint != plan_fingerprint
+            {
+                return Ok(RunResult {
+                    run_id: run_id.to_owned(),
+                    status: "failed".into(),
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "approval does not match the requested integration plan: {approval_id}"
+                    ),
+                    duration_ms: 0,
+                });
+            }
+            let consumed = registry.consume_approval(approval_id, &plan_fingerprint)?;
+            registry.append_event(&Event {
+                run_id: Some(run_id.to_owned()),
+                occurred_at: Utc::now(),
+                event_type: "integration.approval.consumed".into(),
+                payload: serde_json::json!({
+                    "approval_id": consumed.id,
+                    "integration": consumed.integration,
+                    "action": consumed.action,
+                    "plan_fingerprint": consumed.plan_fingerprint,
+                }),
+            })?;
+        }
+        PolicyDecision::Denied { reason } => {
+            Registry::open(registry_path)?.append_event(&Event {
+                run_id: Some(run_id.to_owned()),
+                occurred_at: Utc::now(),
+                event_type: "integration.denied".into(),
+                payload: serde_json::json!({
+                    "integration": plan.integration,
+                    "action": plan.action,
+                    "reason": reason,
+                }),
+            })?;
+            return Ok(RunResult {
+                run_id: run_id.to_owned(),
+                status: "failed".into(),
+                exit_code: None,
+                stdout: String::new(),
+                stderr: format!("integration action denied: {reason}"),
+                duration_ms: 0,
+            });
+        }
+    }
+
+    let raw_run = if plan.plan_only {
+        RunResult {
+            run_id: run_id.to_owned(),
+            status: "succeeded".into(),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+        }
+    } else {
+        match executor::execute_with_cancellation(&plan.command, timeout_seconds, cancellation)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => RunResult {
+                run_id: run_id.to_owned(),
+                status: "failed".into(),
+                exit_code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+                duration_ms: 0,
+            },
+        }
+    };
+    let process_output = ProcessOutput {
+        status: match raw_run.status.as_str() {
+            "succeeded" => ProcessStatus::Succeeded,
+            "timed_out" => ProcessStatus::TimedOut,
+            "cancelled" => ProcessStatus::Cancelled,
+            _ => ProcessStatus::Failed,
+        },
+        exit_code: raw_run.exit_code,
+        stdout: raw_run.stdout.clone(),
+        stderr: raw_run.stderr.clone(),
+        duration_ms: raw_run.duration_ms,
+    };
+    let result = match integration.parse(&action, process_output) {
+        Ok(result) => result,
+        Err(error) => {
+            Registry::open(registry_path)?.append_event(&Event {
+                run_id: Some(run_id.to_owned()),
+                occurred_at: Utc::now(),
+                event_type: "integration.parse.failed".into(),
+                payload: serde_json::json!({
+                    "integration": plan.integration,
+                    "action": plan.action,
+                    "error": error.to_string(),
+                }),
+            })?;
+            return Ok(RunResult {
+                run_id: run_id.to_owned(),
+                status: "failed".into(),
+                exit_code: raw_run.exit_code,
+                stdout: redacted_integration_output(&plan, &raw_run.stdout),
+                stderr: redacted_integration_output(&plan, &raw_run.stderr),
+                duration_ms: raw_run.duration_ms,
+            });
+        }
+    };
+    let verification = integration.verify(&action, &result)?;
+    let registry = Registry::open(registry_path)?;
+    registry.append_event(&Event {
+        run_id: Some(run_id.to_owned()),
+        occurred_at: Utc::now(),
+        event_type: "integration.result".into(),
+        payload: serde_json::to_value(&result)?,
+    })?;
+    for (key, metric) in &result.metrics {
+        registry.record_metric(&crate::core::Metric {
+            id: format!("metric_integration_{}", Uuid::new_v4()),
+            run_id: Some(run_id.to_owned()),
+            key: key.clone(),
+            value: metric.value,
+            unit: metric.unit.clone(),
+            source: format!("integration.{}", plan.integration),
+            recorded_at: Utc::now(),
+        })?;
+    }
+    if result.status == IntegrationStatus::NeedsAttention {
+        registry.append_event(&Event {
+            run_id: Some(run_id.to_owned()),
+            occurred_at: Utc::now(),
+            event_type: "integration.attention".into(),
+            payload: serde_json::to_value(&result)?,
+        })?;
+    }
+    if verification.status == VerificationStatus::Failed {
+        registry.append_event(&Event {
+            run_id: Some(run_id.to_owned()),
+            occurred_at: Utc::now(),
+            event_type: "integration.verification.failed".into(),
+            payload: serde_json::to_value(&verification)?,
+        })?;
+    }
+    let status = if result.status == IntegrationStatus::Failed
+        || verification.status == VerificationStatus::Failed
+    {
+        "failed"
+    } else if result.status == IntegrationStatus::NeedsAttention {
+        "needs_attention"
+    } else if raw_run.status == "succeeded" {
+        "succeeded"
+    } else {
+        raw_run.status.as_str()
+    };
+    Ok(RunResult {
+        run_id: run_id.to_owned(),
+        status: status.into(),
+        exit_code: raw_run.exit_code,
+        stdout: redacted_integration_output(&plan, &raw_run.stdout),
+        stderr: redacted_integration_output(&plan, &raw_run.stderr),
+        duration_ms: raw_run.duration_ms,
+    })
 }
 
 static ACTIVE_RUNS: OnceLock<Mutex<HashMap<String, watch::Sender<bool>>>> = OnceLock::new();
@@ -480,11 +950,30 @@ async fn execute_automation_at(
     for step in &automation.steps {
         let has_command = !step.command.executable.as_os_str().is_empty();
         let has_responses = step.responses.is_some();
-        if !has_command && !has_responses {
+        let has_integration = step.integration.is_some();
+        let executor_count = [has_command, has_responses, has_integration]
+            .into_iter()
+            .filter(|value| *value)
+            .count();
+        if executor_count == 0 {
             anyhow::bail!("step {} has no configured executor", step.id);
         }
-        if has_command && has_responses {
+        if executor_count > 1 {
             anyhow::bail!("step {} configures multiple executors", step.id);
+        }
+        if let Some(spec) = &step.integration {
+            if spec.integration.trim().is_empty() || spec.action.trim().is_empty() {
+                anyhow::bail!(
+                    "step {} has an incomplete integration specification",
+                    step.id
+                );
+            }
+            if !spec.parameters.is_object() {
+                anyhow::bail!(
+                    "step {} integration parameters must be a JSON object",
+                    step.id
+                );
+            }
         }
         if let Some(spec) = &step.responses {
             if spec.prompt.trim().is_empty() {
@@ -528,7 +1017,9 @@ async fn execute_automation_at(
     };
     'steps: for step in &automation.steps {
         for attempt in 1..=automation.retry.max_attempts {
-            let executor_kind = if step.responses.is_some() {
+            let executor_kind = if step.integration.is_some() {
+                "integration"
+            } else if step.responses.is_some() {
                 "responses"
             } else {
                 "command"
@@ -541,10 +1032,16 @@ async fn execute_automation_at(
                     event_type: format!("executor.{executor_kind}.started"),
                     payload: serde_json::json!({
                         "step": step.id,
-                        "argv": if executor_kind == "command" {
-                            serde_json::Value::String(step.command.display())
-                        } else {
-                            serde_json::Value::Null
+                        "argv": match executor_kind {
+                            "command" => serde_json::Value::String(step.command.display()),
+                            "integration" => step.integration.as_ref().map_or(
+                                serde_json::Value::Null,
+                                |spec| serde_json::json!({
+                                    "integration": spec.integration,
+                                    "action": spec.action,
+                                }),
+                            ),
+                            _ => serde_json::Value::Null,
                         },
                         "model": step.responses.as_ref().and_then(|spec| spec.model.clone()),
                         "attempt": attempt,
@@ -594,6 +1091,26 @@ async fn execute_automation_at(
                         stdout: String::new(),
                         stderr: error.to_string(),
                         duration_ms: started_at.elapsed().as_millis(),
+                    },
+                }
+            } else if let Some(spec) = &step.integration {
+                match execute_scheduled_integration_step(
+                    registry_path,
+                    spec,
+                    &run_id,
+                    automation.timeout_seconds,
+                    cancellation.clone(),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => RunResult {
+                        run_id: run_id.clone(),
+                        status: "failed".into(),
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: error.to_string(),
+                        duration_ms: 0,
                     },
                 }
             } else {
@@ -846,6 +1363,7 @@ mod tests {
                 id: "echo".into(),
                 command: CommandSpec::argv("/bin/echo", ["rpc-ok"]),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -885,6 +1403,73 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(logs.stdout.contains("clean --dry-run"));
+    }
+
+    #[tokio::test]
+    async fn scheduled_read_only_integration_is_typed_and_redacts_scanner_logs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let integration = crate::integrations::TopgradeIntegration::new("/bin/echo", 2);
+        let action = IntegrationAction::with_parameters("plan", serde_json::json!({})).unwrap();
+        let automation = create_integration_automation(
+            &path,
+            &integration,
+            &action,
+            "topgrade-plan".into(),
+            None,
+            Trigger::Manual,
+        )
+        .unwrap();
+        assert!(
+            automation.steps[0]
+                .command
+                .executable
+                .as_os_str()
+                .is_empty()
+        );
+        assert_eq!(
+            automation.steps[0]
+                .integration
+                .as_ref()
+                .map(|spec| spec.integration.as_str()),
+            Some("topgrade")
+        );
+        let run = run_named(&path, "topgrade-plan", false).await.unwrap();
+        assert_eq!(run.status, "succeeded");
+        let stored = Registry::open(&path)
+            .unwrap()
+            .get_run_logs(&run.run_id)
+            .unwrap()
+            .unwrap();
+        assert!(stored.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scheduled_write_integration_is_refused_before_persistence() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let integration = MoleIntegration::new("/bin/echo", 2);
+        let action =
+            IntegrationAction::with_parameters("clean", serde_json::json!({"dry_run": false}))
+                .unwrap();
+        let error = create_integration_automation(
+            &path,
+            &integration,
+            &action,
+            "mole-clean".into(),
+            None,
+            Trigger::Interval { seconds: 3600 },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("must be read-only or dry-run"));
+        assert!(
+            Registry::open(&path)
+                .unwrap()
+                .get_automation("mole-clean")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -957,6 +1542,7 @@ mod tests {
                 id: "false".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -997,6 +1583,7 @@ mod tests {
                 id: "sleep".into(),
                 command: CommandSpec::argv("/bin/sleep", ["10"]),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -1058,6 +1645,7 @@ mod tests {
                 id: "echo".into(),
                 command: CommandSpec::argv("/bin/echo", ["scheduled"]),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -1104,6 +1692,7 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -1145,6 +1734,7 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -1188,6 +1778,7 @@ mod tests {
                 id: "should-not-run".into(),
                 command: CommandSpec::argv("/bin/false", Vec::<String>::new()),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };
@@ -1233,6 +1824,7 @@ mod tests {
                 id: "sleep".into(),
                 command: CommandSpec::argv("/bin/sleep", ["10"]),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };

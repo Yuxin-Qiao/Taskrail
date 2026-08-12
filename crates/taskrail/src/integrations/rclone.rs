@@ -181,6 +181,7 @@ impl Integration for RcloneIntegration {
             requires_approval: risk.requires_approval(),
             supports_dry_run: action.action == "sync",
             dry_run,
+            plan_only: false,
             timeout_seconds: self.timeout_seconds,
             verification: None,
         };

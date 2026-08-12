@@ -1,7 +1,12 @@
 [package]
 name = "taskrail"
 version = "0.1.0"
-description = "A local automation manager for developers"
+description = "A local-first automation control plane for macOS and Linux"
+repository = "https://github.com/Yuxin-Qiao/Taskrail"
+homepage = "https://github.com/Yuxin-Qiao/Taskrail"
+readme = "../../README.md"
+keywords = ["automation", "scheduler", "mcp", "macos", "linux"]
+categories = ["command-line-utilities", "development-tools"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

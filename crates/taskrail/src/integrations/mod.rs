@@ -34,3 +34,21 @@ pub use registry::{Integration, IntegrationRegistry};
 pub use restic::ResticIntegration;
 pub use security::{SecurityIntegration, SecurityTool};
 pub use topgrade::TopgradeIntegration;
+
+/// Construct the built-in adapter set used by the daemon, CLI, and MCP
+/// boundary. Keeping this in one place prevents a surface from silently
+/// exposing a different integration catalog from another surface.
+pub fn built_in_registry() -> anyhow::Result<IntegrationRegistry> {
+    let mut registry = IntegrationRegistry::default();
+    registry.register(MoleIntegration::default())?;
+    registry.register(ResticIntegration::default())?;
+    registry.register(RcloneIntegration::default())?;
+    registry.register(GithubIntegration::default())?;
+    registry.register(HomebrewIntegration::default())?;
+    registry.register(MasIntegration::default())?;
+    registry.register(SecurityIntegration::osv())?;
+    registry.register(SecurityIntegration::gitleaks())?;
+    registry.register(SecurityIntegration::trivy())?;
+    registry.register(TopgradeIntegration::default())?;
+    Ok(registry)
+}

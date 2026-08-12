@@ -554,6 +554,86 @@ pub struct AdoptionReport {
     pub message: String,
 }
 
+/// Shared lifecycle entry point for CLI, JSON-RPC, and MCP callers.
+pub fn adopt_source(registry: &Registry, id: &str, apply: bool) -> Result<AdoptionReport> {
+    let source = registry
+        .list_sources()?
+        .into_iter()
+        .find(|source| source.source_id == id || source.native_id == id)
+        .with_context(|| format!("source not found: {id}; run a native scan first"))?;
+    let automation = registry
+        .get_automation(&source.source_id)?
+        .with_context(|| "discovered source has no Registry automation")?;
+    match source.provider.as_str() {
+        "cron" => AdoptionEngine::new(registry, CronController::default())
+            .adopt(&source, automation, apply),
+        "launchd" => AdoptionEngine::new(registry, LaunchdController::default())
+            .adopt(&source, automation, apply),
+        "systemd" => AdoptionEngine::new(registry, SystemdController::default())
+            .adopt(&source, automation, apply),
+        provider => anyhow::bail!(
+            "native adoption for {provider} is not implemented; source remains observe-only"
+        ),
+    }
+}
+
+/// Restore a journaled native snapshot through the provider-specific
+/// controller. The operation is deliberately explicit and never inferred
+/// from a source scan, so a stale scan cannot become a write target.
+pub fn rollback_source(registry: &Registry, tx_id: &str) -> Result<()> {
+    let record = registry
+        .get_adoption(tx_id)?
+        .with_context(|| format!("adoption transaction not found: {tx_id}"))?;
+    let source = registry
+        .list_sources()?
+        .into_iter()
+        .find(|source| source.source_id == record.source_id)
+        .with_context(|| format!("source not found for adoption transaction {tx_id}"))?;
+    let automation = registry
+        .list_automations()?
+        .into_iter()
+        .find(|automation| automation.source_id.as_deref() == Some(record.source_id.as_str()));
+    match source.provider.as_str() {
+        "cron" => {
+            let snapshot: CronSnapshot =
+                serde_json::from_value(record.snapshot).context("decode cron adoption snapshot")?;
+            rollback_adoption(
+                registry,
+                tx_id,
+                &record.source_id,
+                &snapshot,
+                automation,
+                &CronController::default(),
+            )
+        }
+        "launchd" => {
+            let snapshot: LaunchdSnapshot = serde_json::from_value(record.snapshot)
+                .context("decode launchd adoption snapshot")?;
+            rollback_adoption(
+                registry,
+                tx_id,
+                &record.source_id,
+                &snapshot,
+                automation,
+                &LaunchdController::default(),
+            )
+        }
+        "systemd" => {
+            let snapshot: SystemdSnapshot = serde_json::from_value(record.snapshot)
+                .context("decode systemd adoption snapshot")?;
+            rollback_adoption(
+                registry,
+                tx_id,
+                &record.source_id,
+                &snapshot,
+                automation,
+                &SystemdController::default(),
+            )
+        }
+        provider => anyhow::bail!("cannot rollback unsupported provider {provider}"),
+    }
+}
+
 pub struct AdoptionEngine<'a, C> {
     registry: &'a Registry,
     controller: C,
@@ -842,6 +922,7 @@ mod tests {
                 id: "main".into(),
                 command: CommandSpec::argv("echo", ["ok"]),
                 responses: None,
+                integration: None,
             }],
             ..Automation::default()
         };

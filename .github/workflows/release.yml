@@ -45,7 +45,7 @@ jobs:
           test -n "$binary"
           app="Taskrail.app"
           mkdir -p "$app/Contents/MacOS"
-          cp "$binary" "$app/Contents/MacOS/Taskrail"
+          cp "$binary" "$app/Contents/MacOS/taskrail"
           cp Info.plist "$app/Contents/Info.plist"
           ditto -c -k --sequesterRsrc --keepParent "$app" "../../taskrail-${GITHUB_REF_NAME}-macos-unsigned.app.zip"
       - uses: actions/upload-artifact@v4

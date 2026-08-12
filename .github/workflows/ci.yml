@@ -26,6 +26,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Validate OpenAI submission pack
+        run: python3 scripts/validate_openai_submission.py
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -39,6 +42,20 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --all-features
+
+      - name: Smoke-test Linux XDG defaults
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          tmp="$(mktemp -d)"
+          export HOME="$tmp/home"
+          export XDG_DATA_HOME="$tmp/data"
+          export XDG_RUNTIME_DIR="$tmp/runtime"
+          mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          cargo run --quiet -- status
+          test -f "$XDG_DATA_HOME/taskrail/registry.sqlite3"
+          cargo run --quiet -- scan --source systemd --json
+          cargo run --quiet -- scan --source cron --json
 
   desktop:
     name: Swift desktop client
