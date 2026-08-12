@@ -170,7 +170,9 @@ impl FleetGateway {
 
     pub async fn call_tool(&self, host_id: &str, tool: &str, arguments: Value) -> Result<Value> {
         let host = self.host(host_id)?;
-        if is_mutating_tool(tool) && !host.allow_writes {
+        if (is_mutating_tool(tool) || is_mutating_integration_call(tool, &arguments))
+            && !host.allow_writes
+        {
             anyhow::bail!(
                 "fleet host {host_id} is read-only; set allow_writes=true only for an explicitly trusted private endpoint"
             );
@@ -340,6 +342,31 @@ pub fn is_mutating_tool(tool: &str) -> bool {
     )
 }
 
+/// Integration tools contain both read-only and write-capable actions. Keep
+/// this decision at the Fleet boundary so a read-only host is rejected before
+/// any network request is sent to the remote MCP server.
+pub fn is_mutating_integration_call(tool: &str, arguments: &Value) -> bool {
+    let action = arguments.get("action").and_then(Value::as_str);
+    match (tool, action) {
+        ("taskrail_mole", Some("clean")) => !arguments
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        ("taskrail_restic", Some("backup" | "forget" | "prune")) => true,
+        ("taskrail_rclone", Some("copy")) => true,
+        ("taskrail_rclone", Some("sync")) => !arguments
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        ("taskrail_homebrew", Some("upgrade" | "cleanup")) => !arguments
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        ("taskrail_topgrade", Some("run")) => true,
+        _ => false,
+    }
+}
+
 fn remote_error_text(result: &Value) -> String {
     result
         .get("content")
@@ -410,6 +437,22 @@ mod tests {
     fn writes_require_explicit_host_opt_in() {
         assert!(is_mutating_tool("taskrail_run_automation"));
         assert!(!is_mutating_tool("taskrail_overview"));
+        assert!(is_mutating_integration_call(
+            "taskrail_mole",
+            &json!({"action":"clean"})
+        ));
+        assert!(!is_mutating_integration_call(
+            "taskrail_mole",
+            &json!({"action":"clean","dry_run":true})
+        ));
+        assert!(is_mutating_integration_call(
+            "taskrail_rclone",
+            &json!({"action":"sync"})
+        ));
+        assert!(!is_mutating_integration_call(
+            "taskrail_rclone",
+            &json!({"action":"sync","dry_run":true})
+        ));
         let mut config = FleetConfig {
             version: 1,
             hosts: vec![host(false)],
@@ -436,6 +479,11 @@ mod tests {
         .unwrap();
         let error = gateway
             .call_tool("macbook", "taskrail_run_automation", json!({}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("read-only"));
+        let error = gateway
+            .call_tool("macbook", "taskrail_mole", json!({"action":"clean"}))
             .await
             .unwrap_err();
         assert!(error.to_string().contains("read-only"));

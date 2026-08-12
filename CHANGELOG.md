@@ -8,6 +8,8 @@
   targets; x86_64 and Windows builds are no longer published or tested.
 - Add a local multi-host MCP fleet gateway with stable host routing, read-only
   defaults, explicit host-targeted tools, and environment-only token references.
+- Extend Fleet with host-targeted native adoption, drift acknowledgement, typed
+  integration scheduling, and durable approval lifecycle tools.
 - Add a read-only MCP host overview that combines local identity, native
   discovery, Taskrail automations, recent runs, and attention items.
 - Add periodic read-only native-discovery supervision, safe missing-source

@@ -19,7 +19,8 @@ add/register → schedule → run → history/logs → tui
 - 私有 ChatGPT Scheduled 任务可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；
   公开应用审核和托管部署属于独立的外部发布门槛；
 - `taskrail mcp-fleet` 可以把明确配置的多台主机聚合为一个 MCP 应用；端点和令牌环境变量名
-  保留在本机，默认只读，写入路由必须显式启用；
+  保留在本机，默认只读，写入路由必须显式启用；私有主机定向能力包括原生领养、漂移确认、
+  类型化集成和持久化审批；
 - 公开只读 `taskrail mcp-http` 适配器可部署在 TLS/认证边缘之后；`deploy/` 下的容器示例
   仅支持单主机，不是托管的多租户服务；
 - 原生调度器发现和类型化语义集成位于核心管理器边缘；

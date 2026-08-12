@@ -694,6 +694,18 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             true,
         ),
         tool(
+            "taskrail_fleet_status",
+            "Remote Taskrail status",
+            "Use this for a lightweight connectivity and daemon status check on one named host before another Fleet operation.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
             "taskrail_fleet_discover",
             "Discover a remote host",
             "Use this when the user wants a fresh read-only native scheduler scan on one configured host. It never mutates that host's scheduler definitions or Registry.",
@@ -712,6 +724,18 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             "taskrail_fleet_list_automations",
             "List remote automations",
             "Use this when the user wants the managed, adopted, observed, paused, or scheduled automations on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_integrations",
+            "List remote integrations",
+            "Use this when the user wants to know which typed native integrations are available and configured on one named host.",
             object_schema(
                 json!({"host_id":{"type":"string","minLength":1}}),
                 &["host_id"],
@@ -761,6 +785,251 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             true,
         ),
         tool(
+            "taskrail_fleet_list_events",
+            "List remote audit events",
+            "Use this when the user wants a bounded audit trail for recent activity on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_adoptions",
+            "List remote adoption transactions",
+            "Use this when the user wants to inspect native-scheduler adoption transactions and recovery state on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_get_adoption",
+            "Inspect remote adoption",
+            "Use this when the user wants the snapshot, state, or recovery step for one native adoption transaction on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"tx_id":{"type":"string","minLength":1}}),
+                &["host_id", "tx_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_adopt_automation",
+            "Adopt remote native automation",
+            "Use this first with apply=false to preflight a native scheduler entry on a named host. Only use apply=true when the user explicitly asks Taskrail to disable that native entry and make the remote control plane its owner.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1},"apply":{"type":"boolean","default":false}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_rollback_adoption",
+            "Rollback remote adoption",
+            "Use this only when the user explicitly requests restoring a native scheduler snapshot on a named host. The transaction ID is required and the remote owner remains fail-closed for review.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"tx_id":{"type":"string","minLength":1}}),
+                &["host_id", "tx_id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_acknowledge_drift",
+            "Acknowledge remote drift",
+            "Use this after a fresh remote native scan confirms an intentional external change. It updates the remote baseline and leaves the owned automation paused.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_mole",
+            "Remote Mole integration",
+            "Use this for typed Mole actions on one named host: detect, doctor, version, analyze, status, history, or clean. Prefer clean with dry_run=true; real cleanup remains policy-controlled and requires a write-enabled private host.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","version","analyze","status","history","clean"]},
+                    "dry_run":{"type":"boolean","default":true},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_restic",
+            "Remote restic integration",
+            "Use this for typed restic repository actions on one named host: detect, doctor, snapshots, backup, check, forget, or prune. Credentials remain environment references on the target host; writes require a write-enabled private host and remote approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","snapshots","backup","check","forget","prune"]},
+                    "path":{"type":"string","minLength":1},
+                    "repository_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "password_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_rclone",
+            "Remote rclone integration",
+            "Use this for typed rclone actions on one named host: detect, doctor, list-remotes, check, copy, or sync. Prefer sync with dry_run=true; copy and real sync require a write-enabled private host and remote policy approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","list-remotes","check","copy","sync"]},
+                    "source":{"type":"string","minLength":1},
+                    "destination":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "config_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_github",
+            "Remote GitHub integration",
+            "Use this for typed, read-only GitHub observations on one named host: detect, doctor, issues, pulls, failed-runs, or checks. It never accepts arbitrary gh api or write arguments.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","issues","pulls","failed-runs","checks"]},
+                    "repo":{"type":"string","pattern":"^[^/\\s]+/[^/\\s]+$"},
+                    "pull_number":{"type":"integer","minimum":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_homebrew",
+            "Remote Homebrew integration",
+            "Use this for typed Homebrew actions on one named host: detect, doctor, outdated, bundle-check, upgrade, or cleanup. Prefer upgrade and cleanup with dry_run=true; real writes require a write-enabled private host and remote approval, and sudo is never used.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","outdated","bundle-check","upgrade","cleanup"]},
+                    "file":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_mas",
+            "Remote Mac App Store integration",
+            "Use this for typed, read-only Mac App Store inspection on one named macOS host: detect, doctor, list, or outdated. It never installs or updates an app.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","list","outdated"]}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_osv_scanner",
+            "Remote OSV scanner integration",
+            "Use this for a typed, read-only OSV dependency scan on one named host. Findings are normalized by the target and raw secret values are not returned.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_gitleaks",
+            "Remote Gitleaks integration",
+            "Use this for a typed, read-only Gitleaks scan on one named host. Only rule, location, severity, and derived fingerprints are exposed; secret or match values are never returned.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1},
+                    "baseline":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_trivy",
+            "Remote Trivy integration",
+            "Use this for typed, read-only Trivy filesystem or repository scans on one named host. Vulnerabilities, misconfigurations, secrets, and licenses are normalized without raw secret values.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1},
+                    "scan_type":{"type":"string","enum":["filesystem","repository"],"default":"filesystem"}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_topgrade",
+            "Remote Topgrade integration",
+            "Use this for typed Topgrade doctor, inspect, plan, or run actions on one named host. Inspect and plan are read-only; run is a system write that requires a write-enabled private host and remote approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","inspect","plan","run"]},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
             "taskrail_fleet_create_automation",
             "Create remote automation",
             "Use this only when the user explicitly asks to create a direct-argv automation on a named private host. The fleet config must opt that host into writes; the remote host still validates and owns the operation. Never create shell pipelines.",
@@ -782,6 +1051,107 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             ),
             false,
             false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_delete_automation",
+            "Delete remote automation",
+            "Use this only when the user explicitly asks to delete one managed automation on a named private host. The remote host protects observed, adopted, and history-bearing definitions.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_schedule_integration",
+            "Schedule remote integration",
+            "Use this when the user explicitly asks to persist a typed read-only or dry-run integration automation on a named private host. The remote host still applies policy and refuses unsupported recurring writes.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "id":{"type":"string","minLength":1},
+                    "name":{"type":"string","minLength":1},
+                    "integration":{"type":"string","minLength":1},
+                    "action":{"type":"string","minLength":1},
+                    "parameters":{"type":"object"},
+                    "trigger":{"type":"string","enum":["manual","interval","cron"],"default":"manual"},
+                    "interval_seconds":{"type":"integer","minimum":1},
+                    "cron":{"type":"string","minLength":1},
+                    "timezone":{"type":"string","default":"local"}
+                }),
+                &["host_id", "id", "integration", "action"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_list_approvals",
+            "List remote approvals",
+            "Use this when the user wants to inspect pending or completed typed-action approvals on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_request_approval",
+            "Request remote approval",
+            "Use this to create a persisted, plan-bound approval request for a typed native integration on a named private host. It never executes the action.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","topgrade"]},
+                    "action":{"type":"string","minLength":1},
+                    "parameters":{"type":"object"},
+                    "ttl_seconds":{"type":"integer","minimum":1,"maximum":604800,"default":3600}
+                }),
+                &["host_id", "integration", "action"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_approve",
+            "Approve remote action",
+            "Use this only after the operator explicitly approves a specific persisted request on a named host; approval is one-time and plan-bound.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_reject",
+            "Reject remote action",
+            "Use this to reject a persisted native integration approval request on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_execute_approved",
+            "Execute approved remote action",
+            "Use this to execute one specific approved typed integration request on a named host. The remote plan must match exactly and the grant is consumed once before execution.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            true,
             false,
         ),
         tool(
@@ -866,25 +1236,12 @@ async fn fleet_call_tool(params: &Value, gateway: &crate::fleet::FleetGateway) -
         .filter(|value| !value.trim().is_empty())
         .context("fleet tool requires a non-empty host_id")?
         .to_owned();
-    let remote_tool = match name {
-        "taskrail_fleet_host_overview" => "taskrail_overview",
-        "taskrail_fleet_discover" => "taskrail_discover_local_automations",
-        "taskrail_fleet_list_automations" => "taskrail_list_automations",
-        "taskrail_fleet_get_automation" => "taskrail_get_automation",
-        "taskrail_fleet_list_runs" => "taskrail_list_runs",
-        "taskrail_fleet_list_attention" => "taskrail_list_attention",
-        "taskrail_fleet_create_automation" => "taskrail_create_automation",
-        "taskrail_fleet_pause_automation" => "taskrail_pause_automation",
-        "taskrail_fleet_resume_automation" => "taskrail_resume_automation",
-        "taskrail_fleet_run_automation" => "taskrail_run_automation",
-        "taskrail_fleet_get_run_logs" => "taskrail_get_run_logs",
-        "taskrail_fleet_cancel_run" => "taskrail_cancel_run",
-        _ => anyhow::bail!("unknown Taskrail fleet tool: {name}"),
-    };
+    let remote_tool =
+        fleet_remote_tool(name).with_context(|| format!("unknown Taskrail fleet tool: {name}"))?;
     let mut remote_arguments = arguments;
     remote_arguments
         .as_object_mut()
-        .expect("fleet tool arguments are an object")
+        .context("fleet tool arguments must be an object")?
         .remove("host_id");
     let result = gateway
         .call_tool(&host_id, remote_tool, remote_arguments)
@@ -893,6 +1250,49 @@ async fn fleet_call_tool(params: &Value, gateway: &crate::fleet::FleetGateway) -
         name,
         json!({"host_id": host_id, "result": result}),
     ))
+}
+
+fn fleet_remote_tool(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "taskrail_fleet_host_overview" => "taskrail_overview",
+        "taskrail_fleet_status" => "taskrail_status",
+        "taskrail_fleet_discover" => "taskrail_discover_local_automations",
+        "taskrail_fleet_list_automations" => "taskrail_list_automations",
+        "taskrail_fleet_list_integrations" => "taskrail_list_integrations",
+        "taskrail_fleet_get_automation" => "taskrail_get_automation",
+        "taskrail_fleet_list_runs" => "taskrail_list_runs",
+        "taskrail_fleet_list_attention" => "taskrail_list_attention",
+        "taskrail_fleet_list_events" => "taskrail_list_events",
+        "taskrail_fleet_list_adoptions" => "taskrail_list_adoptions",
+        "taskrail_fleet_get_adoption" => "taskrail_get_adoption",
+        "taskrail_fleet_adopt_automation" => "taskrail_adopt_automation",
+        "taskrail_fleet_rollback_adoption" => "taskrail_rollback_adoption",
+        "taskrail_fleet_acknowledge_drift" => "taskrail_acknowledge_drift",
+        "taskrail_fleet_mole" => "taskrail_mole",
+        "taskrail_fleet_restic" => "taskrail_restic",
+        "taskrail_fleet_rclone" => "taskrail_rclone",
+        "taskrail_fleet_github" => "taskrail_github",
+        "taskrail_fleet_homebrew" => "taskrail_homebrew",
+        "taskrail_fleet_mas" => "taskrail_mas",
+        "taskrail_fleet_osv_scanner" => "taskrail_osv_scanner",
+        "taskrail_fleet_gitleaks" => "taskrail_gitleaks",
+        "taskrail_fleet_trivy" => "taskrail_trivy",
+        "taskrail_fleet_topgrade" => "taskrail_topgrade",
+        "taskrail_fleet_create_automation" => "taskrail_create_automation",
+        "taskrail_fleet_delete_automation" => "taskrail_delete_automation",
+        "taskrail_fleet_schedule_integration" => "taskrail_schedule_integration",
+        "taskrail_fleet_list_approvals" => "taskrail_list_approvals",
+        "taskrail_fleet_request_approval" => "taskrail_request_approval",
+        "taskrail_fleet_approve" => "taskrail_approve",
+        "taskrail_fleet_reject" => "taskrail_reject",
+        "taskrail_fleet_execute_approved" => "taskrail_execute_approved",
+        "taskrail_fleet_pause_automation" => "taskrail_pause_automation",
+        "taskrail_fleet_resume_automation" => "taskrail_resume_automation",
+        "taskrail_fleet_run_automation" => "taskrail_run_automation",
+        "taskrail_fleet_get_run_logs" => "taskrail_get_run_logs",
+        "taskrail_fleet_cancel_run" => "taskrail_cancel_run",
+        _ => return None,
+    })
 }
 
 fn tool_result(name: &str, result: Value) -> Value {
@@ -924,7 +1324,7 @@ mod fleet_contract_tests {
     #[test]
     fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
         let tools = fleet_tool_descriptors();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 38);
         let overview = tools
             .iter()
             .find(|tool| tool["name"] == "taskrail_fleet_overview")
@@ -943,6 +1343,40 @@ mod fleet_contract_tests {
                 .iter()
                 .any(|value| value == "host_id")
         );
+        for descriptor in &tools {
+            let name = descriptor["name"].as_str().unwrap();
+            if name == "taskrail_fleet_overview" {
+                continue;
+            }
+            assert!(
+                descriptor["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value == "host_id"),
+                "{name} must require host_id"
+            );
+        }
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "taskrail_fleet_adopt_automation")
+                .unwrap()["annotations"]["destructiveHint"],
+            true
+        );
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "taskrail_fleet_execute_approved")
+                .unwrap()["annotations"]["destructiveHint"],
+            true
+        );
+        for descriptor in tools {
+            let name = descriptor["name"].as_str().unwrap();
+            if name != "taskrail_fleet_overview" {
+                assert!(fleet_remote_tool(name).is_some(), "{name} lacks a route");
+            }
+        }
     }
 }
 

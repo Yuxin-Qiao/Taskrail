@@ -24,8 +24,8 @@ taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
 ~~~
 
 仓库中的示例主机默认禁用。fleet 工具首先提供 `taskrail_fleet_overview`，然后提供带明确
-`host_id` 的发现、清单、运行历史、日志和生命周期操作。默认只读；只有可信私有端点才应
-显式设置 `allow_writes: true`，且远端 Taskrail 仍负责最终策略和审批。
+`host_id` 的发现、清单、原生集成、领养、漂移、审计事件、运行历史、日志、审批和生命周期操作。
+默认只读；只有可信私有端点才应显式设置 `allow_writes: true`，且远端 Taskrail 仍负责最终策略和审批。
 
 ## 启动本地后端
 
@@ -220,6 +220,10 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 - taskrail_mas、taskrail_osv_scanner、taskrail_gitleaks 和 taskrail_trivy — 检查本地软件包和安全发现，不暴露密钥或匹配内容；
 - taskrail_topgrade — 检查或规划更新；执行需要审批；
 - taskrail_list_approvals、taskrail_request_approval、taskrail_approve、taskrail_reject 和 taskrail_execute_approved — 查看和操作持久化、绑定计划的审批流；审批只能使用一次，且不是 shell 授权。
+
+Fleet 网关提供对应的 `taskrail_fleet_` 主机定向操作，包括原生领养、漂移确认、类型化集成
+调度和审批生命周期。每个 Fleet 操作都必须明确提供 `host_id`；除非该主机显式配置
+`allow_writes: true`，否则写入操作会在发起网络请求前被拒绝。
 
 适配器不接受任意 shell 字符串、不暴露 SQLite 文件，也不会修改被观察的原生任务。原生
 领养仍然是显式的本地操作。

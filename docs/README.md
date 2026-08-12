@@ -23,7 +23,9 @@ add/register → schedule → run → history/logs → tui
   separate external release gates.
 - `taskrail mcp-fleet` can aggregate multiple explicitly configured hosts into
   one MCP app; host endpoints and token environment references remain local,
-  and write routing is opt-in and read-only by default.
+  and write routing is opt-in and read-only by default. Its private host-targeted
+  surface includes native adoption, drift acknowledgement, typed integrations,
+  and durable approvals.
 - The public read-only `taskrail mcp-http` adapter is available for deployment
   behind a TLS/authentication edge; the container example under `deploy/` is
   single-host only and is not a hosted multi-tenant service.

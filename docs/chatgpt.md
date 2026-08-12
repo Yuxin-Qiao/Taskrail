@@ -25,10 +25,11 @@ taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
 ```
 
 The fleet app exposes `taskrail_fleet_overview` first, followed by explicit
-`host_id`-targeted discovery, inventory, run history, logs, and lifecycle tools.
-Fleet hosts are read-only by default. `allow_writes: true` is an explicit opt-in
-for a trusted private endpoint; the remote Taskrail host still enforces its own
-policy and approval boundary.
+`host_id`-targeted discovery, inventory, native integrations, adoption, drift,
+audit events, run history, logs, approval, and lifecycle tools. Fleet hosts are
+read-only by default.
+`allow_writes: true` is an explicit opt-in for a trusted private endpoint; the
+remote Taskrail host still enforces its own policy and approval boundary.
 
 ## Start the local backend
 
@@ -271,6 +272,12 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   `taskrail_reject`, and `taskrail_execute_approved` — review and operate the
   persisted, plan-bound approval flow. Approval is one-time and never a shell
   grant.
+
+The fleet gateway exposes the corresponding host-targeted operations with the
+`taskrail_fleet_` prefix, including adoption, drift acknowledgement, typed
+integration scheduling, and approval lifecycle. Every fleet operation requires
+an explicit `host_id`; write-capable operations are rejected before network
+access unless that host is explicitly configured with `allow_writes: true`.
 
 The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local

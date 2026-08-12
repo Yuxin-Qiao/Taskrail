@@ -34,7 +34,8 @@ Execution date: 2026-08-12
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
 | D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
-| D5 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 13 fleet tools; explicit `host_id` schemas; localhost MCP routing test; token values are never stored | PASS |
+| D5 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 38 fleet tools; explicit `host_id` schemas; localhost MCP routing test; adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
+| D6 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 38 host-targeted descriptors; route-completeness contract; private HTTP target exposed 38 local tools; action-aware write gate and read-only default preserved | PASS |
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
@@ -112,13 +113,17 @@ execution.
 ### Results
 
 The current host passes the Rust full suite, strict Clippy, formatting check,
-and the fleet localhost routing smoke. The SwiftUI desktop client and its 2
-tests pass on Apple Silicon. The public HTTP adapter unit tests cover health,
-authentication, origin, MCP headers, public-profile allowlisting, private
-profile authentication, and protocol version boundaries. GitHub Actions run
-`31602413568` passed the updated ARM64 matrix, MSRV, package, and Swift jobs;
-run `31602413825` passed audit and deny; run `31602413582` passed CodeQL.
-Docker Compose execution remains an external
+build, package verification, OpenAI submission validator, and the Fleet
+localhost routing smoke. The Fleet black-box exposed 38 tools; remote status,
+integration catalog, and a plan-only Topgrade route succeeded, while an
+unavailable Mole executable returned its real remote error and a destructive
+Mole clean was blocked before network access on a read-only host. The SwiftUI
+desktop client and its 2 tests pass on Apple Silicon. The public HTTP adapter
+unit tests cover health, authentication, origin, MCP headers, public-profile
+allowlisting, private profile authentication, and protocol version boundaries.
+GitHub Actions run `31602413568` passed the updated ARM64 matrix, MSRV,
+package, and Swift jobs; run `31602413825` passed audit and deny; run
+`31602413582` passed CodeQL. Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
 ## Release decision
