@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SERVER_NAME: &str = "taskrail";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. For Mole, use taskrail_mole with a typed action; real cleanup is approval-gated and dry-run should be used first. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -153,12 +153,208 @@ fn tool_descriptors() -> Vec<Value> {
                     "action":{"type":"string","enum":["detect","doctor","version","analyze","status","history","clean"]},
                     "dry_run":{"type":"boolean","default":true},
                     "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
+                    "approval_id":{"type":"string","minLength":1},
                 }),
                 &["action"],
             ),
             false,
             true,
             true,
+        ),
+        tool(
+            "taskrail_restic",
+            "restic integration",
+            "Use this for typed restic repository actions: detect, doctor, snapshots, backup, check, forget, or prune. Backup and destructive repository actions are held by Taskrail policy; credentials are environment references only.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","snapshots","backup","check","forget","prune"]},
+                    "path":{"type":"string","minLength":1},
+                    "repository_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "password_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1},
+                }),
+                &["action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_rclone",
+            "rclone integration",
+            "Use this for typed rclone actions: detect, doctor, list-remotes, check, copy, or sync. Prefer sync with dry_run=true; copy and real sync are policy-controlled and never accept shell arguments.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","list-remotes","check","copy","sync"]},
+                    "source":{"type":"string","minLength":1},
+                    "destination":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "config_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1},
+                }),
+                &["action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_github",
+            "GitHub integration",
+            "Use this for the existing typed, read-only GitHub CLI observations: detect, doctor, issues, pulls, failed-runs, or checks. This tool never accepts arbitrary gh api or write arguments.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","issues","pulls","failed-runs","checks"]},
+                    "repo":{"type":"string","pattern":"^[^/\\s]+/[^/\\s]+$"},
+                    "pull_number":{"type":"integer","minimum":1},
+                }),
+                &["action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_homebrew",
+            "Homebrew integration",
+            "Use this for typed Homebrew actions: detect, doctor, outdated, bundle-check, upgrade, or cleanup. Prefer upgrade and cleanup with dry_run=true; real writes require Taskrail policy approval and sudo is never used.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","outdated","bundle-check","upgrade","cleanup"]},
+                    "file":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "approval_id":{"type":"string","minLength":1},
+                }),
+                &["action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_mas",
+            "Mac App Store integration",
+            "Use this for typed macOS App Store inspection: detect, doctor, list, or outdated. It is read-only and never installs or updates an app.",
+            object_schema(
+                json!({"action":{"type":"string","enum":["detect","doctor","list","outdated"]}}),
+                &["action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_osv_scanner",
+            "OSV scanner integration",
+            "Use this for a typed, read-only OSV dependency scan. Findings are normalized and no raw package secrets or scanner output are persisted.",
+            object_schema(
+                json!({"action":{"type":"string","enum":["detect","doctor","scan"]},"path":{"type":"string","minLength":1}}),
+                &["action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_gitleaks",
+            "Gitleaks integration",
+            "Use this for a typed, read-only Gitleaks scan. Only rule, location, severity, and a derived fingerprint are exposed; secret or match values are never returned.",
+            object_schema(
+                json!({"action":{"type":"string","enum":["detect","doctor","scan"]},"path":{"type":"string","minLength":1},"baseline":{"type":"string","minLength":1}}),
+                &["action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_trivy",
+            "Trivy integration",
+            "Use this for typed, read-only Trivy filesystem or repository scans. Vulnerabilities, misconfigurations, secrets, and licenses are normalized without raw secret values.",
+            object_schema(
+                json!({"action":{"type":"string","enum":["detect","doctor","scan"]},"path":{"type":"string","minLength":1},"scan_type":{"type":"string","enum":["filesystem","repository"],"default":"filesystem"}}),
+                &["action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_topgrade",
+            "Topgrade integration",
+            "Use this for typed Topgrade doctor, inspect, plan, or run actions. Inspect and plan are read-only; run is a system write and remains held by Taskrail policy until durable approval exists.",
+            object_schema(
+                json!({"action":{"type":"string","enum":["detect","doctor","inspect","plan","run"]},"approval_id":{"type":"string","minLength":1}}),
+                &["action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_list_approvals",
+            "List approvals",
+            "Use this to inspect persisted, expiring approval requests for native integration writes. It never approves an action.",
+            object_schema(
+                json!({"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &[],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_request_approval",
+            "Request approval",
+            "Use this to create a persisted, plan-bound approval request for a typed Mole, restic, rclone, Homebrew, or Topgrade write. It does not execute the action.",
+            object_schema(
+                json!({
+                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","topgrade"]},
+                    "action":{"type":"string","minLength":1},
+                    "parameters":{"type":"object"},
+                    "ttl_seconds":{"type":"integer","minimum":1,"maximum":604800,"default":3600},
+                }),
+                &["integration", "action"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_approve",
+            "Approve action",
+            "Use this only after the operator explicitly approves a specific persisted request; approval is one-time and bound to the stored plan fingerprint.",
+            object_schema(
+                json!({"approval_id":{"type":"string","minLength":1}}),
+                &["approval_id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_reject",
+            "Reject action",
+            "Use this to reject a persisted native integration approval request.",
+            object_schema(
+                json!({"approval_id":{"type":"string","minLength":1}}),
+                &["approval_id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_execute_approved",
+            "Execute approved action",
+            "Use this to execute a specific approved native integration request by approval_id. The stored plan must match exactly and the grant is consumed once before the existing policy executor starts.",
+            object_schema(
+                json!({"approval_id":{"type":"string","minLength":1}}),
+                &["approval_id"],
+            ),
+            false,
+            true,
+            false,
         ),
         tool(
             "taskrail_get_automation",
@@ -354,7 +550,152 @@ async fn call_tool(params: &Value, socket_path: &PathBuf) -> Result<Value> {
                 "taskrail_mole",
                 socket_path,
                 "integration.mole",
-                json!({"action":action,"parameters":parameters}),
+                json!({
+                    "action": action,
+                    "parameters": parameters,
+                    "approval_id": arguments.get("approval_id"),
+                }),
+            )
+            .await;
+        }
+        "taskrail_restic" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_restic requires arguments.action")?;
+            let parameters = integration_parameters(&arguments);
+            return call_rpc_tool(
+                "taskrail_restic",
+                socket_path,
+                "integration.restic",
+                json!({"action":action,"parameters":parameters,"approval_id":arguments.get("approval_id")}),
+            )
+            .await;
+        }
+        "taskrail_rclone" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_rclone requires arguments.action")?;
+            let parameters = integration_parameters(&arguments);
+            return call_rpc_tool(
+                "taskrail_rclone",
+                socket_path,
+                "integration.rclone",
+                json!({"action":action,"parameters":parameters,"approval_id":arguments.get("approval_id")}),
+            )
+            .await;
+        }
+        "taskrail_github" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_github requires arguments.action")?;
+            let parameters = integration_parameters(&arguments);
+            return call_rpc_tool(
+                "taskrail_github",
+                socket_path,
+                "integration.github",
+                json!({"action":action,"parameters":parameters,"approval_id":arguments.get("approval_id")}),
+            )
+            .await;
+        }
+        "taskrail_homebrew" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_homebrew requires arguments.action")?;
+            let parameters = integration_parameters(&arguments);
+            return call_rpc_tool(
+                "taskrail_homebrew",
+                socket_path,
+                "integration.homebrew",
+                json!({"action":action,"parameters":parameters,"approval_id":arguments.get("approval_id")}),
+            )
+            .await;
+        }
+        "taskrail_mas" => {
+            return call_typed_integration_tool(
+                "taskrail_mas",
+                socket_path,
+                "integration.mas",
+                &arguments,
+            )
+            .await;
+        }
+        "taskrail_osv_scanner" => {
+            return call_typed_integration_tool(
+                "taskrail_osv_scanner",
+                socket_path,
+                "integration.osv-scanner",
+                &arguments,
+            )
+            .await;
+        }
+        "taskrail_gitleaks" => {
+            return call_typed_integration_tool(
+                "taskrail_gitleaks",
+                socket_path,
+                "integration.gitleaks",
+                &arguments,
+            )
+            .await;
+        }
+        "taskrail_trivy" => {
+            return call_typed_integration_tool(
+                "taskrail_trivy",
+                socket_path,
+                "integration.trivy",
+                &arguments,
+            )
+            .await;
+        }
+        "taskrail_topgrade" => {
+            return call_typed_integration_tool(
+                "taskrail_topgrade",
+                socket_path,
+                "integration.topgrade",
+                &arguments,
+            )
+            .await;
+        }
+        "taskrail_list_approvals" => {
+            return call_rpc_tool(
+                "taskrail_list_approvals",
+                socket_path,
+                "approvals.list",
+                arguments,
+            )
+            .await;
+        }
+        "taskrail_request_approval" => {
+            return call_rpc_tool(
+                "taskrail_request_approval",
+                socket_path,
+                "approval.request",
+                arguments,
+            )
+            .await;
+        }
+        "taskrail_approve" => {
+            return call_rpc_tool(
+                "taskrail_approve",
+                socket_path,
+                "approval.approve",
+                arguments,
+            )
+            .await;
+        }
+        "taskrail_reject" => {
+            return call_rpc_tool("taskrail_reject", socket_path, "approval.reject", arguments)
+                .await;
+        }
+        "taskrail_execute_approved" => {
+            return call_rpc_tool(
+                "taskrail_execute_approved",
+                socket_path,
+                "approval.execute",
+                arguments,
             )
             .await;
         }
@@ -418,6 +759,37 @@ async fn call_rpc_tool(
     }))
 }
 
+async fn call_typed_integration_tool(
+    name: &str,
+    socket_path: &PathBuf,
+    rpc_method: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .with_context(|| format!("{name} requires arguments.action"))?;
+    let parameters = integration_parameters(arguments);
+    call_rpc_tool(
+        name,
+        socket_path,
+        rpc_method,
+        json!({
+            "action": action,
+            "parameters": parameters,
+            "approval_id": arguments.get("approval_id"),
+        }),
+    )
+    .await
+}
+
+fn integration_parameters(arguments: &Value) -> Value {
+    let mut object = arguments.as_object().cloned().unwrap_or_default();
+    object.remove("action");
+    object.remove("approval_id");
+    Value::Object(object)
+}
+
 fn summarize(name: &str, value: &Value) -> String {
     match name {
         "taskrail_status" => format!(
@@ -461,6 +833,25 @@ fn summarize(name: &str, value: &Value) -> String {
                 "Mole integration inspection completed.".into()
             }
         }
+        "taskrail_restic" => integration_summary("restic", value),
+        "taskrail_rclone" => integration_summary("rclone", value),
+        "taskrail_github" => integration_summary("GitHub", value),
+        "taskrail_homebrew" => integration_summary("Homebrew", value),
+        "taskrail_mas" => integration_summary("mas", value),
+        "taskrail_osv_scanner" => integration_summary("OSV-Scanner", value),
+        "taskrail_gitleaks" => integration_summary("Gitleaks", value),
+        "taskrail_trivy" => integration_summary("Trivy", value),
+        "taskrail_topgrade" => integration_summary("Topgrade", value),
+        "taskrail_list_approvals" => format!(
+            "Taskrail returned {} approval request(s).",
+            value.as_array().map_or(0, Vec::len)
+        ),
+        "taskrail_request_approval" => "Approval request persisted; no action was executed.".into(),
+        "taskrail_approve" => {
+            "Approval granted; the next matching typed action may consume it once.".into()
+        }
+        "taskrail_reject" => "Approval request rejected; no action was executed.".into(),
+        "taskrail_execute_approved" => "Approved typed action execution completed.".into(),
         "taskrail_scan_native" => format!(
             "Scanned and reconciled {} native automation source(s).",
             value.as_array().map_or(0, Vec::len)
@@ -484,6 +875,19 @@ fn summarize(name: &str, value: &Value) -> String {
             format!("Automation run {run_id} finished with status {status}.")
         }
         _ => format!("Taskrail tool {name} completed."),
+    }
+}
+
+fn integration_summary(name: &str, value: &Value) -> String {
+    if let Some(status) = value
+        .get("verification")
+        .and_then(|item| item.get("status"))
+    {
+        format!("{name} integration completed; verification status {status}.")
+    } else if let Some(status) = value.get("status").and_then(Value::as_str) {
+        format!("{name} integration status: {status}.")
+    } else {
+        format!("{name} integration inspection completed.")
     }
 }
 
@@ -555,6 +959,20 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), tools.len());
         assert!(names.contains(&"taskrail_mole"));
+        assert!(names.contains(&"taskrail_restic"));
+        assert!(names.contains(&"taskrail_rclone"));
+        assert!(names.contains(&"taskrail_github"));
+        assert!(names.contains(&"taskrail_homebrew"));
+        assert!(names.contains(&"taskrail_mas"));
+        assert!(names.contains(&"taskrail_osv_scanner"));
+        assert!(names.contains(&"taskrail_gitleaks"));
+        assert!(names.contains(&"taskrail_trivy"));
+        assert!(names.contains(&"taskrail_topgrade"));
+        assert!(names.contains(&"taskrail_list_approvals"));
+        assert!(names.contains(&"taskrail_request_approval"));
+        assert!(names.contains(&"taskrail_approve"));
+        assert!(names.contains(&"taskrail_reject"));
+        assert!(names.contains(&"taskrail_execute_approved"));
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object");
             assert!(

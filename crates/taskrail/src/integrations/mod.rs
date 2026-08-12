@@ -4,11 +4,22 @@
 //! not spawn processes themselves. An integration produces an [`ExecutionPlan`]
 //! and later parses the bounded output of the existing Taskrail executor.
 
+mod github;
+mod helpers;
+mod homebrew;
+mod mas;
 mod model;
 mod mole;
 mod policy;
+mod rclone;
 mod registry;
+mod restic;
+mod security;
+mod topgrade;
 
+pub use github::GithubIntegration;
+pub use homebrew::HomebrewIntegration;
+pub use mas::MasIntegration;
 pub use model::{
     ArtifactRef, Capability, Change, DetectionResult, DetectionStatus, DoctorCheck, DoctorResult,
     DoctorStatus, EnvironmentRef, ExecutionPlan, Finding, IntegrationAction, IntegrationDescriptor,
@@ -18,4 +29,8 @@ pub use model::{
 };
 pub use mole::MoleIntegration;
 pub use policy::{DefaultPolicy, PolicyDecision, PolicyEvaluator, evaluate_plan};
+pub use rclone::RcloneIntegration;
 pub use registry::{Integration, IntegrationRegistry};
+pub use restic::ResticIntegration;
+pub use security::{SecurityIntegration, SecurityTool};
+pub use topgrade::TopgradeIntegration;

@@ -56,6 +56,7 @@ pub async fn execute_integration(
     action: &IntegrationAction,
 ) -> Result<IntegrationExecution> {
     let plan = integration.plan(action)?;
+    let plan_fingerprint = plan.fingerprint()?;
     match DefaultPolicy.evaluate(&plan) {
         PolicyDecision::Allowed => {}
         decision @ (PolicyDecision::RequiresApproval { .. } | PolicyDecision::Denied { .. }) => {
@@ -75,12 +76,42 @@ pub async fn execute_integration(
                     "action": plan.action,
                     "risk": plan.risk,
                     "dry_run": plan.dry_run,
+                    "plan_fingerprint": plan_fingerprint,
+                    "approval_id": action.approval_id,
                     "reason": reason,
                 }),
             })?;
             match decision {
                 PolicyDecision::RequiresApproval { reason } => {
-                    anyhow::bail!("integration action held for approval: {reason}");
+                    let approval_id = action.approval_id.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "integration action held for approval: {reason}; request an approval first"
+                        )
+                    })?;
+                    let registry = Registry::open(registry_path)?;
+                    let approval = registry
+                        .get_approval(approval_id)?
+                        .ok_or_else(|| anyhow::anyhow!("approval not found: {approval_id}"))?;
+                    if approval.integration != plan.integration.to_string()
+                        || approval.action != plan.action
+                        || approval.plan_fingerprint != plan_fingerprint
+                    {
+                        anyhow::bail!(
+                            "approval does not match the requested integration plan: {approval_id}"
+                        );
+                    }
+                    let consumed = registry.consume_approval(approval_id, &plan_fingerprint)?;
+                    registry.append_event(&Event {
+                        run_id: None,
+                        occurred_at: Utc::now(),
+                        event_type: "integration.approval.consumed".into(),
+                        payload: serde_json::json!({
+                            "approval_id": consumed.id,
+                            "integration": consumed.integration,
+                            "action": consumed.action,
+                            "plan_fingerprint": consumed.plan_fingerprint,
+                        }),
+                    })?;
                 }
                 PolicyDecision::Denied { reason } => {
                     anyhow::bail!("integration action denied: {reason}");
@@ -176,6 +207,151 @@ pub async fn execute_integration(
         result,
         verification,
     })
+}
+
+pub fn request_integration_approval(
+    registry_path: &Path,
+    integration: &dyn Integration,
+    action: &IntegrationAction,
+    ttl_seconds: u64,
+) -> Result<crate::storage::StoredApproval> {
+    if ttl_seconds == 0 || ttl_seconds > 7 * 24 * 60 * 60 {
+        anyhow::bail!("approval TTL must be between 1 second and 7 days");
+    }
+    let action = sanitize_approval_action(integration, action)?;
+    let plan = integration.plan(&action)?;
+    let decision = DefaultPolicy.evaluate(&plan);
+    if !matches!(decision, PolicyDecision::RequiresApproval { .. }) {
+        anyhow::bail!("read-only integration actions do not require approval");
+    }
+    let reason = match decision {
+        PolicyDecision::RequiresApproval { reason } => reason,
+        _ => unreachable!(),
+    };
+    let approval_id = format!("approval_{}", Uuid::new_v4());
+    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl_seconds as i64)).to_rfc3339();
+    let risk = serde_json::to_string(&plan.risk)?
+        .trim_matches('"')
+        .to_owned();
+    let approval = Registry::open(registry_path)?.create_approval(
+        &approval_id,
+        plan.integration.as_str(),
+        &plan.action,
+        &plan.fingerprint()?,
+        &serde_json::to_value(plan.redacted())?,
+        &serde_json::to_value(action)?,
+        &risk,
+        &reason,
+        &expires_at,
+    )?;
+    Registry::open(registry_path)?.append_event(&Event {
+        run_id: None,
+        occurred_at: Utc::now(),
+        event_type: "integration.approval.requested".into(),
+        payload: serde_json::json!({
+            "approval_id": approval.id,
+            "integration": approval.integration,
+            "action": approval.action,
+            "plan_fingerprint": approval.plan_fingerprint,
+            "risk": approval.risk,
+            "expires_at": approval.expires_at,
+        }),
+    })?;
+    Ok(approval)
+}
+
+/// Keep the durable approval request to the typed parameter surface of the
+/// selected adapter. Unknown fields are rejected instead of being persisted;
+/// this is especially important for callers that might accidentally put a
+/// password or token in a generic JSON object.
+fn sanitize_approval_action(
+    integration: &dyn Integration,
+    action: &IntegrationAction,
+) -> Result<IntegrationAction> {
+    let allowed = match integration.descriptor().id.as_str() {
+        "mole" => ["dry_run", "limit"].as_slice(),
+        "restic" => ["path", "repository_env", "password_env"].as_slice(),
+        "rclone" => ["source", "destination", "dry_run", "config_env"].as_slice(),
+        "homebrew" => ["file", "dry_run"].as_slice(),
+        "topgrade" => [].as_slice(),
+        id => anyhow::bail!("integration does not expose approval-capable parameters: {id}"),
+    };
+    let object = action
+        .parameters
+        .as_object()
+        .context("integration parameters must be a JSON object")?;
+    for key in object.keys() {
+        if !allowed.contains(&key.as_str()) {
+            anyhow::bail!(
+                "unsupported parameter {key} for {} approval request",
+                integration.descriptor().id
+            );
+        }
+    }
+    let parameters = object
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    IntegrationAction::with_parameters(action.action.clone(), serde_json::Value::Object(parameters))
+}
+
+pub async fn execute_approved_integration(
+    registry_path: &Path,
+    approval_id: &str,
+) -> Result<IntegrationExecution> {
+    let approval = Registry::open(registry_path)?
+        .get_approval(approval_id)?
+        .with_context(|| format!("approval not found: {approval_id}"))?;
+    if approval.status != "approved" {
+        anyhow::bail!("approval is not executable: {}", approval.status);
+    }
+    let action: IntegrationAction =
+        serde_json::from_value::<IntegrationAction>(approval.request.clone())
+            .context("decode stored approval request")?
+            .with_approval(approval_id);
+    match approval.integration.as_str() {
+        "mole" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::MoleIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        "restic" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::ResticIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        "rclone" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::RcloneIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        "homebrew" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::HomebrewIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        "topgrade" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::TopgradeIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        integration => anyhow::bail!("unsupported approval integration: {integration}"),
+    }
 }
 
 fn integration_automation(plan: &crate::integrations::ExecutionPlan) -> Automation {
@@ -733,6 +909,40 @@ mod tests {
                 .any(|event| event.event_type == "integration.approval_required")
         );
         assert!(registry.list_runs(20, None).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn approved_integration_is_bound_to_plan_and_consumed_once() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let integration = MoleIntegration::new("/bin/echo", 2);
+        let action =
+            IntegrationAction::with_parameters("clean", serde_json::json!({"dry_run": false}))
+                .unwrap();
+        let approval = request_integration_approval(&path, &integration, &action, 3600).unwrap();
+        Registry::open(&path)
+            .unwrap()
+            .decide_approval(&approval.id, "approved")
+            .unwrap();
+        let execution = execute_integration(
+            &path,
+            &integration,
+            &action.clone().with_approval(&approval.id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(execution.run.status, "succeeded");
+        let stored = Registry::open(&path)
+            .unwrap()
+            .get_approval(&approval.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, "consumed");
+        let error = execute_integration(&path, &integration, &action.with_approval(&approval.id))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid, expired, already consumed"));
     }
 
     #[tokio::test]

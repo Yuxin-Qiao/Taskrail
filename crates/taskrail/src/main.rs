@@ -19,7 +19,11 @@ use taskrail::{
         merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
-    integrations::{Integration, IntegrationAction as SemanticIntegrationAction, MoleIntegration},
+    integrations::{
+        GithubIntegration, HomebrewIntegration, Integration,
+        IntegrationAction as SemanticIntegrationAction, MasIntegration, MoleIntegration,
+        RcloneIntegration, ResticIntegration, SecurityIntegration, TopgradeIntegration,
+    },
     mcp, rpc, service,
     storage::Registry,
     verification::{self, VerificationCommand},
@@ -174,6 +178,28 @@ enum Action {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// List persisted integration approval requests.
+    Approvals {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Request a persisted approval for a typed native integration action.
+    ApprovalRequest {
+        #[command(subcommand)]
+        action: ApprovalAction,
+        #[arg(long, default_value_t = 3600)]
+        ttl_seconds: u64,
+    },
+    /// Approve or reject a persisted native integration request.
+    ApprovalDecide {
+        id: String,
+        #[arg(long, conflicts_with = "reject")]
+        approve: bool,
+        #[arg(long)]
+        reject: bool,
+    },
+    /// Execute one approved request and consume its one-time grant.
+    ApprovalExecute { approval_id: String },
     /// Inspect one adoption journal record without changing native state.
     AdoptionInspect { tx_id: String },
     /// Check ownership and permission invariants.
@@ -255,6 +281,8 @@ enum Action {
     },
     /// Print the Registry path and daemon boundary.
     Status,
+    /// List every built-in semantic integration and its declared capabilities.
+    Integrations,
     /// Diagnose local integration availability without running an automation.
     Integration {
         #[command(subcommand)]
@@ -315,6 +343,51 @@ enum IntegrationAction {
         #[command(subcommand)]
         action: MoleAction,
     },
+    /// Run the restic semantic integration.
+    Restic {
+        #[command(subcommand)]
+        action: ResticAction,
+    },
+    /// Run the rclone semantic integration.
+    Rclone {
+        #[command(subcommand)]
+        action: RcloneAction,
+    },
+    /// Run the existing read-only GitHub integration through the semantic layer.
+    Github {
+        #[command(subcommand)]
+        action: GithubAction,
+    },
+    /// Run Homebrew health and maintenance actions through the semantic layer.
+    Homebrew {
+        #[command(subcommand)]
+        action: HomebrewAction,
+    },
+    /// Run the macOS App Store read-only integration.
+    Mas {
+        #[command(subcommand)]
+        action: MasAction,
+    },
+    /// Run the OSV-Scanner read-only integration.
+    OsvScanner {
+        #[command(subcommand)]
+        action: ScannerAction,
+    },
+    /// Run the Gitleaks read-only integration.
+    Gitleaks {
+        #[command(subcommand)]
+        action: ScannerAction,
+    },
+    /// Run the Trivy read-only integration.
+    Trivy {
+        #[command(subcommand)]
+        action: ScannerAction,
+    },
+    /// Inspect or request a policy-controlled Topgrade system update.
+    Topgrade {
+        #[command(subcommand)]
+        action: TopgradeAction,
+    },
     /// Check Codex CLI availability and Git-repository preconditions.
     CodexDoctor {
         #[arg(long, default_value = ".")]
@@ -367,6 +440,133 @@ enum MoleAction {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ResticAction {
+    /// Detect restic and report its version.
+    Detect,
+    /// Check restic CLI availability without accessing a repository.
+    Doctor,
+    /// Read repository snapshots using bounded JSON output.
+    Snapshots,
+    /// Back up one explicit path; execution is held by policy.
+    Backup {
+        path: String,
+        #[arg(long)]
+        repository_env: Option<String>,
+        #[arg(long)]
+        password_env: Option<String>,
+    },
+    /// Check repository integrity.
+    Check,
+    /// Preview the typed forget operation; execution is held by policy.
+    Forget,
+    /// Preview the typed prune operation; execution is held by policy.
+    Prune,
+}
+
+#[derive(Debug, Subcommand)]
+enum RcloneAction {
+    /// Detect rclone and report its version.
+    Detect,
+    /// Check rclone CLI availability without transferring data.
+    Doctor,
+    /// List configured remotes without exposing credentials.
+    ListRemotes,
+    /// Compare explicit source and destination paths.
+    Check { source: String, destination: String },
+    /// Copy from one explicit source to one explicit destination.
+    Copy { source: String, destination: String },
+    /// Preview or request a typed sync; real sync is held by policy.
+    Sync {
+        source: String,
+        destination: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum GithubAction {
+    Detect,
+    Doctor,
+    Issues { repo: String },
+    Pulls { repo: String },
+    FailedRuns { repo: String },
+    Checks { repo: String, pull_number: u64 },
+}
+
+#[derive(Debug, Subcommand)]
+enum HomebrewAction {
+    Detect,
+    Doctor,
+    Outdated,
+    BundleCheck {
+        file: String,
+    },
+    Upgrade {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Cleanup {
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MasAction {
+    Detect,
+    Doctor,
+    List,
+    Outdated,
+}
+
+#[derive(Debug, Subcommand)]
+enum ScannerAction {
+    Detect,
+    Doctor,
+    Scan {
+        path: String,
+        #[arg(long)]
+        baseline: Option<String>,
+        #[arg(long, default_value = "filesystem")]
+        scan_type: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TopgradeAction {
+    Detect,
+    Doctor,
+    Inspect,
+    Plan,
+    Run,
+}
+
+#[derive(Debug, Subcommand)]
+enum ApprovalAction {
+    MoleClean {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    ResticBackup {
+        path: String,
+    },
+    ResticForget,
+    ResticPrune,
+    RcloneCopy {
+        source: String,
+        destination: String,
+    },
+    RcloneSync {
+        source: String,
+        destination: String,
+    },
+    HomebrewUpgrade,
+    HomebrewCleanup,
+    TopgradeRun,
 }
 
 struct CodexCliOptions {
@@ -490,6 +690,17 @@ async fn main() -> Result<()> {
         Action::Adopt { id, dry_run, apply } => adopt(&registry, &id, dry_run, apply),
         Action::Rollback { tx_id } => rollback(&registry, &tx_id),
         Action::Adoptions { limit } => adoptions(&registry, limit),
+        Action::Approvals { limit } => approvals(&registry, limit),
+        Action::ApprovalRequest {
+            action,
+            ttl_seconds,
+        } => approval_request(&registry, action, ttl_seconds),
+        Action::ApprovalDecide {
+            id,
+            approve,
+            reject,
+        } => approval_decide(&registry, &id, approve, reject),
+        Action::ApprovalExecute { approval_id } => approval_execute(&registry, &approval_id).await,
         Action::AdoptionInspect { tx_id } => adoption_inspect(&registry, &tx_id),
         Action::Doctor { check } => doctor(&registry, check),
         Action::Inbox { limit } => inbox(&registry, limit),
@@ -563,6 +774,7 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Action::Integrations => integrations(&registry),
         Action::Integration { action } => integration_doctor(&registry, action).await,
         Action::Mcp { socket } => {
             mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await
@@ -587,6 +799,21 @@ struct IntegrationReport {
 async fn integration_doctor(registry: &Registry, action: IntegrationAction) -> Result<()> {
     let report = match action {
         IntegrationAction::Mole { action } => return run_mole(registry, action).await,
+        IntegrationAction::Restic { action } => return run_restic(registry, action).await,
+        IntegrationAction::Rclone { action } => return run_rclone(registry, action).await,
+        IntegrationAction::Github { action } => return run_github(registry, action).await,
+        IntegrationAction::Homebrew { action } => return run_homebrew(registry, action).await,
+        IntegrationAction::Mas { action } => return run_mas(registry, action).await,
+        IntegrationAction::OsvScanner { action } => {
+            return run_scanner(registry, SecurityIntegration::osv(), action).await;
+        }
+        IntegrationAction::Gitleaks { action } => {
+            return run_scanner(registry, SecurityIntegration::gitleaks(), action).await;
+        }
+        IntegrationAction::Trivy { action } => {
+            return run_scanner(registry, SecurityIntegration::trivy(), action).await;
+        }
+        IntegrationAction::Topgrade { action } => return run_topgrade(registry, action).await,
         IntegrationAction::CodexDoctor { cwd } => codex_doctor(&cwd),
         IntegrationAction::GhDoctor { hostname } => gh_doctor(&hostname),
         IntegrationAction::ChatgptDoctor { profile } => chatgpt_doctor(&profile),
@@ -623,13 +850,212 @@ async fn run_mole(registry: &Registry, action: MoleAction) -> Result<()> {
             serde_json::json!({"dry_run": dry_run}),
         )?,
     };
-    let execution = service::execute_integration(registry.path(), &integration, &action).await?;
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_restic(registry: &Registry, action: ResticAction) -> Result<()> {
+    let integration = ResticIntegration::default();
+    let action = match action {
+        ResticAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        ResticAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        ResticAction::Snapshots => SemanticIntegrationAction::new("snapshots")?,
+        ResticAction::Backup {
+            path,
+            repository_env,
+            password_env,
+        } => SemanticIntegrationAction::with_parameters(
+            "backup",
+            serde_json::json!({
+                "path": path,
+                "repository_env": repository_env,
+                "password_env": password_env,
+            }),
+        )?,
+        ResticAction::Check => SemanticIntegrationAction::new("check")?,
+        ResticAction::Forget => SemanticIntegrationAction::new("forget")?,
+        ResticAction::Prune => SemanticIntegrationAction::new("prune")?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_rclone(registry: &Registry, action: RcloneAction) -> Result<()> {
+    let integration = RcloneIntegration::default();
+    let action = match action {
+        RcloneAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        RcloneAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        RcloneAction::ListRemotes => SemanticIntegrationAction::new("list-remotes")?,
+        RcloneAction::Check {
+            source,
+            destination,
+        } => SemanticIntegrationAction::with_parameters(
+            "check",
+            serde_json::json!({"source": source, "destination": destination}),
+        )?,
+        RcloneAction::Copy {
+            source,
+            destination,
+        } => SemanticIntegrationAction::with_parameters(
+            "copy",
+            serde_json::json!({"source": source, "destination": destination}),
+        )?,
+        RcloneAction::Sync {
+            source,
+            destination,
+            dry_run,
+        } => SemanticIntegrationAction::with_parameters(
+            "sync",
+            serde_json::json!({"source": source, "destination": destination, "dry_run": dry_run}),
+        )?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_github(registry: &Registry, action: GithubAction) -> Result<()> {
+    let integration = GithubIntegration::default();
+    let action = match action {
+        GithubAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        GithubAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        GithubAction::Issues { repo } => {
+            SemanticIntegrationAction::with_parameters("issues", serde_json::json!({"repo": repo}))?
+        }
+        GithubAction::Pulls { repo } => {
+            SemanticIntegrationAction::with_parameters("pulls", serde_json::json!({"repo": repo}))?
+        }
+        GithubAction::FailedRuns { repo } => SemanticIntegrationAction::with_parameters(
+            "failed-runs",
+            serde_json::json!({"repo": repo}),
+        )?,
+        GithubAction::Checks { repo, pull_number } => SemanticIntegrationAction::with_parameters(
+            "checks",
+            serde_json::json!({"repo": repo, "pull_number": pull_number}),
+        )?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_homebrew(registry: &Registry, action: HomebrewAction) -> Result<()> {
+    let integration = HomebrewIntegration::default();
+    let action = match action {
+        HomebrewAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        HomebrewAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        HomebrewAction::Outdated => SemanticIntegrationAction::new("outdated")?,
+        HomebrewAction::BundleCheck { file } => SemanticIntegrationAction::with_parameters(
+            "bundle-check",
+            serde_json::json!({"file": file}),
+        )?,
+        HomebrewAction::Upgrade { dry_run } => SemanticIntegrationAction::with_parameters(
+            "upgrade",
+            serde_json::json!({"dry_run": dry_run}),
+        )?,
+        HomebrewAction::Cleanup { dry_run } => SemanticIntegrationAction::with_parameters(
+            "cleanup",
+            serde_json::json!({"dry_run": dry_run}),
+        )?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_mas(registry: &Registry, action: MasAction) -> Result<()> {
+    let integration = MasIntegration::default();
+    let action = match action {
+        MasAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        MasAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        MasAction::List => SemanticIntegrationAction::new("list")?,
+        MasAction::Outdated => SemanticIntegrationAction::new("outdated")?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_scanner(
+    registry: &Registry,
+    integration: impl Integration,
+    action: ScannerAction,
+) -> Result<()> {
+    let action = match action {
+        ScannerAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        ScannerAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        ScannerAction::Scan {
+            path,
+            baseline,
+            scan_type,
+        } => SemanticIntegrationAction::with_parameters(
+            "scan",
+            serde_json::json!({
+                "path": path,
+                "baseline": baseline,
+                "scan_type": scan_type,
+            }),
+        )?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_topgrade(registry: &Registry, action: TopgradeAction) -> Result<()> {
+    let integration = TopgradeIntegration::default();
+    let action = match action {
+        TopgradeAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        TopgradeAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        TopgradeAction::Inspect => SemanticIntegrationAction::new("inspect")?,
+        TopgradeAction::Plan => SemanticIntegrationAction::new("plan")?,
+        TopgradeAction::Run => SemanticIntegrationAction::new("run")?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_semantic_integration(
+    registry: &Registry,
+    integration: &dyn Integration,
+    action: &SemanticIntegrationAction,
+) -> Result<()> {
+    let execution = service::execute_integration(registry.path(), integration, action).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&execution.semantic_value())?
     );
     if execution.verification.status == taskrail::integrations::VerificationStatus::Failed {
-        anyhow::bail!("Mole verification failed");
+        anyhow::bail!("{} verification failed", action.action);
     }
     Ok(())
 }
@@ -1863,6 +2289,131 @@ fn adoptions(registry: &Registry, limit: usize) -> Result<()> {
         "{}",
         serde_json::to_string_pretty(&registry.list_adoptions(limit)?)?
     );
+    Ok(())
+}
+
+fn approvals(registry: &Registry, limit: usize) -> Result<()> {
+    if !(1..=500).contains(&limit) {
+        anyhow::bail!("approval limit must be between 1 and 500");
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&registry.list_approvals(limit)?)?
+    );
+    Ok(())
+}
+
+fn integrations(_registry: &Registry) -> Result<()> {
+    let mut registry = taskrail::integrations::IntegrationRegistry::default();
+    registry.register(MoleIntegration::default())?;
+    registry.register(ResticIntegration::default())?;
+    registry.register(RcloneIntegration::default())?;
+    registry.register(GithubIntegration::default())?;
+    registry.register(HomebrewIntegration::default())?;
+    registry.register(MasIntegration::default())?;
+    registry.register(SecurityIntegration::osv())?;
+    registry.register(SecurityIntegration::gitleaks())?;
+    registry.register(SecurityIntegration::trivy())?;
+    registry.register(TopgradeIntegration::default())?;
+    println!("{}", serde_json::to_string_pretty(&registry.descriptors())?);
+    Ok(())
+}
+
+async fn approval_execute(registry: &Registry, approval_id: &str) -> Result<()> {
+    let execution = service::execute_approved_integration(registry.path(), approval_id).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&execution.semantic_value())?
+    );
+    Ok(())
+}
+
+fn approval_request(registry: &Registry, action: ApprovalAction, ttl_seconds: u64) -> Result<()> {
+    let (integration, action) = match action {
+        ApprovalAction::MoleClean { dry_run } => (
+            Box::new(MoleIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "clean",
+                serde_json::json!({"dry_run": dry_run}),
+            )?,
+        ),
+        ApprovalAction::ResticBackup { path } => (
+            Box::new(ResticIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "backup",
+                serde_json::json!({"path": path}),
+            )?,
+        ),
+        ApprovalAction::ResticForget => (
+            Box::new(ResticIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::new("forget")?,
+        ),
+        ApprovalAction::ResticPrune => (
+            Box::new(ResticIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::new("prune")?,
+        ),
+        ApprovalAction::RcloneCopy {
+            source,
+            destination,
+        } => (
+            Box::new(RcloneIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "copy",
+                serde_json::json!({"source": source, "destination": destination}),
+            )?,
+        ),
+        ApprovalAction::RcloneSync {
+            source,
+            destination,
+        } => (
+            Box::new(RcloneIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "sync",
+                serde_json::json!({"source": source, "destination": destination, "dry_run": false}),
+            )?,
+        ),
+        ApprovalAction::HomebrewUpgrade => (
+            Box::new(HomebrewIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "upgrade",
+                serde_json::json!({"dry_run": false}),
+            )?,
+        ),
+        ApprovalAction::HomebrewCleanup => (
+            Box::new(HomebrewIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::with_parameters(
+                "cleanup",
+                serde_json::json!({"dry_run": false}),
+            )?,
+        ),
+        ApprovalAction::TopgradeRun => (
+            Box::new(TopgradeIntegration::default()) as Box<dyn Integration>,
+            SemanticIntegrationAction::new("run")?,
+        ),
+    };
+    let approval = service::request_integration_approval(
+        registry.path(),
+        integration.as_ref(),
+        &action,
+        ttl_seconds,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&approval)?);
+    Ok(())
+}
+
+fn approval_decide(registry: &Registry, id: &str, approve: bool, reject: bool) -> Result<()> {
+    if approve == reject {
+        anyhow::bail!("choose exactly one of --approve or --reject");
+    }
+    let decision = if approve { "approved" } else { "rejected" };
+    let approval = registry.decide_approval(id, decision)?;
+    registry.append_event(&Event {
+        run_id: None,
+        occurred_at: Utc::now(),
+        event_type: format!("integration.approval.{decision}"),
+        payload: serde_json::json!({"approval_id": id, "status": decision}),
+    })?;
+    println!("{}", serde_json::to_string_pretty(&approval)?);
     Ok(())
 }
 

@@ -4,7 +4,11 @@ use crate::{
         CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
         merge_homebrew_sources, same_native_path,
     },
-    integrations::{Integration, IntegrationAction, MoleIntegration},
+    integrations::{
+        GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, MasIntegration,
+        MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
+        TopgradeIntegration,
+    },
     service,
     storage::Registry,
 };
@@ -279,6 +283,46 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(registry.list_adoptions(limit)?)?)
             })
         }
+        "approval.request" => request_approval(registry_path, &request.params),
+        "approval.execute" => execute_approved(registry_path, &request.params).await,
+        "approvals.list" => {
+            let limit = match request.params.get("limit") {
+                None => 100,
+                Some(value) => match value.as_u64() {
+                    Some(value) if (1..=500).contains(&value) => value as usize,
+                    _ => {
+                        return invalid_params(
+                            request.id,
+                            "params.limit must be an integer from 1 to 500".into(),
+                        );
+                    }
+                },
+            };
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(registry.list_approvals(limit)?)?)
+            })
+        }
+        "approval.approve" | "approval.reject" => {
+            let id = match string_param(&request.params, "approval_id") {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let decision = if request.method == "approval.approve" {
+                "approved"
+            } else {
+                "rejected"
+            };
+            with_registry(registry_path, move |registry| {
+                let approval = registry.decide_approval(&id, decision)?;
+                registry.append_event(&Event {
+                    run_id: None,
+                    occurred_at: Utc::now(),
+                    event_type: format!("integration.approval.{decision}"),
+                    payload: serde_json::json!({"approval_id": id, "status": decision}),
+                })?;
+                Ok(serde_json::to_value(approval)?)
+            })
+        }
         "inbox.list" => {
             let limit = match request.params.get("limit") {
                 None => 100,
@@ -324,38 +368,69 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             }
         }
         "integration.mole" => {
-            let action_name = match string_param(&request.params, "action") {
-                Ok(action) => action,
-                Err(error) => return invalid_params(request.id, error),
-            };
-            if matches!(action_name.as_str(), "detect" | "doctor") {
-                let integration = MoleIntegration::default();
-                if action_name == "detect" {
-                    serde_json::to_value(integration.detect()).map_err(Into::into)
-                } else {
-                    serde_json::to_value(integration.doctor()).map_err(Into::into)
-                }
-            } else {
-                let parameters = request
-                    .params
-                    .get("parameters")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
-                let action = match IntegrationAction::with_parameters(action_name, parameters) {
-                    Ok(action) => action,
-                    Err(error) => return invalid_params(request.id, error.to_string()),
-                };
-                match service::execute_integration(
-                    registry_path,
-                    &MoleIntegration::default(),
-                    &action,
-                )
-                .await
-                {
-                    Ok(execution) => Ok(execution.semantic_value()),
-                    Err(error) => Err(error),
-                }
-            }
+            integration_request(registry_path, &request.params, &MoleIntegration::default()).await
+        }
+        "integration.restic" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &ResticIntegration::default(),
+            )
+            .await
+        }
+        "integration.rclone" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &RcloneIntegration::default(),
+            )
+            .await
+        }
+        "integration.github" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &GithubIntegration::default(),
+            )
+            .await
+        }
+        "integration.homebrew" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &HomebrewIntegration::default(),
+            )
+            .await
+        }
+        "integration.mas" => {
+            integration_request(registry_path, &request.params, &MasIntegration::default()).await
+        }
+        "integration.osv-scanner" => {
+            integration_request(registry_path, &request.params, &SecurityIntegration::osv()).await
+        }
+        "integration.gitleaks" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &SecurityIntegration::gitleaks(),
+            )
+            .await
+        }
+        "integration.trivy" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &SecurityIntegration::trivy(),
+            )
+            .await
+        }
+        "integration.topgrade" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &TopgradeIntegration::default(),
+            )
+            .await
         }
         "run.cancel" => {
             let run_id = match string_param(&request.params, "run_id") {
@@ -453,6 +528,92 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             }),
         },
     }
+}
+
+async fn integration_request(
+    registry_path: &Path,
+    params: &Value,
+    integration: &dyn Integration,
+) -> Result<Value> {
+    let action_name = string_param(params, "action").map_err(anyhow::Error::msg)?;
+    if matches!(action_name.as_str(), "detect" | "doctor") {
+        return if action_name == "detect" {
+            serde_json::to_value(integration.detect()).map_err(Into::into)
+        } else {
+            serde_json::to_value(integration.doctor()).map_err(Into::into)
+        };
+    }
+    let parameters = params
+        .get("parameters")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let action = IntegrationAction::with_parameters(action_name, parameters)?;
+    let action = match params.get("approval_id").and_then(Value::as_str) {
+        Some(approval_id) if !approval_id.trim().is_empty() => action.with_approval(approval_id),
+        _ => action,
+    };
+    Ok(
+        service::execute_integration(registry_path, integration, &action)
+            .await?
+            .semantic_value(),
+    )
+}
+
+fn request_approval(registry_path: &Path, params: &Value) -> Result<Value> {
+    let integration_name = string_param(params, "integration").map_err(anyhow::Error::msg)?;
+    let action_name = string_param(params, "action").map_err(anyhow::Error::msg)?;
+    let parameters = params
+        .get("parameters")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let ttl_seconds = params
+        .get("ttl_seconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(3600);
+    let action = IntegrationAction::with_parameters(action_name, parameters)?;
+    let result = match integration_name.as_str() {
+        "mole" => service::request_integration_approval(
+            registry_path,
+            &MoleIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        "restic" => service::request_integration_approval(
+            registry_path,
+            &ResticIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        "rclone" => service::request_integration_approval(
+            registry_path,
+            &RcloneIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        "homebrew" => service::request_integration_approval(
+            registry_path,
+            &HomebrewIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        "topgrade" => service::request_integration_approval(
+            registry_path,
+            &TopgradeIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        _ => anyhow::bail!("unsupported approval integration: {integration_name}"),
+    };
+    Ok(serde_json::to_value(result)?)
+}
+
+async fn execute_approved(registry_path: &Path, params: &Value) -> Result<Value> {
+    let approval_id = string_param(params, "approval_id").map_err(anyhow::Error::msg)?;
+    Ok(
+        service::execute_approved_integration(registry_path, &approval_id)
+            .await?
+            .semantic_value(),
+    )
 }
 
 fn with_registry<F>(path: &Path, operation: F) -> Result<Value>

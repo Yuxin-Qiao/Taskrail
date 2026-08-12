@@ -1,35 +1,32 @@
-# Taskrail
+<div align="center">
+  <img src="docs/assets/taskrail-mark.svg" alt="Taskrail mark" width="76" />
+  <h1>Taskrail</h1>
+  <p><strong>The control plane for your computer's automation.</strong><br />
+  Bring commands, schedules, native jobs, and AI tasks into one local center.</p>
 
-Taskrail is a local automation manager for developers: one place to organize,
-run, and monitor the scripts, CLI tools, and AI jobs your computer runs
-automatically.
+  <p>
+    <a href="https://github.com/Yuxin-Qiao/taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
+  </p>
 
-It answers four simple questions:
+  <p>
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#how-it-works">How it works</a> ·
+    <a href="docs/chatgpt.md">ChatGPT integration</a>
+  </p>
+</div>
 
-- What automations do I have?
-- What is running now?
-- What failed?
-- What will run next?
+<p align="center">
+  <img src="docs/assets/taskrail-control-plane.svg" alt="Commands, native jobs, and AI integrations flow into the Taskrail local control plane, which schedules work and records runs, logs, and events" width="960" />
+</p>
 
-Taskrail is deliberately small at its center. A local daemon owns the Registry
-and scheduler; the CLI and TUI let you inspect and operate it. Optional tools
-such as Codex, GitHub, and ChatGPT are integrations around that local manager.
+## How it works
 
-```text
-                 CLI / TUI / local RPC
-                         │
-                         ▼
-                 Taskrail local daemon
-                 Registry + scheduler
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-       Commands       launchd/cron     Codex/GitHub
-       and scripts    discovery       integrations
-                         │
-                         ▼
-                  runs · logs · events
-```
+Taskrail is the missing middle layer between the tools already installed on your
+computer and the operational history you need to trust. It discovers inputs,
+coordinates execution through a local daemon, and leaves an auditable trail of
+runs, logs, and events.
 
 ## Quick start
 
@@ -124,9 +121,10 @@ Taskrail can manage commands and scripts you already use:
 - launchd, cron, systemd user services, and Homebrew service discovery;
 - explicit adoption of supported user-native jobs, with rollback records;
 - optional Codex and Responses-compatible AI executions;
-- read-only GitHub issue, pull request, check, and failed-run observations.
-- Mole semantic integration for typed detection, analysis, status, history, and
-  cleanup dry-run plans.
+- typed semantic integrations for Mole, restic, rclone, GitHub, Homebrew, mas,
+  OSV-Scanner, Gitleaks, Trivy, and Topgrade;
+- normalized findings, metrics, changes, artifacts, run history, and inbox
+  attention items from those integrations.
 
 Native jobs are observed before Taskrail is asked to adopt them. Discovery does
 not change the machine. Adoption is currently limited to supported user-level
@@ -134,7 +132,7 @@ sources and always requires an explicit command.
 
 ## Native integrations
 
-Taskrail's first semantic native integration is Mole:
+Taskrail exposes one typed semantic layer for native tools. For example:
 
 ```bash
 taskrail integration mole detect
@@ -143,13 +141,30 @@ taskrail integration mole analyze
 taskrail integration mole status
 taskrail integration mole history --limit 20
 taskrail integration mole clean --dry-run
+taskrail integration restic snapshots
+taskrail integration rclone sync ./data remote:backup --dry-run
+taskrail integration github pulls Yuxin-Qiao/taskrail
+taskrail integration homebrew outdated
+taskrail integration gitleaks scan .
+taskrail integration topgrade plan
 ```
 
 These actions use typed argv plans, bounded parsing, normalized semantic
-results, Run/Event/Metric records, and deterministic verification. Actual
-`clean` is destructive and remains held by the policy boundary until a durable
-approval implementation exists. It is not executed by the current CLI or MCP
-surface.
+results, Run/Event/Metric records, and adapter verification. Writes and
+destructive actions are bound to a persisted, expiring approval request:
+
+```bash
+taskrail approval-request restic-prune
+taskrail approvals
+taskrail approval-decide <approval-id> --approve
+taskrail approval-execute <approval-id>
+```
+
+The exact typed approval request subcommands are shown by
+`taskrail approval-request --help`. A granted request is one-time and matched
+to the exact typed plan fingerprint. Without that approval, the existing
+policy boundary records the request and does not spawn a process. Use
+`taskrail integrations` to inspect the complete built-in adapter catalog.
 
 ## The TUI is the main view
 
@@ -205,8 +220,8 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 - Existing native jobs remain observation-only until explicit adoption.
 - The ChatGPT MCP adapter reaches the daemon through the restricted local Unix
   socket; it does not expose the Registry directly.
-- There is no Codex App Server adapter, approval inbox, or generic policy
-  engine in the current product surface.
+- Approval requests are persisted locally, expire, are plan-bound, and are
+  consumed once. They never contain secret values.
 
 ## Current status
 
@@ -221,15 +236,15 @@ The following are optional integrations or still future work:
 
 | Area | Status |
 | --- | --- |
-| Registry, scheduler, runs, logs, events | Core |
-| CLI and TUI | Core |
-| launchd / cron / systemd / Homebrew discovery | Integration |
-| User-level native adoption | Integration |
-| Codex CLI and Responses executor | Optional integration |
-| GitHub read-only watcher | Optional integration |
-| ChatGPT MCP app and Scheduled-task control | Integration |
-| Packaged CLI and unsigned macOS app releases | Tag-triggered workflow |
-| Homebrew formula | Future |
+| Registry, scheduler, runs, logs, events | 🟢 Core |
+| CLI and TUI | 🟢 Core |
+| launchd / cron / systemd / Homebrew discovery | 🔵 Integration |
+| User-level native adoption | 🔵 Integration |
+| Codex CLI and Responses executor | 🟣 Optional integration |
+| Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
+| ChatGPT MCP app and Scheduled-task control | 🔵 Integration |
+| Packaged CLI and unsigned macOS app releases | 🟢 Tag-triggered workflow |
+| Homebrew formula | 🟡 Future |
 
 ## Documentation
 

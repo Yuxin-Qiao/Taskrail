@@ -68,6 +68,22 @@ pub struct StoredAdoption {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredApproval {
+    pub id: String,
+    pub integration: String,
+    pub action: String,
+    pub plan_fingerprint: String,
+    pub plan: serde_json::Value,
+    pub request: serde_json::Value,
+    pub risk: String,
+    pub status: String,
+    pub reason: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub decided_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboxItem {
     pub id: String,
     pub kind: String,
@@ -185,15 +201,32 @@ impl Registry {
                snapshot_json TEXT NOT NULL,
                observed_at TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS approvals (
+               id TEXT PRIMARY KEY,
+               integration TEXT NOT NULL,
+               action TEXT NOT NULL,
+               plan_fingerprint TEXT NOT NULL,
+               plan_json TEXT NOT NULL,
+               request_json TEXT NOT NULL,
+               risk TEXT NOT NULL,
+               status TEXT NOT NULL,
+               reason TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               expires_at TEXT NOT NULL,
+               decided_at TEXT
+             );
              CREATE INDEX IF NOT EXISTS runs_automation_idx ON runs(automation_id, started_at DESC);
              CREATE INDEX IF NOT EXISTS events_run_idx ON events(run_id, seq);
-             CREATE INDEX IF NOT EXISTS metrics_recorded_idx ON metrics(recorded_at DESC);",
+             CREATE INDEX IF NOT EXISTS metrics_recorded_idx ON metrics(recorded_at DESC);
+             CREATE INDEX IF NOT EXISTS approvals_status_idx ON approvals(status, expires_at DESC);",
         )?;
         self.ensure_column(
             "runs",
             "automation_snapshot_json",
             "TEXT NOT NULL DEFAULT '{}'",
         )?;
+        self.ensure_column("approvals", "plan_json", "TEXT NOT NULL DEFAULT '{}'")?;
+        self.ensure_column("approvals", "request_json", "TEXT NOT NULL DEFAULT '{}'")?;
         Ok(())
     }
 
@@ -554,6 +587,81 @@ impl Registry {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_approval(
+        &self,
+        id: &str,
+        integration: &str,
+        action: &str,
+        plan_fingerprint: &str,
+        plan: &serde_json::Value,
+        request: &serde_json::Value,
+        risk: &str,
+        reason: &str,
+        expires_at: &str,
+    ) -> Result<StoredApproval> {
+        let created_at = Utc::now().to_rfc3339();
+        self.connection.execute(
+            "INSERT INTO approvals (id, integration, action, plan_fingerprint, plan_json, request_json, risk, status, reason, created_at, expires_at, decided_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, ?9, ?10, NULL)",
+            params![id, integration, action, plan_fingerprint, serde_json::to_string(plan)?, serde_json::to_string(request)?, risk, reason, created_at, expires_at],
+        )?;
+        self.get_approval(id)?
+            .context("approval was not readable after creation")
+    }
+
+    pub fn get_approval(&self, id: &str) -> Result<Option<StoredApproval>> {
+        self.connection
+            .query_row(
+                "SELECT id, integration, action, plan_fingerprint, plan_json, request_json, risk, status, reason, created_at, expires_at, decided_at FROM approvals WHERE id = ?1",
+                [id],
+                stored_approval_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_approvals(&self, limit: usize) -> Result<Vec<StoredApproval>> {
+        let limit = limit.clamp(1, 500) as i64;
+        let mut statement = self.connection.prepare(
+            "SELECT id, integration, action, plan_fingerprint, plan_json, request_json, risk, status, reason, created_at, expires_at, decided_at FROM approvals ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], stored_approval_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn decide_approval(&self, id: &str, decision: &str) -> Result<StoredApproval> {
+        if !matches!(decision, "approved" | "rejected") {
+            anyhow::bail!("approval decision must be approved or rejected");
+        }
+        let changed = self.connection.execute(
+            "UPDATE approvals SET status = ?2, decided_at = ?3 WHERE id = ?1 AND status = 'pending' AND (?2 = 'rejected' OR expires_at > ?3)",
+            params![id, decision, Utc::now().to_rfc3339()],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("approval is missing or no longer pending: {id}");
+        }
+        self.get_approval(id)?
+            .context("approval was not readable after decision")
+    }
+
+    /// Atomically consume a currently approved, unexpired approval bound to a
+    /// plan fingerprint. This prevents replaying the same destructive grant.
+    pub fn consume_approval(&self, id: &str, plan_fingerprint: &str) -> Result<StoredApproval> {
+        let now = Utc::now().to_rfc3339();
+        let changed = self.connection.execute(
+            "UPDATE approvals SET status = 'consumed', decided_at = ?3 WHERE id = ?1 AND plan_fingerprint = ?2 AND status = 'approved' AND expires_at > ?3",
+            params![id, plan_fingerprint, now],
+        )?;
+        if changed == 0 {
+            anyhow::bail!(
+                "approval is invalid, expired, already consumed, or does not match the plan: {id}"
+            );
+        }
+        self.get_approval(id)?
+            .context("approval was not readable after consumption")
+    }
+
     pub fn record_run_start(
         &self,
         run_id: &str,
@@ -824,6 +932,28 @@ impl Registry {
                 });
             }
         }
+        let now = Utc::now().to_rfc3339();
+        for approval in self.list_approvals(500)?.into_iter() {
+            if approval.status == "pending" {
+                let expired = approval.expires_at <= now;
+                items.push(InboxItem {
+                    id: format!("approval:{}", approval.id),
+                    kind: "integration_approval".into(),
+                    severity: "high".into(),
+                    status: if expired { "expired" } else { "pending" }.into(),
+                    title: format!("approval · {} · {}", approval.integration, approval.action),
+                    created_at: Some(approval.created_at.clone()),
+                    detail: serde_json::json!({
+                        "approval_id": approval.id,
+                        "integration": approval.integration,
+                        "action": approval.action,
+                        "risk": approval.risk,
+                        "plan_fingerprint": approval.plan_fingerprint,
+                        "expires_at": approval.expires_at,
+                    }),
+                });
+            }
+        }
         for run in self.list_runs(500, None)?.into_iter() {
             if matches!(run.status.as_str(), "failed" | "timed_out" | "interrupted") {
                 items.push(InboxItem {
@@ -982,6 +1112,37 @@ fn stored_adoption_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredA
     })
 }
 
+fn stored_approval_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredApproval> {
+    let plan: String = row.get(4)?;
+    let request: String = row.get(5)?;
+    Ok(StoredApproval {
+        id: row.get(0)?,
+        integration: row.get(1)?,
+        action: row.get(2)?,
+        plan_fingerprint: row.get(3)?,
+        plan: serde_json::from_str(&plan).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        request: serde_json::from_str(&request).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        risk: row.get(6)?,
+        status: row.get(7)?,
+        reason: row.get(8)?,
+        created_at: row.get(9)?,
+        expires_at: row.get(10)?,
+        decided_at: row.get(11)?,
+    })
+}
+
 fn ownership_db(value: crate::core::Ownership) -> &'static str {
     match value {
         crate::core::Ownership::Observed => "observed",
@@ -1084,6 +1245,45 @@ mod tests {
             })
             .unwrap();
         assert!(seq > 0);
+    }
+
+    #[test]
+    fn approval_is_persisted_decided_and_consumed_once() {
+        let registry = Registry::in_memory().unwrap();
+        let approval = registry
+            .create_approval(
+                "approval_test",
+                "mole",
+                "clean",
+                "sha256:plan",
+                &serde_json::json!({"action":"clean"}),
+                &serde_json::json!({"dry_run":false}),
+                "destructive",
+                "operator approval required",
+                &(Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            )
+            .unwrap();
+        assert_eq!(approval.status, "pending");
+        assert_eq!(registry.list_approvals(10).unwrap().len(), 1);
+        assert_eq!(
+            registry
+                .decide_approval("approval_test", "approved")
+                .unwrap()
+                .status,
+            "approved"
+        );
+        assert_eq!(
+            registry
+                .consume_approval("approval_test", "sha256:plan")
+                .unwrap()
+                .status,
+            "consumed"
+        );
+        assert!(
+            registry
+                .consume_approval("approval_test", "sha256:plan")
+                .is_err()
+        );
     }
 
     #[test]

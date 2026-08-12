@@ -74,6 +74,8 @@ pub struct IntegrationAction {
     pub action: String,
     #[serde(default)]
     pub parameters: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
 }
 
 impl IntegrationAction {
@@ -85,6 +87,7 @@ impl IntegrationAction {
         Ok(Self {
             action,
             parameters: Value::Object(serde_json::Map::new()),
+            approval_id: None,
         })
     }
 
@@ -92,6 +95,16 @@ impl IntegrationAction {
         let mut result = Self::new(action)?;
         result.parameters = parameters;
         Ok(result)
+    }
+
+    pub fn with_approval(mut self, approval_id: impl Into<String>) -> Self {
+        self.approval_id = Some(approval_id.into());
+        self
+    }
+
+    pub fn without_approval(mut self) -> Self {
+        self.approval_id = None;
+        self
     }
 }
 
@@ -222,6 +235,22 @@ pub struct ExecutionPlan {
 }
 
 impl ExecutionPlan {
+    /// Stable, secret-safe identity used to bind a persisted approval to the
+    /// exact integration plan that may later be executed.
+    pub fn fingerprint(&self) -> anyhow::Result<String> {
+        Ok(crate::core::fingerprint_bytes(&serde_json::to_vec(
+            &self.redacted(),
+        )?))
+    }
+
+    pub fn redacted(&self) -> Self {
+        let mut plan = self.clone();
+        for value in plan.command.env.values_mut() {
+            *value = "[REDACTED]".into();
+        }
+        plan
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.command.executable.as_os_str().is_empty() {
             anyhow::bail!("integration execution plan has no executable");
@@ -450,5 +479,16 @@ mod tests {
         assert!(serialized.contains(r#""raw_output_ref":null"#));
         assert!(serialized.contains("findings"));
         assert!(!serialized.contains("credential-value"));
+    }
+
+    #[test]
+    fn approval_id_is_optional_and_never_part_of_the_plan_identity() {
+        let action = IntegrationAction::new("scan").unwrap();
+        let approved = action.clone().with_approval("approval_test");
+        assert_ne!(
+            serde_json::to_string(&action).unwrap(),
+            serde_json::to_string(&approved).unwrap()
+        );
+        assert_eq!(approved.without_approval().action, "scan");
     }
 }

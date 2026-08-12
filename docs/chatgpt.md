@@ -155,7 +155,19 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   and recent activity.
 - `taskrail_mole` — use typed Mole actions for detection, analysis, status,
   history, and cleanup dry-run planning. Real cleanup is destructive and held
-  by Taskrail policy.
+  by Taskrail policy until an explicit, expiring approval is granted.
+- `taskrail_restic` / `taskrail_rclone` — use typed snapshot, repository,
+  transfer, and sync actions; backup/copy/real sync are policy-controlled.
+- `taskrail_github` / `taskrail_homebrew` — use fixed read-only GitHub
+  observations and typed Homebrew health/maintenance actions.
+- `taskrail_mas`, `taskrail_osv_scanner`, `taskrail_gitleaks`, and
+  `taskrail_trivy` — inspect local packages and security findings without
+  exposing secret or match values.
+- `taskrail_topgrade` — inspect or plan updates; run requires approval.
+- `taskrail_list_approvals`, `taskrail_request_approval`, `taskrail_approve`,
+  `taskrail_reject`, and `taskrail_execute_approved` — review and operate the
+  persisted, plan-bound approval flow. Approval is one-time and never a shell
+  grant.
 
 The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local

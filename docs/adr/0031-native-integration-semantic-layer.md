@@ -19,9 +19,10 @@ required.
 
 The existing Taskrail executor remains the subprocess primitive. The existing
 service, Run, Event, and Registry paths remain the persistence and audit
-boundary. A conservative default policy allows read-only plans and holds all
-writes for a future durable approval implementation; no approval bypass is
-introduced in Phase A.
+boundary. A conservative policy allows read-only plans and requires every write
+plan to carry a persisted, expiring, plan-bound approval. Approval is consumed
+atomically before the existing executor starts, so no adapter can bypass the
+policy boundary or replay a grant.
 
 Integration parsers receive bounded `ProcessOutput` and return normalized
 metrics, findings, changes, artifacts, and a human-readable summary. Raw
@@ -34,5 +35,5 @@ values are never represented by the integration framework.
 - Existing GitHub and Homebrew implementations can be adapted incrementally
   without creating parallel executors or breaking discovery reconciliation.
 - CI can test adapters with fixtures and does not need external tools installed.
-- Durable approvals are still a required follow-up before write-capable native
-  actions are exposed through CLI, MCP, or ChatGPT.
+- Write-capable native actions are exposed only through typed CLI, MCP, and
+  ChatGPT paths that support request, explicit decision, and one-time execute.

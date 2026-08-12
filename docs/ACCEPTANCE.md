@@ -22,7 +22,7 @@ Execution date: 2026-08-12
 | A1 | Metadata | Rust workspace, package metadata, license, README, and OSS files are present | `Cargo.toml`, `crates/taskrail/Cargo.toml`, `LICENSE`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | PASS |
 | A2 | Repository hygiene | Formatting diff is clean and generated/runtime artifacts are ignored | `git diff --check`, `.gitignore`, tracked-artifact scan | PASS |
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
-| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | 87 tests passed; Cargo fmt/clippy/test/doc-test/build | PASS |
+| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | 126 tests passed; Cargo fmt/clippy/test/doc-test/build | PASS |
 | B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
 | B3 | Linux build | Linux target produces an ELF binary without macOS-only warnings/errors | `cargo zigbuild --workspace --target x86_64-unknown-linux-gnu`; ELF produced | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
@@ -30,7 +30,7 @@ Execution date: 2026-08-12
 | C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation | local scan found 26 observations; discovery tests passed | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | Unix socket daemon responds, enforces 0600 socket permissions, and exposes lifecycle/log/run APIs | temporary daemon/MCP smoke; socket mode 0600 | PASS |
-| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery plus Mole semantic tools | 15 tools; MCP tests and negative paths passed | PASS |
+| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery, native integrations, and approval tools | 29 tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
 | D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
@@ -43,6 +43,10 @@ Execution date: 2026-08-12
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, and contribution checks are configured | `.github` governance files parse and are staged | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
 | G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
+| G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
+| G4 | Host/package integrations | GitHub/Homebrew/mas/Topgrade adapters use the shared layer without arbitrary writes or sudo | fixture tests; existing discovery preserved | PASS |
+| G5 | Security integrations | OSV-Scanner, Gitleaks, and Trivy normalize findings without retaining secret/match values | fixture tests; malformed and missing-tool paths fail closed | PASS |
+| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 126 tests; approval lifecycle and replay rejection passed | PASS |
 
 ## Commands to execute
 

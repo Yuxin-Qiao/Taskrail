@@ -1,0 +1,17 @@
+<svg width="176" height="176" viewBox="0 0 176 176" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Taskrail plugin mark</title>
+  <desc id="desc">A compact plugin-style mark showing a local automation hub connected to tools.</desc>
+
+  <rect x="16" y="16" width="144" height="144" rx="36" fill="#111111" />
+
+  <path d="M52 88C52 68.118 68.118 52 88 52C107.882 52 124 68.118 124 88C124 107.882 107.882 124 88 124" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 13" />
+  <path d="M88 52V39M124 88H137M88 124V137M52 88H39" stroke="#10A37F" stroke-width="6" stroke-linecap="round" />
+  <circle cx="88" cy="39" r="6" fill="#10A37F" />
+  <circle cx="137" cy="88" r="6" fill="#10A37F" />
+  <circle cx="88" cy="137" r="6" fill="#10A37F" />
+  <circle cx="39" cy="88" r="6" fill="#10A37F" />
+
+  <rect x="63" y="63" width="50" height="50" rx="15" fill="#FFFFFF" />
+  <path d="M76 82H100M88 82V101" stroke="#111111" stroke-width="7" stroke-linecap="round" />
+  <circle cx="88" cy="101" r="4" fill="#10A37F" />
+</svg>

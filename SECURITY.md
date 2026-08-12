@@ -23,7 +23,8 @@ content, and AI output as untrusted input.
 - Cancellation is accepted only for an active process owned by the current daemon.
 - GitHub integration uses fixed read-only `gh --json` queries and never writes to
   GitHub.
-- Homebrew integration only observes `brew services list --json`.
+- Homebrew service discovery remains observation-only; its semantic maintenance
+  actions use typed argv and never invoke `sudo`.
 - Codex workspace-write runs must target an explicit worktree; the main checkout
   is not silently treated as a write target.
 - Responses-compatible API keys are read by environment-variable name and are
@@ -35,12 +36,16 @@ content, and AI output as untrusted input.
   automation still uses the direct executable-plus-argv boundary, and native
   observed jobs remain read-only until explicit local adoption.
 - Native integrations produce typed direct-argv plans and pass through the
-  existing executor and Run/Event audit path. Non-read actions are held by the
-  default policy until durable approval exists; an integration cannot self-grant
+  existing executor and Run/Event audit path. Non-read actions require a
+  persisted, expiring, plan-bound approval; approval is consumed atomically
+  before spawn and cannot be replayed. An integration cannot self-grant
   execution permission.
 - Integration parsers receive bounded output and expose normalized summaries;
   raw output remains in the bounded run-log read model. Scanner/tool output is
   treated as untrusted data, not agent instructions.
+- restic/rclone credentials are environment-variable references only. Security
+  scanners expose rule/package/location/severity/fingerprint fields, never
+  secret or match values.
 - Private ChatGPT connections should use OpenAI Secure MCP Tunnel. Tunnel
   runtime credentials and host labels are deployment configuration and must
   remain outside the repository.

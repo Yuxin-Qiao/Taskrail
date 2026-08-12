@@ -15,11 +15,12 @@ add/register → schedule → run → history/logs → tui
 - The TUI is the primary visual view.
 - ChatGPT Scheduled tasks can call the local MCP adapter through a private
   OpenAI Secure MCP Tunnel.
-- Native scheduler discovery and optional Codex/GitHub integrations stay at the
-  edge of the core manager.
+- Native scheduler discovery and typed semantic integrations stay at the edge of
+  the core manager.
 - Commands are direct argv and shell strings are rejected.
-- The Phase A semantic integration layer is proven by the Mole integration;
-  write-capable actions remain approval-gated and fail closed.
+- The semantic integration layer covers Mole, restic, rclone, GitHub, Homebrew,
+  mas, OSV-Scanner, Gitleaks, Trivy, and Topgrade; write-capable actions are
+  persisted approval-gated and fail closed.
 
 ## Documents
 
@@ -37,6 +38,7 @@ add/register → schedule → run → history/logs → tui
 - [Native integration architecture](adr/0031-native-integration-semantic-layer.md)
   — shared plan, policy, parsing, and verification boundary.
 
-The removed Codex App Server, approval, privileged-helper, and policy-engine
+The removed Codex App Server, privileged-helper, and generic remote policy-engine
 documents are no longer part of the current product contract. The MCP adapter
-described in `chatgpt.md` is the supported ChatGPT integration boundary.
+and local approval records described in `chatgpt.md` are the supported ChatGPT
+integration boundary.

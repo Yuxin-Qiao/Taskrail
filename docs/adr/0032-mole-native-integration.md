@@ -16,8 +16,8 @@ existing argv executor, parses bounded output, records normalized metrics, and
 performs adapter verification.
 
 `clean --dry-run` is a read-only plan. Real `clean` is classified as
-`Destructive`; the current default policy holds it for durable approval and
-does not execute it. The adapter does not fabricate reclaimable bytes: only
+`Destructive`; the policy requires a persisted, expiring approval bound to the
+exact plan fingerprint before execution. The adapter does not fabricate reclaimable bytes: only
 explicit numeric byte fields or parseable reported size strings become
 metrics.
 
@@ -25,6 +25,6 @@ metrics.
 
 Mole's current CLI does not provide a deterministic post-clean state contract
 that Taskrail can verify without running another potentially expensive scan.
-Therefore a successful real clean would remain `NotConfigured` until a future
-approval and verification design is added. No real clean is exposed in this
-phase.
+Therefore a successful real clean remains `NotConfigured` for post-action
+verification. The action is exposed only through the explicit approval flow;
+the default path never starts it.
