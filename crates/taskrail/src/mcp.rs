@@ -26,7 +26,7 @@ const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Linux cron/systemd, and Windows Task Scheduler discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_status first, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 
 #[derive(Debug, Deserialize)]
@@ -564,7 +564,7 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_status",
             "Taskrail status",
-            "Use this first to verify that the Taskrail daemon is connected and identify the local Mac or Linux host. This check only reads daemon status and a fresh native-scheduler summary.",
+            "Use this first to verify that the Taskrail daemon is connected and identify the local macOS, Linux, or Windows host. This check only reads daemon status and a fresh native-scheduler summary.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -582,10 +582,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_discover_local_automations",
             "Discover local automations",
-            "Use this when the user asks what automation tasks already exist on this Mac or Linux host. It performs a fresh read-only scan of launchd, cron, systemd, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user asks what automation tasks already exist on this macOS, Linux, or Windows host. It performs a fresh read-only scan of launchd, cron, systemd, Windows Task Scheduler, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"], "default":"all"},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"], "default":"all"},
                 }),
                 &[],
             ),
@@ -596,10 +596,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_scan_native",
             "Scan native schedulers",
-            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, or Homebrew services on this host. It does not modify native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, Windows Task Scheduler, or Homebrew services on this host. It does not modify native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"]},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"]},
                 }),
                 &[],
             ),

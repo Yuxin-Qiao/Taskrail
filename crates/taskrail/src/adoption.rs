@@ -822,7 +822,10 @@ fn snapshot_fingerprint<T: Serialize>(snapshot: &T) -> Result<String> {
 mod tests {
     use super::*;
     use crate::core::{CommandSpec, Trigger};
-    use std::{cell::RefCell, fs, os::unix::fs::PermissionsExt, rc::Rc};
+    use std::{cell::RefCell, rc::Rc};
+    #[cfg(unix)]
+    use std::{fs, os::unix::fs::PermissionsExt};
+    #[cfg(unix)]
     use tempfile::tempdir;
 
     #[derive(Clone)]
@@ -1117,6 +1120,7 @@ mod tests {
         assert!(*active.borrow());
     }
 
+    #[cfg(unix)]
     #[test]
     fn systemd_controller_disables_and_restores_a_user_service() {
         let directory = tempdir().unwrap();
@@ -1177,6 +1181,7 @@ esac
         assert!(!controller.verify_disabled(&snapshot).unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
     fn launchd_controller_disables_and_restores_only_a_user_agent() {
         let directory = tempdir().unwrap();
