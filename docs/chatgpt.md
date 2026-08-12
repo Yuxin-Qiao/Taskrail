@@ -153,6 +153,9 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_list_runs` / `taskrail_get_run_logs` — inspect outcomes.
 - `taskrail_list_attention` / `taskrail_list_events` — review failures, drift,
   and recent activity.
+- `taskrail_mole` — use typed Mole actions for detection, analysis, status,
+  history, and cleanup dry-run planning. Real cleanup is destructive and held
+  by Taskrail policy.
 
 The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local

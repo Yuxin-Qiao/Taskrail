@@ -843,6 +843,29 @@ impl Registry {
                 });
             }
         }
+        for event in self.list_events(500)?.into_iter() {
+            if event.event_type == "integration.attention" {
+                let integration = event
+                    .payload
+                    .get("integration")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("integration");
+                let action = event
+                    .payload
+                    .get("action")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("action");
+                items.push(InboxItem {
+                    id: format!("integration:{}:{}:{}", integration, action, event.seq),
+                    kind: "integration_attention".into(),
+                    severity: "high".into(),
+                    status: "needs_attention".into(),
+                    title: format!("{integration} · {action}"),
+                    created_at: Some(event.occurred_at),
+                    detail: event.payload,
+                });
+            }
+        }
         items.sort_by(|left, right| {
             inbox_severity_rank(&right.severity)
                 .cmp(&inbox_severity_rank(&left.severity))

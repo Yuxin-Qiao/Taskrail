@@ -18,6 +18,8 @@ add/register → schedule → run → history/logs → tui
 - Native scheduler discovery and optional Codex/GitHub integrations stay at the
   edge of the core manager.
 - Commands are direct argv and shell strings are rejected.
+- The Phase A semantic integration layer is proven by the Mole integration;
+  write-capable actions remain approval-gated and fail closed.
 
 ## Documents
 
@@ -32,6 +34,8 @@ add/register → schedule → run → history/logs → tui
   or Linux Taskrail host.
 - [Acceptance checklist](ACCEPTANCE.md) — reproducible release-gate commands
   and evidence requirements.
+- [Native integration architecture](adr/0031-native-integration-semantic-layer.md)
+  — shared plan, policy, parsing, and verification boundary.
 
 The removed Codex App Server, approval, privileged-helper, and policy-engine
 documents are no longer part of the current product contract. The MCP adapter

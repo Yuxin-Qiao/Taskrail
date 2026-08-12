@@ -30,7 +30,7 @@ Execution date: 2026-08-12
 | C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation | local scan found 26 observations; discovery tests passed | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | Unix socket daemon responds, enforces 0600 socket permissions, and exposes lifecycle/log/run APIs | temporary daemon/MCP smoke; socket mode 0600 | PASS |
-| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes the local discovery tool | 14 tools; MCP tests and negative paths passed | PASS |
+| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery plus Mole semantic tools | 15 tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
 | D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
@@ -41,6 +41,8 @@ Execution date: 2026-08-12
 | F2 | CI definition | GitHub Actions YAML parses and contains Ubuntu/macOS Rust plus macOS Swift jobs | YAML parse passed; workflow inspected | PASS |
 | F3 | Release packaging | A version tag has a reproducible Linux CLI, macOS CLI, and unsigned desktop bundle workflow | local unsigned app bundle build passed; release workflow inspected | PASS |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, and contribution checks are configured | `.github` governance files parse and are staged | PASS |
+| G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
+| G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
 
 ## Commands to execute
 

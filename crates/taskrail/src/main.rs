@@ -19,6 +19,7 @@ use taskrail::{
         merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
+    integrations::{Integration, IntegrationAction as SemanticIntegrationAction, MoleIntegration},
     mcp, rpc, service,
     storage::Registry,
     verification::{self, VerificationCommand},
@@ -309,6 +310,11 @@ enum WorktreeAction {
 // Keep the explicit `*-doctor` names stable and discoverable in the CLI.
 #[allow(clippy::enum_variant_names)]
 enum IntegrationAction {
+    /// Run the Mole semantic integration.
+    Mole {
+        #[command(subcommand)]
+        action: MoleAction,
+    },
     /// Check Codex CLI availability and Git-repository preconditions.
     CodexDoctor {
         #[arg(long, default_value = ".")]
@@ -336,6 +342,30 @@ enum IntegrationAction {
         /// Profile written by tunnel-client.
         #[arg(long, default_value = "taskrail-local")]
         profile: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MoleAction {
+    /// Detect Mole and report its version.
+    Detect,
+    /// Check Mole availability without running cleanup.
+    Doctor,
+    /// Read the Mole version through the semantic execution path.
+    Version,
+    /// Analyze disk usage with Mole's structured JSON mode.
+    Analyze,
+    /// Read current system health with Mole's structured JSON mode.
+    Status,
+    /// Read bounded cleanup history.
+    History {
+        #[arg(long, default_value_t = 20)]
+        limit: u64,
+    },
+    /// Preview cleanup. Real cleanup remains approval-gated and unavailable here.
+    Clean {
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -533,7 +563,7 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Action::Integration { action } => integration_doctor(action),
+        Action::Integration { action } => integration_doctor(&registry, action).await,
         Action::Mcp { socket } => {
             mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await
         }
@@ -554,8 +584,9 @@ struct IntegrationReport {
     checks: Vec<IntegrationCheck>,
 }
 
-fn integration_doctor(action: IntegrationAction) -> Result<()> {
+async fn integration_doctor(registry: &Registry, action: IntegrationAction) -> Result<()> {
     let report = match action {
+        IntegrationAction::Mole { action } => return run_mole(registry, action).await,
         IntegrationAction::CodexDoctor { cwd } => codex_doctor(&cwd),
         IntegrationAction::GhDoctor { hostname } => gh_doctor(&hostname),
         IntegrationAction::ChatgptDoctor { profile } => chatgpt_doctor(&profile),
@@ -566,6 +597,40 @@ fn integration_doctor(action: IntegrationAction) -> Result<()> {
         } => return chatgpt_connect(tunnel_id, &alias, &profile),
     }?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn run_mole(registry: &Registry, action: MoleAction) -> Result<()> {
+    let integration = MoleIntegration::default();
+    let action = match action {
+        MoleAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        MoleAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        MoleAction::Version => SemanticIntegrationAction::new("version")?,
+        MoleAction::Analyze => SemanticIntegrationAction::new("analyze")?,
+        MoleAction::Status => SemanticIntegrationAction::new("status")?,
+        MoleAction::History { limit } => SemanticIntegrationAction::with_parameters(
+            "history",
+            serde_json::json!({"limit": limit.clamp(1, 200)}),
+        )?,
+        MoleAction::Clean { dry_run } => SemanticIntegrationAction::with_parameters(
+            "clean",
+            serde_json::json!({"dry_run": dry_run}),
+        )?,
+    };
+    let execution = service::execute_integration(registry.path(), &integration, &action).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&execution.semantic_value())?
+    );
+    if execution.verification.status == taskrail::integrations::VerificationStatus::Failed {
+        anyhow::bail!("Mole verification failed");
+    }
     Ok(())
 }
 

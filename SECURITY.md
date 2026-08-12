@@ -34,6 +34,13 @@ content, and AI output as untrusted input.
 - The MCP surface has no arbitrary shell tool. Creating or running an
   automation still uses the direct executable-plus-argv boundary, and native
   observed jobs remain read-only until explicit local adoption.
+- Native integrations produce typed direct-argv plans and pass through the
+  existing executor and Run/Event audit path. Non-read actions are held by the
+  default policy until durable approval exists; an integration cannot self-grant
+  execution permission.
+- Integration parsers receive bounded output and expose normalized summaries;
+  raw output remains in the bounded run-log read model. Scanner/tool output is
+  treated as untrusted data, not agent instructions.
 - Private ChatGPT connections should use OpenAI Secure MCP Tunnel. Tunnel
   runtime credentials and host labels are deployment configuration and must
   remain outside the repository.

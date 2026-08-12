@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SERVER_NAME: &str = "taskrail";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. For Mole, use taskrail_mole with a typed action; real cleanup is approval-gated and dry-run should be used first. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -142,6 +142,22 @@ fn tool_descriptors() -> Vec<Value> {
             ),
             false,
             false,
+            true,
+        ),
+        tool(
+            "taskrail_mole",
+            "Mole integration",
+            "Use this for typed Mole actions on this Mac: detect, doctor, version, analyze, status, history, or clean. Prefer clean with dry_run=true. Real cleanup is destructive and remains held by Taskrail policy until durable approval exists; this tool never accepts shell arguments.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","version","analyze","status","history","clean"]},
+                    "dry_run":{"type":"boolean","default":true},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
+                }),
+                &["action"],
+            ),
+            false,
+            true,
             true,
         ),
         tool(
@@ -325,6 +341,23 @@ async fn call_tool(params: &Value, socket_path: &PathBuf) -> Result<Value> {
         "taskrail_list_automations" => ("automation.list", json!({})),
         "taskrail_discover_local_automations" => ("automation.scan", arguments),
         "taskrail_scan_native" => ("automation.scan", arguments),
+        "taskrail_mole" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_mole requires arguments.action")?;
+            let parameters = json!({
+                "dry_run": arguments.get("dry_run").and_then(Value::as_bool).unwrap_or(true),
+                "limit": arguments.get("limit").and_then(Value::as_u64).unwrap_or(20),
+            });
+            return call_rpc_tool(
+                "taskrail_mole",
+                socket_path,
+                "integration.mole",
+                json!({"action":action,"parameters":parameters}),
+            )
+            .await;
+        }
         "taskrail_get_automation" => ("automation.inspect", arguments),
         "taskrail_create_automation" => ("automation.create", arguments),
         "taskrail_pause_automation" => ("automation.pause", arguments),
@@ -370,6 +403,21 @@ async fn call_tool(params: &Value, socket_path: &PathBuf) -> Result<Value> {
     }))
 }
 
+async fn call_rpc_tool(
+    name: &str,
+    socket_path: &PathBuf,
+    rpc_method: &str,
+    rpc_params: Value,
+) -> Result<Value> {
+    let value = rpc::call(socket_path, rpc_method, rpc_params).await?;
+    let summary = summarize(name, &value);
+    Ok(json!({
+        "content": [{"type":"text","text":summary}],
+        "structuredContent": {"result": value},
+        "isError": false,
+    }))
+}
+
 fn summarize(name: &str, value: &Value) -> String {
     match name {
         "taskrail_status" => format!(
@@ -398,6 +446,21 @@ fn summarize(name: &str, value: &Value) -> String {
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len)
         ),
+        "taskrail_mole" => {
+            if let Some(status) = value
+                .get("verification")
+                .and_then(|item| item.get("status"))
+            {
+                format!(
+                    "Mole integration completed; verification status {}.",
+                    status
+                )
+            } else if let Some(status) = value.get("status").and_then(Value::as_str) {
+                format!("Mole integration status: {status}.")
+            } else {
+                "Mole integration inspection completed.".into()
+            }
+        }
         "taskrail_scan_native" => format!(
             "Scanned and reconciled {} native automation source(s).",
             value.as_array().map_or(0, Vec::len)
@@ -491,6 +554,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), tools.len());
+        assert!(names.contains(&"taskrail_mole"));
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object");
             assert!(

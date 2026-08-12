@@ -125,10 +125,31 @@ Taskrail can manage commands and scripts you already use:
 - explicit adoption of supported user-native jobs, with rollback records;
 - optional Codex and Responses-compatible AI executions;
 - read-only GitHub issue, pull request, check, and failed-run observations.
+- Mole semantic integration for typed detection, analysis, status, history, and
+  cleanup dry-run plans.
 
 Native jobs are observed before Taskrail is asked to adopt them. Discovery does
 not change the machine. Adoption is currently limited to supported user-level
 sources and always requires an explicit command.
+
+## Native integrations
+
+Taskrail's first semantic native integration is Mole:
+
+```bash
+taskrail integration mole detect
+taskrail integration mole doctor
+taskrail integration mole analyze
+taskrail integration mole status
+taskrail integration mole history --limit 20
+taskrail integration mole clean --dry-run
+```
+
+These actions use typed argv plans, bounded parsing, normalized semantic
+results, Run/Event/Metric records, and deterministic verification. Actual
+`clean` is destructive and remains held by the policy boundary until a durable
+approval implementation exists. It is not executed by the current CLI or MCP
+surface.
 
 ## The TUI is the main view
 

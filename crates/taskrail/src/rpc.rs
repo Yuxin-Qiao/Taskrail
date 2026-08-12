@@ -4,6 +4,7 @@ use crate::{
         CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
         merge_homebrew_sources, same_native_path,
     },
+    integrations::{Integration, IntegrationAction, MoleIntegration},
     service,
     storage::Registry,
 };
@@ -320,6 +321,40 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             match service::run_named(registry_path, &id, allow_observed).await {
                 Ok(result) => serde_json::to_value(result).map_err(Into::into),
                 Err(error) => Err(error),
+            }
+        }
+        "integration.mole" => {
+            let action_name = match string_param(&request.params, "action") {
+                Ok(action) => action,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            if matches!(action_name.as_str(), "detect" | "doctor") {
+                let integration = MoleIntegration::default();
+                if action_name == "detect" {
+                    serde_json::to_value(integration.detect()).map_err(Into::into)
+                } else {
+                    serde_json::to_value(integration.doctor()).map_err(Into::into)
+                }
+            } else {
+                let parameters = request
+                    .params
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let action = match IntegrationAction::with_parameters(action_name, parameters) {
+                    Ok(action) => action,
+                    Err(error) => return invalid_params(request.id, error.to_string()),
+                };
+                match service::execute_integration(
+                    registry_path,
+                    &MoleIntegration::default(),
+                    &action,
+                )
+                .await
+                {
+                    Ok(execution) => Ok(execution.semantic_value()),
+                    Err(error) => Err(error),
+                }
             }
         }
         "run.cancel" => {
