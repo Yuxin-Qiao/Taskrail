@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     collections::BTreeMap,
     io::{self, IsTerminal},
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
@@ -313,6 +314,32 @@ enum Action {
     },
     /// Expose the local Taskrail daemon as an MCP server over stdio.
     Mcp {
+        /// Unix socket served by `taskrail daemon`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Expose the public read-only MCP profile over Streamable HTTP.
+    McpHttp {
+        /// Local address for a TLS-terminating reverse proxy to reach.
+        #[arg(long, env = "TASKRAIL_MCP_HTTP_BIND", default_value = "127.0.0.1:8787")]
+        bind: SocketAddr,
+        /// Name of the environment variable containing the bearer token.
+        #[arg(
+            long,
+            env = "TASKRAIL_MCP_BEARER_TOKEN_ENV",
+            default_value = "TASKRAIL_MCP_BEARER_TOKEN"
+        )]
+        bearer_token_env: String,
+        /// Name of the environment variable containing comma-separated allowed Origin values.
+        #[arg(
+            long,
+            env = "TASKRAIL_MCP_ALLOWED_ORIGINS_ENV",
+            default_value = "TASKRAIL_MCP_ALLOWED_ORIGINS"
+        )]
+        allowed_origins_env: String,
+        /// Maximum accepted JSON request body size.
+        #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
+        max_body_bytes: usize,
         /// Unix socket served by `taskrail daemon`.
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -640,8 +667,31 @@ struct ScheduleIntegrationOptions {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let registry = Registry::open(cli.registry.unwrap_or_else(default_registry_path))?;
-    match cli.command {
+    let registry_path = cli.registry.unwrap_or_else(default_registry_path);
+    let command = match cli.command {
+        Action::Mcp { socket } => {
+            return mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await;
+        }
+        Action::McpHttp {
+            bind,
+            bearer_token_env,
+            allowed_origins_env,
+            max_body_bytes,
+            socket,
+        } => {
+            return mcp::serve_http(
+                socket.unwrap_or_else(default_socket_path),
+                bind,
+                bearer_token_env,
+                allowed_origins_env,
+                max_body_bytes,
+            )
+            .await;
+        }
+        command => command,
+    };
+    let registry = Registry::open(registry_path)?;
+    match command {
         Action::Scan { source, json } => scan(&registry, source, json),
         Action::List { json } => list(&registry, json),
         Action::Inspect { id } => inspect(&registry, &id),
@@ -833,8 +883,8 @@ async fn main() -> Result<()> {
         }
         Action::Integrations => integrations(&registry),
         Action::Integration { action } => integration_doctor(&registry, action).await,
-        Action::Mcp { socket } => {
-            mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await
+        Action::Mcp { .. } | Action::McpHttp { .. } => {
+            unreachable!("MCP transports return before opening the local Registry")
         }
     }
 }

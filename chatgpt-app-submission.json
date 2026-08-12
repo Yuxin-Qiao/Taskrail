@@ -100,7 +100,7 @@
       },
       "justifications": {
         "read_only_justification": "Uses fixed read-only GitHub CLI queries for issues, pull requests, failed runs, or checks and returns normalized observations.",
-        "open_world_justification": "The integration observes repositories selected by the user but never creates, edits, comments on, or publishes GitHub state.",
+        "open_world_justification": "The integration reaches the external GitHub service to observe repositories selected by the user, but never creates, edits, comments on, or publishes GitHub state.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute a GitHub write, or perform an irreversible action."
       }
     },
@@ -112,7 +112,7 @@
       },
       "justifications": {
         "read_only_justification": "Only inspects Mac App Store availability, installed apps, or outdated apps and never installs or updates an app.",
-        "open_world_justification": "Only observes private local package state and does not change public internet state or third-party systems.",
+        "open_world_justification": "The integration may query the external Mac App Store service, but it never installs, updates, or changes a third-party system.",
         "destructive_justification": "Does not delete, overwrite, revoke access, install software, or perform an irreversible action."
       }
     },
@@ -124,7 +124,7 @@
       },
       "justifications": {
         "read_only_justification": "Runs a typed dependency scan and returns normalized findings without modifying the project or exposing raw secret values.",
-        "open_world_justification": "Only analyzes private local project files and does not publish findings or alter a third-party system.",
+        "open_world_justification": "The scanner may query the external OSV vulnerability service while analyzing local project files, but it does not publish findings or alter a third-party system.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute a remediation, or perform an irreversible action."
       }
     },
@@ -148,7 +148,7 @@
       },
       "justifications": {
         "read_only_justification": "Runs a typed filesystem or repository scan and returns normalized vulnerability, misconfiguration, secret, and license findings without modifying files.",
-        "open_world_justification": "Only analyzes private local project state and does not publish results or change a third-party system.",
+        "open_world_justification": "The scanner may query external vulnerability data while analyzing private local project state, but it does not publish results or change a third-party system.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute a remediation, or perform an irreversible action."
       }
     },

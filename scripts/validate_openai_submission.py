@@ -91,7 +91,7 @@ def main() -> None:
             "destructiveHint": False,
         }
         if annotations != expected_annotations:
-            errors.append(f"{name} must be explicitly read-only, private, and non-destructive")
+            errors.append(f"{name} annotations do not match the public profile behavior")
         justifications = definition.get("justifications")
         if not isinstance(justifications, dict) or set(justifications) != {
             "read_only_justification",

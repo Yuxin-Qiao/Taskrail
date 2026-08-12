@@ -2,7 +2,9 @@
 
 This repository contains the implementation and review artifacts for a
 Taskrail ChatGPT app. The target public app is the **public read-only profile**
-(`TASKRAIL_MCP_PROFILE=public`), not the full private local profile.
+enforced by `taskrail mcp-http`, not the full private local profile. The
+`TASKRAIL_MCP_PROFILE=public taskrail mcp` form remains available for local
+stdio review tests.
 
 ## Completed in this checkout
 
@@ -18,6 +20,8 @@ Taskrail ChatGPT app. The target public app is the **public read-only profile**
   `raw`/`env` fields, and hide the current home-directory prefix in paths.
 - `chatgpt-app-submission.json` contains the app information, all 17 public
   tools, five positive tests, and three negative tests.
+- `OPENAI_RELEASE_NOTES.md` contains the portal-ready initial-submission
+  release notes.
 - `.codex-plugin/plugin.json` and `.mcp.json` describe a repository-local,
   read-only Codex plugin development connection.
 - [Privacy](PRIVACY.md), [terms](TERMS.md), and [support](SUPPORT.md) pages are
@@ -25,18 +29,29 @@ Taskrail ChatGPT app. The target public app is the **public read-only profile**
 
 ## Public profile
 
-Start the public-facing MCP process with:
+Start the public-facing MCP process with a secret injected by the deployment
+environment, not committed to the repository:
 
 ```bash
-TASKRAIL_MCP_PROFILE=public taskrail mcp \
+export TASKRAIL_MCP_BEARER_TOKEN="$(secret-manager read taskrail/mcp-bearer-token)"
+export TASKRAIL_MCP_ALLOWED_ORIGINS="https://your-approved-chatgpt-origin.example"
+taskrail mcp-http \
+  --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-The process must run behind a production HTTPS MCP endpoint with user
-authentication and per-user host binding. The repository's private Secure MCP
-Tunnel instructions are for development/testing connections only. Do not
-submit a localhost address, a private-network address, a tunnel-only address,
-or the default full local profile.
+`taskrail mcp-http` always forces the public read-only profile, exposes
+`POST /mcp` and `GET /healthz`, requires a constant-time Bearer token, bounds
+request bodies, rejects chunked requests, validates allowed origins, emits
+request logs and an authenticated internal `/metrics` endpoint, and is
+intended to sit behind a production TLS-terminating reverse proxy. The proxy
+or hosting layer still must provide user authentication and per-user host
+binding; the static bearer token is a process-to-proxy boundary, not an
+end-user identity system.
+
+The repository's private Secure MCP Tunnel instructions are for development/
+testing connections only. Do not submit a localhost address, a private-network
+address, a tunnel-only address, or the default full local profile.
 
 ## External gates before submission
 
@@ -45,9 +60,12 @@ be completed by a local source change:
 
 - [ ] Push this exact review snapshot, including the policy pages, to the
       public default branch and verify every linked URL in an incognito window.
-- [ ] Deploy a stable production HTTPS MCP endpoint that launches the public
-      profile, authenticates users, binds each request to an authorized host,
-      and has no private-network dependency.
+- [ ] Deploy a stable production HTTPS MCP endpoint that proxies `/mcp` to
+      `taskrail mcp-http`, authenticates users, binds each request to an
+      authorized host, and has no private-network dependency.
+- [ ] Configure OpenAI-managed mTLS for ChatGPT client authentication and
+      OAuth 2.1/OIDC when user authentication is required; do not use the
+      internal process bearer as the end-user auth mechanism.
 - [ ] Prepare a non-MFA test account/fixture that can connect to the public
       endpoint and produce deterministic local read-only data without exposing
       credentials or private source content.

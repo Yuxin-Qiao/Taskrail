@@ -110,13 +110,15 @@ more than one Mac or Linux host is connected.
 For a future public MCP deployment, use the enforced read-only review profile:
 
 ```bash
-TASKRAIL_MCP_PROFILE=public taskrail mcp
+export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
+taskrail mcp-http --bind 127.0.0.1:8787
 ```
 
-This profile omits creation, deletion, execution, adoption, and approval
-tools. It must run behind a production HTTPS endpoint with authentication and
-per-user host binding; a local tunnel is only a developer connection. See the
-[OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
+This endpoint always uses the public read-only profile and omits creation,
+deletion, execution, adoption, and approval tools. Put it behind a production
+HTTPS proxy with end-user authentication and per-user host binding; a local
+tunnel is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md)
+and the [single-host deployment example](deploy/README.md).
 
 Open the live terminal dashboard:
 

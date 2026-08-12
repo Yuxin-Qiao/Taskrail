@@ -8,11 +8,24 @@ use crate::rpc;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::PathBuf;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 
 const SERVER_NAME: &str = "Taskrail";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+const MAX_HTTP_HEADER_BYTES: usize = 32 * 1024;
+const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
+static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_status first, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 
@@ -94,6 +107,410 @@ pub async fn serve_stdio(socket_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Serve the public read-only MCP profile over stateless Streamable HTTP.
+///
+/// TLS is deliberately terminated by the deployment's reverse proxy. The
+/// process binds locally by default, requires a bearer token from an
+/// environment variable, and never exposes the full local profile.
+pub async fn serve_http(
+    socket_path: PathBuf,
+    bind: SocketAddr,
+    bearer_token_env: String,
+    allowed_origins_env: String,
+    max_body_bytes: usize,
+) -> Result<()> {
+    if max_body_bytes == 0 || max_body_bytes > 8 * 1024 * 1024 {
+        anyhow::bail!("HTTP body limit must be between 1 and 8388608 bytes");
+    }
+    let token = std::env::var(&bearer_token_env).with_context(|| {
+        format!("missing HTTP bearer token environment variable {bearer_token_env}")
+    })?;
+    if token.trim().is_empty() {
+        anyhow::bail!("HTTP bearer token environment variable {bearer_token_env} is empty");
+    }
+    let allowed_origins = std::env::var(&allowed_origins_env)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if allowed_origins.iter().any(|origin| origin == "*") {
+        anyhow::bail!("HTTP allowed origins must not contain a wildcard");
+    }
+    let listener = TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("bind Taskrail MCP HTTP endpoint {bind}"))?;
+    eprintln!("Taskrail public read-only MCP HTTP endpoint listening on http://{bind}/mcp");
+    loop {
+        let (stream, _) = listener.accept().await.context("accept MCP HTTP client")?;
+        let socket_path = socket_path.clone();
+        let token = token.clone();
+        let allowed_origins = allowed_origins.clone();
+        tokio::spawn(async move {
+            if let Err(error) = handle_http_connection(
+                stream,
+                socket_path,
+                &token,
+                &allowed_origins,
+                max_body_bytes,
+            )
+            .await
+            {
+                eprintln!("MCP HTTP client error: {error:#}");
+            }
+        });
+    }
+}
+
+#[derive(Debug)]
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
+}
+
+async fn handle_http_connection(
+    stream: TcpStream,
+    socket_path: PathBuf,
+    bearer_token: &str,
+    allowed_origins: &[String],
+    max_body_bytes: usize,
+) -> Result<()> {
+    let mut reader = BufReader::new(stream);
+    let request = tokio::time::timeout(
+        HTTP_READ_TIMEOUT,
+        read_http_request(&mut reader, max_body_bytes),
+    )
+    .await
+    .context("read MCP HTTP request timed out")??;
+    let Some(request) = request else {
+        return Ok(());
+    };
+    let request_started = Instant::now();
+    let request_method = request.method.clone();
+    let request_path = request.path.clone();
+    let response =
+        http_response_for_request(&request, &socket_path, bearer_token, allowed_origins).await;
+    let (status, content_type, body, protocol_header) = match response {
+        Ok(response) => response,
+        Err(error) => {
+            eprintln!("MCP HTTP request failed: {error:#}");
+            HTTP_SERVER_ERRORS_TOTAL.fetch_add(1, Ordering::Relaxed);
+            (
+                "400 Bad Request",
+                "application/json",
+                serde_json::to_vec(&error_response(
+                    Value::Null,
+                    -32700,
+                    format!("invalid MCP HTTP request: {error}"),
+                ))?,
+                false,
+            )
+        }
+    };
+    HTTP_REQUESTS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    let status_code = status
+        .split_ascii_whitespace()
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(500);
+    if (400..500).contains(&status_code) {
+        HTTP_CLIENT_ERRORS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+    eprintln!(
+        "mcp_http_request method={request_method:?} path={request_path:?} status={status:?} response_bytes={} duration_ms={}",
+        body.len(),
+        request_started.elapsed().as_millis()
+    );
+    write_http_response(
+        reader.get_mut(),
+        status,
+        content_type,
+        &body,
+        protocol_header,
+    )
+    .await
+}
+
+async fn read_http_request(
+    reader: &mut BufReader<TcpStream>,
+    max_body_bytes: usize,
+) -> Result<Option<HttpRequest>> {
+    let mut header_bytes = 0usize;
+    let mut line = Vec::new();
+    reader.read_until(b'\n', &mut line).await?;
+    if line.is_empty() {
+        return Ok(None);
+    }
+    header_bytes += line.len();
+    if header_bytes > MAX_HTTP_HEADER_BYTES {
+        anyhow::bail!("HTTP headers exceed the configured limit");
+    }
+    let request_line = String::from_utf8(line.clone()).context("HTTP request line is not UTF-8")?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .context("HTTP request method is missing")?
+        .to_owned();
+    let path = request_parts
+        .next()
+        .context("HTTP request target is missing")?
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let version = request_parts.next().context("HTTP version is missing")?;
+    if version != "HTTP/1.1" {
+        anyhow::bail!("unsupported HTTP version {version}");
+    }
+
+    let mut headers = BTreeMap::new();
+    loop {
+        line.clear();
+        reader.read_until(b'\n', &mut line).await?;
+        if line.is_empty() {
+            anyhow::bail!("truncated HTTP headers");
+        }
+        header_bytes += line.len();
+        if header_bytes > MAX_HTTP_HEADER_BYTES {
+            anyhow::bail!("HTTP headers exceed the configured limit");
+        }
+        let header = String::from_utf8(line.clone()).context("HTTP header is not UTF-8")?;
+        let header = header.trim_end_matches(['\r', '\n']);
+        if header.is_empty() {
+            break;
+        }
+        let (name, value) = header
+            .split_once(':')
+            .context("HTTP header is missing a colon")?;
+        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
+    }
+
+    if headers
+        .get("transfer-encoding")
+        .is_some_and(|value| !value.eq_ignore_ascii_case("identity"))
+    {
+        anyhow::bail!("chunked transfer encoding is not supported");
+    }
+    let body_length = headers
+        .get("content-length")
+        .map(|value| value.parse::<usize>().context("invalid Content-Length"))
+        .transpose()?
+        .unwrap_or(0);
+    if body_length > max_body_bytes {
+        anyhow::bail!("HTTP request body exceeds the configured limit");
+    }
+    let mut body = vec![0; body_length];
+    reader.read_exact(&mut body).await?;
+    Ok(Some(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    }))
+}
+
+async fn http_response_for_request(
+    request: &HttpRequest,
+    socket_path: &PathBuf,
+    bearer_token: &str,
+    allowed_origins: &[String],
+) -> Result<(&'static str, &'static str, Vec<u8>, bool)> {
+    if let Some(origin) = request.headers.get("origin")
+        && !allowed_origins.iter().any(|allowed| allowed == origin)
+    {
+        return Ok((
+            "403 Forbidden",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"Origin is not allowed"}))?,
+            false,
+        ));
+    }
+    if request.method == "GET" && request.path == "/healthz" {
+        return Ok((
+            "200 OK",
+            "application/json",
+            serde_json::to_vec(&json!({
+                "status": "ok",
+                "server": SERVER_NAME,
+                "profile": "public-read-only",
+            }))?,
+            false,
+        ));
+    }
+    if request.method == "GET" && request.path == "/metrics" {
+        if !bearer_header_matches(request.headers.get("authorization"), bearer_token) {
+            return Ok((
+                "401 Unauthorized",
+                "application/json",
+                serde_json::to_vec(&json!({"error":"valid Bearer authentication is required"}))?,
+                false,
+            ));
+        }
+        return Ok(("200 OK", "text/plain; version=0.0.4", metrics_body(), false));
+    }
+    if request.method == "OPTIONS" {
+        return Ok(("204 No Content", "application/json", Vec::new(), false));
+    }
+    if request.path != "/mcp" {
+        return Ok((
+            "404 Not Found",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"not found"}))?,
+            false,
+        ));
+    }
+    if request.method != "POST" {
+        return Ok((
+            "405 Method Not Allowed",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"MCP endpoint accepts POST"}))?,
+            false,
+        ));
+    }
+    if !bearer_header_matches(request.headers.get("authorization"), bearer_token) {
+        return Ok((
+            "401 Unauthorized",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"valid Bearer authentication is required"}))?,
+            false,
+        ));
+    }
+    if !request
+        .headers
+        .get("content-type")
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("application/json"))
+    {
+        return Ok((
+            "415 Unsupported Media Type",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"Content-Type must be application/json"}))?,
+            false,
+        ));
+    }
+    let accepts_json = request
+        .headers
+        .get("accept")
+        .is_some_and(|value| header_lists_media_type(value, "application/json"));
+    let accepts_sse = request
+        .headers
+        .get("accept")
+        .is_some_and(|value| header_lists_media_type(value, "text/event-stream"));
+    if !accepts_json || !accepts_sse {
+        return Ok((
+            "406 Not Acceptable",
+            "application/json",
+            serde_json::to_vec(
+                &json!({"error":"Accept must include application/json and text/event-stream"}),
+            )?,
+            true,
+        ));
+    }
+    if let Some(version) = request.headers.get("mcp-protocol-version")
+        && !matches!(version.as_str(), "2025-11-25" | "2025-06-18")
+    {
+        return Ok((
+            "400 Bad Request",
+            "application/json",
+            serde_json::to_vec(&json!({"error":"unsupported MCP protocol version"}))?,
+            true,
+        ));
+    }
+    let mcp_request: Request = serde_json::from_slice(&request.body)
+        .context("MCP request body is not a valid JSON-RPC request")?;
+    if mcp_request.method != "initialize" && !request.headers.contains_key("mcp-protocol-version") {
+        return Ok((
+            "400 Bad Request",
+            "application/json",
+            serde_json::to_vec(&json!({
+                "error": "MCP-Protocol-Version is required after initialization"
+            }))?,
+            true,
+        ));
+    }
+    let response =
+        handle_request_with_profile(mcp_request, socket_path, McpProfile::PublicReadOnly).await;
+    let Some(response) = response else {
+        return Ok(("202 Accepted", "application/json", Vec::new(), true));
+    };
+    Ok((
+        "200 OK",
+        "application/json",
+        serde_json::to_vec(&response)?,
+        true,
+    ))
+}
+
+fn header_lists_media_type(header: &str, media_type: &str) -> bool {
+    header.split(',').any(|item| {
+        item.trim()
+            .split(';')
+            .next()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case(media_type))
+    })
+}
+
+fn metrics_body() -> Vec<u8> {
+    format!(
+        "# HELP taskrail_mcp_http_requests_total Total HTTP requests handled by the MCP adapter.\n# TYPE taskrail_mcp_http_requests_total counter\ntaskrail_mcp_http_requests_total {}\n# HELP taskrail_mcp_http_client_errors_total Total HTTP 4xx responses.\n# TYPE taskrail_mcp_http_client_errors_total counter\ntaskrail_mcp_http_client_errors_total {}\n# HELP taskrail_mcp_http_server_errors_total Total internal HTTP request handling errors.\n# TYPE taskrail_mcp_http_server_errors_total counter\ntaskrail_mcp_http_server_errors_total {}\n",
+        HTTP_REQUESTS_TOTAL.load(Ordering::Relaxed),
+        HTTP_CLIENT_ERRORS_TOTAL.load(Ordering::Relaxed),
+        HTTP_SERVER_ERRORS_TOTAL.load(Ordering::Relaxed),
+    )
+    .into_bytes()
+}
+
+fn bearer_header_matches(value: Option<&String>, expected: &str) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let mut parts = value.split_ascii_whitespace();
+    let Some(scheme) = parts.next() else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return false;
+    }
+    let Some(candidate) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    let candidate = candidate.as_bytes();
+    let expected = expected.as_bytes();
+    let mut difference = candidate.len() ^ expected.len();
+    for index in 0..candidate.len().max(expected.len()) {
+        difference |= usize::from(candidate.get(index).copied().unwrap_or_default())
+            ^ usize::from(expected.get(index).copied().unwrap_or_default());
+    }
+    difference == 0
+}
+
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    protocol_header: bool,
+) -> Result<()> {
+    let protocol_header = if protocol_header {
+        format!("MCP-Protocol-Version: {MCP_PROTOCOL_VERSION}\r\n")
+    } else {
+        String::new()
+    };
+    let headers = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{protocol_header}\r\n",
+        body.len()
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(body).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
 async fn handle_request_with_profile(
     request: Request,
     socket_path: &PathBuf,
@@ -124,8 +541,8 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
     let protocol_version = params
         .get("protocolVersion")
         .and_then(Value::as_str)
-        .filter(|version| matches!(*version, "2025-06-18" | "2025-03-26" | "2024-11-05"))
-        .unwrap_or("2025-06-18");
+        .filter(|version| matches!(*version, "2025-11-25" | "2025-06-18"))
+        .unwrap_or(MCP_PROTOCOL_VERSION);
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
@@ -1596,6 +2013,197 @@ mod tests {
                 .unwrap()
                 .contains("public read-only profile")
         );
+    }
+
+    #[tokio::test]
+    async fn http_health_and_auth_boundaries_are_explicit() {
+        let health = http_response_for_request(
+            &HttpRequest {
+                method: "GET".into(),
+                path: "/healthz".into(),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(health.0, "200 OK");
+        assert!(
+            String::from_utf8(health.2)
+                .unwrap()
+                .contains("public-read-only")
+        );
+
+        let unauthorized = http_response_for_request(
+            &HttpRequest {
+                method: "POST".into(),
+                path: "/mcp".into(),
+                headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+                body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(unauthorized.0, "401 Unauthorized");
+
+        let lower_case_scheme = String::from("bearer review-token");
+        assert!(bearer_header_matches(
+            Some(&lower_case_scheme),
+            "review-token"
+        ));
+        let extra_token = String::from("Bearer review-token extra");
+        assert!(!bearer_header_matches(Some(&extra_token), "review-token"));
+
+        let blocked_origin = http_response_for_request(
+            &HttpRequest {
+                method: "GET".into(),
+                path: "/healthz".into(),
+                headers: BTreeMap::from([("origin".into(), "https://evil.example".into())]),
+                body: Vec::new(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &["https://review.example".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(blocked_origin.0, "403 Forbidden");
+
+        let accepted_origin = http_response_for_request(
+            &HttpRequest {
+                method: "GET".into(),
+                path: "/healthz".into(),
+                headers: BTreeMap::from([("origin".into(), "https://review.example".into())]),
+                body: Vec::new(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &["https://review.example".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(accepted_origin.0, "200 OK");
+
+        assert!(header_lists_media_type(
+            "application/json; charset=utf-8, text/event-stream",
+            "application/json"
+        ));
+        assert!(!header_lists_media_type(
+            "application/json",
+            "text/event-stream"
+        ));
+
+        let metrics_unauthorized = http_response_for_request(
+            &HttpRequest {
+                method: "GET".into(),
+                path: "/metrics".into(),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(metrics_unauthorized.0, "401 Unauthorized");
+
+        let metrics_authorized = http_response_for_request(
+            &HttpRequest {
+                method: "GET".into(),
+                path: "/metrics".into(),
+                headers: BTreeMap::from([("authorization".into(), "Bearer review-token".into())]),
+                body: Vec::new(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(metrics_authorized.0, "200 OK");
+        assert_eq!(metrics_authorized.1, "text/plain; version=0.0.4");
+        assert!(
+            String::from_utf8(metrics_authorized.2)
+                .unwrap()
+                .contains("taskrail_mcp_http_requests_total")
+        );
+    }
+
+    #[tokio::test]
+    async fn http_initialize_and_tools_list_use_public_profile() {
+        let mut headers = BTreeMap::new();
+        headers.insert("authorization".into(), "Bearer review-token".into());
+        headers.insert("content-type".into(), "application/json".into());
+        headers.insert("mcp-protocol-version".into(), MCP_PROTOCOL_VERSION.into());
+        headers.insert(
+            "accept".into(),
+            "application/json, text/event-stream".into(),
+        );
+        let initialize_request = HttpRequest {
+            method: "POST".into(),
+            path: "/mcp".into(),
+            headers: headers.clone(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#.to_vec(),
+        };
+        let initialize = http_response_for_request(
+            &initialize_request,
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(initialize.0, "200 OK");
+        assert!(
+            String::from_utf8(initialize.2)
+                .unwrap()
+                .contains("public read-only review profile")
+        );
+
+        let tools = http_response_for_request(
+            &HttpRequest {
+                body: br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#.to_vec(),
+                ..initialize_request
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(tools.0, "200 OK");
+        let tools: Value = serde_json::from_slice(&tools.2).unwrap();
+        let tools = tools["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), PUBLIC_READ_ONLY_TOOLS.len());
+        assert!(tools.iter().all(|tool| {
+            tool["annotations"]["readOnlyHint"] == true
+                && tool["annotations"]["destructiveHint"] == false
+        }));
+
+        let missing_accept = http_response_for_request(
+            &HttpRequest {
+                headers: BTreeMap::from([
+                    ("authorization".into(), "Bearer review-token".into()),
+                    ("content-type".into(), "application/json".into()),
+                ]),
+                body: br#"{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}"#.to_vec(),
+                method: "POST".into(),
+                path: "/mcp".into(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(missing_accept.0, "406 Not Acceptable");
     }
 
     #[test]

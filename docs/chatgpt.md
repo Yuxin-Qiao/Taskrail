@@ -122,15 +122,21 @@ repository or put them in an automation definition.
 
 OpenAI public app review requires a stable, production-hosted HTTPS MCP
 endpoint. A local Secure MCP Tunnel is suitable for development connections,
-not as the public submission endpoint. The endpoint should launch Taskrail
-with the read-only review profile:
+not as the public submission endpoint. Use the built-in HTTP adapter behind a
+TLS-terminating reverse proxy:
 
 ```bash
-TASKRAIL_MCP_PROFILE=public taskrail mcp \
+export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
+taskrail mcp-http \
+  --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-This profile exposes only status, native discovery, inventory, adoption
+`taskrail mcp-http` always launches the public read-only profile. It exposes
+`POST /mcp` and `GET /healthz`, requires Bearer authentication, bounds request
+bodies, and refuses chunked requests. The proxy/hosting layer must still add
+end-user authentication and per-user host binding. The public profile exposes
+only status, native discovery, inventory, adoption
 journal inspection, read-only GitHub observations, local package/security
 inspection, run history/logs, attention items, and audit events. It does not
 expose automation creation, deletion, pause/resume, execution, cancellation,

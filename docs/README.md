@@ -17,6 +17,9 @@ add/register → schedule → run → history/logs → tui
   on Linux; the SwiftUI desktop view under `macos/DesktopApp` remains macOS-only.
 - ChatGPT Scheduled tasks can call the local MCP adapter through a private
   OpenAI Secure MCP Tunnel.
+- The public read-only `taskrail mcp-http` adapter is available for deployment
+  behind a TLS/authentication edge; the container example under `deploy/` is
+  single-host only and is not a hosted multi-tenant service.
 - Native scheduler discovery and typed semantic integrations stay at the edge of
   the core manager.
 - Commands are direct argv and shell strings are rejected.
@@ -37,6 +40,8 @@ add/register → schedule → run → history/logs → tui
   or Linux Taskrail host.
 - [OpenAI submission checklist](OPENAI_SUBMISSION.md) — public review profile,
   metadata, test cases, policy pages, and external launch gates.
+- [OpenAI release notes](OPENAI_RELEASE_NOTES.md) — portal-ready initial
+  submission summary.
 - [Privacy policy](PRIVACY.md), [Terms](TERMS.md), and [Support](SUPPORT.md) —
   public app-review policy pages.
 - [Acceptance checklist](ACCEPTANCE.md) — reproducible release-gate commands
