@@ -135,10 +135,11 @@ logs; the in-app browser loaded the connected dashboard and returned 26 native
 discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-GitHub Actions runs `31630558563` (CI), `31630558431` (Security),
-`31630558557` (CodeQL), and `31630558444` (Dependency review) passed on
-implementation head `48d3521`. The MCP Apps implementation, HTTP resource-route
-coverage, and native-task-list Widget are included in those fresh checks.
+GitHub Actions runs `31632819911` (CI), `31632819967` (Security),
+`31632819899` (CodeQL), and `31632819885` (Dependency review) passed on
+release-documentation head `5fe7920`. The MCP Apps implementation,
+HTTP resource-route coverage, and native-task-list Widget are included in the
+validated branch history.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
