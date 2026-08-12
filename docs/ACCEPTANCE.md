@@ -130,9 +130,11 @@ logs; the in-app browser loaded the connected dashboard and returned 26 native
 discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-GitHub Actions runs `31612857925`, `31612856592`, and `31612856654` passed on implementation head `714b315`; this Dashboard follow-up is validated locally and will receive fresh branch checks after push.
-The implementation head also includes documentation-only evidence alignment
-from commits `9b7f82a`, `3af892a`, and `bea7d8c`.
+GitHub Actions runs `31618624015` (CI), `31618624023` (Security), and
+`31618623983` (CodeQL) passed on implementation head `e1c4eb1`.
+The implementation history also includes documentation-only evidence alignment
+from commits `9b7f82a`, `3af892a`, and `bea7d8c`; this follow-up records the
+fresh checks for the browser-dashboard implementation.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
