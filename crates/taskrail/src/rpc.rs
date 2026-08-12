@@ -1162,6 +1162,17 @@ mod tests {
     #[cfg(unix)]
     use tokio::net::UnixStream;
 
+    fn successful_test_command() -> CommandSpec {
+        CommandSpec::argv(std::env::current_exe().unwrap(), ["--help"])
+    }
+
+    fn successful_test_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[tokio::test]
     async fn ping_and_unknown_method_follow_json_rpc_errors() {
         let dir = tempdir().unwrap();
@@ -1262,8 +1273,8 @@ mod tests {
                 params: serde_json::json!({
                     "id": "rpc-created",
                     "name": "RPC created",
-                    "executable": "/bin/echo",
-                    "args": ["hello"],
+                    "executable": successful_test_executable(),
+                    "args": ["--help"],
                     "trigger": "interval",
                     "interval_seconds": 3600,
                 }),
@@ -1284,7 +1295,7 @@ mod tests {
                 method: "automation.create".into(),
                 params: serde_json::json!({
                     "id": "rpc-created",
-                    "executable": "/bin/echo",
+                    "executable": successful_test_executable(),
                 }),
             },
             &path,
@@ -1490,7 +1501,7 @@ mod tests {
             enabled: true,
             kind: "task".into(),
             fingerprint: "sha256:old".into(),
-            command: Some(CommandSpec::argv("/bin/echo", ["old"])),
+            command: Some(successful_test_command()),
             trigger: Trigger::Manual,
             raw: "old".into(),
         };
@@ -1605,7 +1616,7 @@ mod tests {
                 ownership: Ownership::Managed,
                 steps: vec![StepSpec {
                     id: "echo".into(),
-                    command: CommandSpec::argv("/bin/echo", ["snapshot"]),
+                    command: successful_test_command(),
                     responses: None,
                     integration: None,
                 }],

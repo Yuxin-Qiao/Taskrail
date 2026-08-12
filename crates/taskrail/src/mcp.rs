@@ -1581,8 +1581,8 @@ fn sanitize_private_value(value: &mut Value) {
 }
 
 fn sanitize_home_prefix(path: &str) -> String {
-    let Some(home) = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    let Some(home) = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
         .and_then(|value| value.into_string().ok())
     else {
         return path.to_owned();
@@ -1592,8 +1592,8 @@ fn sanitize_home_prefix(path: &str) -> String {
     }
     for separator in ['/', '\\'] {
         let prefix = format!("{home}{separator}");
-        if let Some(relative) = path.strip_prefix(&prefix) {
-            return format!("~/{}", relative.replace('\\', "/"));
+        if let Some(rest) = path.strip_prefix(&prefix) {
+            return format!("~/{}", rest.replace('\\', "/"));
         }
     }
     path.to_owned()
@@ -2003,8 +2003,8 @@ mod tests {
 
     #[test]
     fn automation_definitions_redact_integration_paths() {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
             .unwrap()
             .to_string_lossy()
             .into_owned();
@@ -2037,8 +2037,8 @@ mod tests {
 
     #[test]
     fn local_paths_redact_the_current_home_prefix() {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
             .unwrap()
             .to_string_lossy()
             .into_owned();
