@@ -21,7 +21,7 @@ jobs:
         run: |
           cargo build --release --package taskrail
           tar -C target/release -czf "taskrail-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" taskrail
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: taskrail-*.tar.gz
@@ -47,7 +47,7 @@ jobs:
           cp "$binary" "$app/Contents/MacOS/Taskrail"
           cp Info.plist "$app/Contents/Info.plist"
           ditto -c -k --sequesterRsrc --keepParent "$app" "../../taskrail-${GITHUB_REF_NAME}-macos-unsigned.app.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos
           path: |
