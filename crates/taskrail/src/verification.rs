@@ -69,6 +69,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn passes_only_when_exit_code_matches() {
         let dir = tempdir().unwrap();
@@ -87,6 +88,7 @@ mod tests {
         assert_eq!(report.checks[0].stdout.trim(), "ok");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn reports_failed_verifier_without_claiming_success() {
         let dir = tempdir().unwrap();
