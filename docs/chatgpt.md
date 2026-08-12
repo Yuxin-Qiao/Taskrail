@@ -34,6 +34,11 @@ policy and approval boundary.
 
 The daemon owns the SQLite Registry and listens on a user-scoped restricted Unix
 socket on supported ARM64 macOS/Linux hosts.
+After startup it performs a read-only native discovery pass every five minutes
+by default. Use `--discovery-interval-seconds` to adjust the interval. The pass
+reconciles observed jobs, records drift, and marks a source missing only when
+that provider was successfully queried; unavailable providers are not treated
+as empty.
 On macOS, install the LaunchAgent:
 
 ```bash
@@ -146,11 +151,12 @@ TLS-terminating reverse proxy:
 ```bash
 export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
 taskrail mcp-http \
+  --profile public-read-only \
   --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-`taskrail mcp-http` always launches the public read-only profile. It exposes
+`taskrail mcp-http` defaults to the public read-only profile. It exposes
 `POST /mcp` and `GET /healthz`, requires Bearer authentication, bounds request
 bodies, and refuses chunked requests. The proxy/hosting layer must still add
 end-user authentication and per-user host binding. The public profile exposes
@@ -158,8 +164,24 @@ only status, native discovery, inventory, adoption
 journal inspection, read-only GitHub observations, local package/security
 inspection, run history/logs, attention items, and audit events. It does not
 expose automation creation, deletion, pause/resume, execution, cancellation,
-native adoption, integration writes, or approval operations. The local default
-profile remains available for a private, user-owned host connection.
+native adoption, integration writes, or approval operations.
+
+For a private, single-host Fleet target that must receive explicit write or
+run requests, use the authenticated private profile instead:
+
+```bash
+export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
+taskrail mcp-http \
+  --profile private \
+  --bind 127.0.0.1:8788 \
+  --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
+```
+
+Private mode is never the default: keep it bound behind a private TLS/auth
+edge, use one authorized host per endpoint, and do not expose it as a shared
+public relay. The Fleet gateway's `allow_writes: true` hosts must point to
+such an explicitly protected private endpoint; public-read-only endpoints
+correctly reject Fleet write calls.
 
 The public endpoint must add its own user authentication and host binding
 before proxying to a user's daemon. Do not turn the read-only profile into a
@@ -196,6 +218,8 @@ recent runs, and attention items in one read-only result. Use
 the user asks what automation tasks already exist on the host, prefer
 `taskrail_discover_local_automations` for a fresh native scan; a successful
 ChatGPT response is not proof that a different host's daemon ran the task.
+Daemon status also includes the last background discovery timestamp, complete
+providers, drift count, and confirmed missing-source count.
 
 ## Tool surface
 

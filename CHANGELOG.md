@@ -10,6 +10,10 @@
   defaults, explicit host-targeted tools, and environment-only token references.
 - Add a read-only MCP host overview that combines local identity, native
   discovery, Taskrail automations, recent runs, and attention items.
+- Add periodic read-only native-discovery supervision, safe missing-source
+  detection, and persisted discovery status for daemon and MCP summaries.
+- Add an explicit authenticated private HTTP MCP profile for single-host Fleet
+  write/run routing; the public HTTP profile remains read-only by default.
 - Persist typed native integration steps as managed, schedulable Automations and
   expose integration catalog, adoption, drift, deletion, and approval controls
   through JSON-RPC and MCP.

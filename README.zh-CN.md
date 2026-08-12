@@ -82,6 +82,11 @@ loginctl enable-linger "$USER"
 taskrail daemon --install
 ~~~
 
+守护进程默认每五分钟执行一次只读的原生调度器库存刷新。可以用
+`--discovery-interval-seconds` 调整间隔；状态和 overview 会报告最近扫描时间、provider
+完整性、漂移和已确认消失的任务数量。provider 不可用时不会被当作空 provider，因此不会
+凭空产生删除告警。
+
 ## ChatGPT 定时任务
 
 Taskrail 可以作为仅提供工具的 MCP 应用连接到 ChatGPT。ChatGPT Web、Desktop
@@ -98,8 +103,8 @@ taskrail integration chatgpt-doctor
 ~~~
 
 适配器提供状态查询、最新的原生任务发现、自动化创建、暂停和恢复、立即运行、
-运行历史、日志、取消、待处理事项和审计事件。稳定的状态调用还会携带安全的本地
-发现摘要，因此即使 ChatGPT 应用缓存了工具元数据，也能回答主机上有哪些内容。
+运行历史、日志、取消、待处理事项和审计事件。守护进程还会在后台维护只读的原生任务
+观察镜像；稳定的状态调用会携带安全的监督摘要，而 overview 仍会执行最新扫描。
 命令始终以直接 argv 传递；ChatGPT 不能通过该接口把自由文本变成 shell 管道。
 
 对于私有的 ARM64 macOS 或 Linux 主机，请通过 OpenAI Secure MCP Tunnel
@@ -129,13 +134,18 @@ fleet 才会发起出站请求。fleet 工具要求每次主机操作都明确�
 
 ~~~bash
 export TASKRAIL_MCP_BEARER_TOKEN="<从密钥管理器注入>"
-taskrail mcp-http --bind 127.0.0.1:8787
+taskrail mcp-http --profile public-read-only --bind 127.0.0.1:8787
 ~~~
 
-此端点始终使用公开只读配置，不提供创建、删除、执行、领养和审批工具。请将其
+此端点默认使用公开只读配置，不提供创建、删除、执行、领养和审批工具。请将其
 置于带有终端用户认证和按用户主机绑定的生产 HTTPS 代理之后；本地 Tunnel 只能
 用于开发连接。参阅[OpenAI 提交检查清单](docs/OPENAI_SUBMISSION.md)和[单主机
 部署示例](deploy/README.md)。
+
+如果私有的单主机 Fleet 目标需要明确的写入或运行请求，可使用
+`taskrail mcp-http --profile private`，并配置独立的 Bearer 密钥及私有
+TLS/认证边缘。不要把该配置暴露为共享公开中继；Fleet 的 `allow_writes: true`
+只应指向这种显式保护的端点。
 
 如需在本地通过 stdio 检查公开只读配置：
 
@@ -265,6 +275,8 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 - 命令以 argv 执行，不接受任意 shell 字符串；
 - 环境变量值会在持久化的自动化快照中脱敏；
 - 已存在的原生任务在显式领养前始终只读观察；
+- 守护进程会后台刷新原生任务观察，并把漂移或已确认消失的任务标记为待处理；provider
+  不可用时不会因为扫描不到而从 Registry 删除任务；
 - ChatGPT MCP 适配器通过受限的本地 Unix socket 访问守护进程，不直接暴露 Registry；
 - 审批请求在本地持久化，会过期、绑定计划并且只能消费一次，且不包含密钥值。
 
@@ -283,7 +295,7 @@ add/register → list → daemon → run → history/logs → tui
 | --- | --- |
 | Registry、调度器、运行、日志、事件 | 🟢 核心 |
 | CLI 和 TUI | 🟢 核心 |
-| launchd / cron / systemd / Homebrew 发现 | 🔵 集成 |
+| launchd / cron / systemd / Homebrew 发现和后台监督 | 🔵 集成 |
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
 | 原生语义集成 | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |

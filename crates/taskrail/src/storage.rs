@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -158,6 +161,37 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    /// Read a small local runtime metadata value without exposing the SQLite
+    /// connection to callers. Metadata is intentionally separate from source,
+    /// automation, and run records so supervision state cannot be mistaken for
+    /// an automation definition.
+    pub fn metadata(&self, key: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Store a bounded, non-secret runtime status value locally.
+    pub fn set_metadata(&self, key: &str, value: &str) -> Result<()> {
+        if key.trim().is_empty() {
+            anyhow::bail!("metadata key must not be empty");
+        }
+        if value.len() > 16 * 1024 {
+            anyhow::bail!("metadata value exceeds the 16 KiB limit");
+        }
+        self.connection.execute(
+            "INSERT INTO metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     fn migrate(&self) -> Result<()> {
         self.connection.execute_batch(
             "PRAGMA foreign_keys = ON;
@@ -269,6 +303,10 @@ impl Registry {
             "INSERT OR IGNORE INTO metadata (key, value) VALUES (?1, ?2)",
             params!["host_id", format!("host_{}", Uuid::new_v4())],
         )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO metadata (key, value) VALUES (?1, ?2)",
+            params!["native_discovery.status", r#"{"state":"never_run"}"#],
+        )?;
         Ok(())
     }
 
@@ -377,6 +415,48 @@ impl Registry {
             return Ok(SourceReconciliation::Drifted);
         }
         Ok(SourceReconciliation::RetainedOwned)
+    }
+
+    /// Mark sources absent from a complete provider scan as needing attention.
+    /// The last-known source snapshot is retained; no source or automation is
+    /// silently deleted, disabled, or resumed.
+    pub fn mark_missing_sources(
+        &self,
+        seen_source_ids: &BTreeSet<String>,
+        complete_providers: &BTreeSet<String>,
+    ) -> Result<usize> {
+        let known_sources = self.list_sources()?;
+        let mut newly_missing = 0;
+        for source in known_sources {
+            if !complete_providers.contains(&source.provider)
+                || seen_source_ids.contains(&source.source_id)
+            {
+                continue;
+            }
+            let Some(mut automation) = self.get_automation(&source.source_id)? else {
+                continue;
+            };
+            let already_needs_attention =
+                automation.runtime_state == crate::core::RuntimeState::NeedsAttention;
+            automation.runtime_state = crate::core::RuntimeState::NeedsAttention;
+            self.save_automation(&automation)?;
+            if !already_needs_attention {
+                newly_missing += 1;
+                self.append_event(&Event {
+                    run_id: None,
+                    occurred_at: Utc::now(),
+                    event_type: "source.missing".into(),
+                    payload: serde_json::json!({
+                        "source_id": source.source_id,
+                        "provider": source.provider,
+                        "native_id": source.native_id,
+                        "ownership": automation.ownership,
+                        "reason": "source was absent from a complete native scan",
+                    }),
+                })?;
+            }
+        }
+        Ok(newly_missing)
     }
 
     pub fn acknowledge_source_drift(&self, id_or_native_id: &str) -> Result<Automation> {
@@ -1849,5 +1929,53 @@ mod tests {
         assert_eq!(acknowledged.runtime_state, RuntimeState::Paused);
         assert_eq!(acknowledged.fingerprint.as_deref(), Some("sha256:second"));
         assert!(registry.acknowledge_source_drift("owned").is_err());
+    }
+
+    #[test]
+    fn missing_native_sources_become_attention_items_once() {
+        let registry = Registry::in_memory().unwrap();
+        let source = DiscoveredSource {
+            source_id: "launchd:missing".into(),
+            provider: "launchd".into(),
+            native_id: "missing".into(),
+            path: None,
+            enabled: true,
+            kind: "task".into(),
+            fingerprint: "sha256:missing".into(),
+            command: Some(CommandSpec::argv("/bin/echo", ["ok"])),
+            trigger: Trigger::Manual,
+            raw: "missing".into(),
+        };
+        registry.reconcile_discovered_source(&source).unwrap();
+        let complete = BTreeSet::from(["launchd".to_owned()]);
+        assert_eq!(
+            registry
+                .mark_missing_sources(&BTreeSet::new(), &complete)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            registry
+                .get_automation("launchd:missing")
+                .unwrap()
+                .unwrap()
+                .runtime_state,
+            RuntimeState::NeedsAttention
+        );
+        assert_eq!(
+            registry
+                .list_events(20)
+                .unwrap()
+                .iter()
+                .filter(|event| event.event_type == "source.missing")
+                .count(),
+            1
+        );
+        assert_eq!(
+            registry
+                .mark_missing_sources(&BTreeSet::new(), &complete)
+                .unwrap(),
+            0
+        );
     }
 }

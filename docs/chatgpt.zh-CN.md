@@ -31,6 +31,9 @@ taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
 
 守护进程拥有 SQLite Registry，并在支持的 ARM64 macOS/Linux 主机上监听用户范围的
 受限 Unix socket。
+启动后默认每五分钟执行一次只读的原生任务发现；可以用
+`--discovery-interval-seconds` 调整间隔。它会同步观察任务、记录漂移，并且只有在某个
+provider 成功查询时才会把任务标记为消失；不可用的 provider 不会被当作空列表。
 
 在 macOS 上安装 LaunchAgent：
 
@@ -133,16 +136,30 @@ OpenAI 公开应用审核需要稳定、生产托管的 HTTPS MCP 端点。本�
 ~~~
 export TASKRAIL_MCP_BEARER_TOKEN="<从密钥管理器注入>"
 taskrail mcp-http \
+  --profile public-read-only \
   --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ~~~
 
-`taskrail mcp-http` 始终启动公开只读配置。它提供 `POST /mcp` 和 `GET /healthz`，要求
+`taskrail mcp-http` 默认启动公开只读配置。它提供 `POST /mcp` 和 `GET /healthz`，要求
 Bearer 认证、限制请求体大小并拒绝 chunked 请求。代理/托管层仍必须提供终端用户认证和
 按用户的主机绑定。公开配置只提供状态、原生任务发现、清单、领养日志查看、只读 GitHub
 观察、本地软件包/安全检查、运行历史/日志、待处理事项和审计事件；不提供自动化创建、
-删除、暂停/恢复、执行、取消、原生领养、集成写入或审批操作。私有用户主机连接仍使用
-默认的本地完整配置。
+删除、暂停/恢复、执行、取消、原生领养、集成写入或审批操作。
+
+如果私有的单主机 Fleet 目标需要接收明确的写入或运行请求，可显式启用私有配置：
+
+~~~bash
+export TASKRAIL_MCP_BEARER_TOKEN="<从密钥管理器注入>"
+taskrail mcp-http \
+  --profile private \
+  --bind 127.0.0.1:8788 \
+  --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
+~~~
+
+私有配置绝不会默认启用：必须放在私有 TLS/认证边缘之后，每个端点只绑定一个获授权的主机，
+不要把它暴露为共享公开中继。Fleet 中 `allow_writes: true` 的主机必须指向这种显式保护的私有
+端点；公开只读端点拒绝 Fleet 写操作是预期行为。
 
 公开端点在转发到用户守护进程前，必须自行增加用户认证和主机绑定。不要把只读配置变成
 共享的未认证中继，也不要提交 localhost、私有网络或仅 Tunnel 可访问的 URL。其余门户
@@ -170,6 +187,8 @@ Bearer 认证、限制请求体大小并拒绝 chunked 请求。代理/托管层
 性检查使用 taskrail_status。当用户询问主机上现有的自动化任务时，优先使用
 taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响应不代表另一台主机
 的守护进程实际运行了任务。
+守护进程状态还包含最近一次后台发现的时间、已完成查询的 provider、漂移数量和已确认
+消失的任务数量。
 
 使用 fleet 网关时，先调用 `taskrail_fleet_overview` 查看所有配置主机的在线状态，再在每次
 主机操作中传入稳定的 `host_id`。不要只根据显示名称猜测目标；fleet 配置是本地文件，令牌

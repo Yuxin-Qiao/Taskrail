@@ -28,6 +28,7 @@ static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, or taskrail_status for a lightweight connectivity check, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
+const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -43,6 +44,32 @@ struct Request {
 enum McpProfile {
     Local,
     PublicReadOnly,
+    PrivateHttp,
+}
+
+/// HTTP exposure profile. Both profiles require a bearer token; private mode
+/// is an explicit opt-in for a single authorized host and exposes the full
+/// local MCP tool set behind that authenticated boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpProfile {
+    PublicReadOnly,
+    Private,
+}
+
+impl HttpProfile {
+    fn mcp_profile(self) -> McpProfile {
+        match self {
+            Self::PublicReadOnly => McpProfile::PublicReadOnly,
+            Self::Private => McpProfile::PrivateHttp,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::PublicReadOnly => "public-read-only",
+            Self::Private => "private",
+        }
+    }
 }
 
 const PUBLIC_READ_ONLY_TOOLS: &[&str] = &[
@@ -148,17 +175,19 @@ pub async fn serve_fleet_stdio(config_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Serve the public read-only MCP profile over stateless Streamable HTTP.
+/// Serve an authenticated MCP profile over stateless Streamable HTTP.
 ///
 /// TLS is deliberately terminated by the deployment's reverse proxy. The
-/// process binds locally by default, requires a bearer token from an
-/// environment variable, and never exposes the full local profile.
+/// process binds locally by default and requires a bearer token from an
+/// environment variable. The public profile is read-only; the private profile
+/// is an explicit opt-in for a protected, single-host deployment.
 pub async fn serve_http(
     socket_path: PathBuf,
     bind: SocketAddr,
     bearer_token_env: String,
     allowed_origins_env: String,
     max_body_bytes: usize,
+    profile: HttpProfile,
 ) -> Result<()> {
     if max_body_bytes == 0 || max_body_bytes > 8 * 1024 * 1024 {
         anyhow::bail!("HTTP body limit must be between 1 and 8388608 bytes");
@@ -182,7 +211,10 @@ pub async fn serve_http(
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("bind Taskrail MCP HTTP endpoint {bind}"))?;
-    eprintln!("Taskrail public read-only MCP HTTP endpoint listening on http://{bind}/mcp");
+    eprintln!(
+        "Taskrail {} MCP HTTP endpoint listening on http://{bind}/mcp",
+        profile.name()
+    );
     loop {
         let (stream, _) = listener.accept().await.context("accept MCP HTTP client")?;
         let socket_path = socket_path.clone();
@@ -195,6 +227,7 @@ pub async fn serve_http(
                 &token,
                 &allowed_origins,
                 max_body_bytes,
+                profile,
             )
             .await
             {
@@ -218,6 +251,7 @@ async fn handle_http_connection(
     bearer_token: &str,
     allowed_origins: &[String],
     max_body_bytes: usize,
+    profile: HttpProfile,
 ) -> Result<()> {
     let mut reader = BufReader::new(stream);
     let request = tokio::time::timeout(
@@ -232,8 +266,14 @@ async fn handle_http_connection(
     let request_started = Instant::now();
     let request_method = request.method.clone();
     let request_path = request.path.clone();
-    let response =
-        http_response_for_request(&request, &socket_path, bearer_token, allowed_origins).await;
+    let response = http_response_for_request_with_profile(
+        &request,
+        &socket_path,
+        bearer_token,
+        allowed_origins,
+        profile,
+    )
+    .await;
     let (status, content_type, body, protocol_header) = match response {
         Ok(response) => response,
         Err(error) => {
@@ -353,11 +393,29 @@ async fn read_http_request(
     }))
 }
 
+#[cfg(test)]
 async fn http_response_for_request(
     request: &HttpRequest,
     socket_path: &PathBuf,
     bearer_token: &str,
     allowed_origins: &[String],
+) -> Result<(&'static str, &'static str, Vec<u8>, bool)> {
+    http_response_for_request_with_profile(
+        request,
+        socket_path,
+        bearer_token,
+        allowed_origins,
+        HttpProfile::PublicReadOnly,
+    )
+    .await
+}
+
+async fn http_response_for_request_with_profile(
+    request: &HttpRequest,
+    socket_path: &PathBuf,
+    bearer_token: &str,
+    allowed_origins: &[String],
+    profile: HttpProfile,
 ) -> Result<(&'static str, &'static str, Vec<u8>, bool)> {
     if let Some(origin) = request.headers.get("origin")
         && !allowed_origins.iter().any(|allowed| allowed == origin)
@@ -376,7 +434,7 @@ async fn http_response_for_request(
             serde_json::to_vec(&json!({
                 "status": "ok",
                 "server": SERVER_NAME,
-                "profile": "public-read-only",
+                "profile": profile.name(),
             }))?,
             false,
         ));
@@ -472,7 +530,7 @@ async fn http_response_for_request(
         ));
     }
     let response =
-        handle_request_with_profile(mcp_request, socket_path, McpProfile::PublicReadOnly).await;
+        handle_request_with_profile(mcp_request, socket_path, profile.mcp_profile()).await;
     let Some(response) = response else {
         return Ok(("202 Accepted", "application/json", Vec::new(), true));
     };
@@ -906,6 +964,7 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
         "instructions": match profile {
             McpProfile::Local => INSTRUCTIONS,
             McpProfile::PublicReadOnly => PUBLIC_INSTRUCTIONS,
+            McpProfile::PrivateHttp => PRIVATE_HTTP_INSTRUCTIONS,
         }
     })
 }
@@ -1407,7 +1466,7 @@ fn tool_descriptors() -> Vec<Value> {
 fn tool_descriptors_for_profile(profile: McpProfile) -> Vec<Value> {
     let tools = tool_descriptors();
     match profile {
-        McpProfile::Local => tools,
+        McpProfile::Local | McpProfile::PrivateHttp => tools,
         McpProfile::PublicReadOnly => tools
             .into_iter()
             .filter(|tool| tool["name"].as_str().is_some_and(is_public_tool))
@@ -2017,7 +2076,7 @@ fn sanitize_run_list_value(mut value: Value) -> Value {
 fn summarize(name: &str, value: &Value) -> String {
     match name {
         "taskrail_status" => format!(
-            "Taskrail daemon connected on {} ({}), managing {} automation(s); fresh local scan found {} source(s).",
+            "Taskrail daemon connected on {} ({}), managing {} automation(s); fresh local scan found {} source(s), background supervision is {}.",
             std::env::consts::OS,
             std::env::consts::ARCH,
             value
@@ -2029,10 +2088,16 @@ fn summarize(name: &str, value: &Value) -> String {
                 .get("local_discovery")
                 .and_then(|discovery| discovery.get("count"))
                 .and_then(Value::as_u64)
-                .unwrap_or(0)
+                .unwrap_or(0),
+            value
+                .get("daemon")
+                .and_then(|daemon| daemon.get("native_discovery"))
+                .and_then(|discovery| discovery.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         ),
         "taskrail_overview" => format!(
-            "Taskrail overview for {}: {} automation(s), {} native source(s), {} recent run(s), and {} attention item(s).",
+            "Taskrail overview for {}: {} automation(s), {} native source(s), {} recent run(s), and {} attention item(s); background supervision is {}.",
             value
                 .get("host")
                 .and_then(|host| host.get("label"))
@@ -2055,7 +2120,13 @@ fn summarize(name: &str, value: &Value) -> String {
             value
                 .get("attention")
                 .and_then(Value::as_array)
-                .map_or(0, Vec::len)
+                .map_or(0, Vec::len),
+            value
+                .get("daemon")
+                .and_then(|daemon| daemon.get("native_discovery"))
+                .and_then(|discovery| discovery.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         ),
         "taskrail_list_automations" => format!(
             "Taskrail returned {} automation(s).",
@@ -2442,6 +2513,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn private_http_profile_exposes_the_authenticated_local_tool_set() {
+        let tools = tool_descriptors_for_profile(HttpProfile::Private.mcp_profile());
+        assert_eq!(tools.len(), tool_descriptors().len());
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == "taskrail_run_automation")
+        );
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == "taskrail_execute_approved")
+        );
+        let initialize = initialize_result_for_profile(
+            &json!({"protocolVersion": MCP_PROTOCOL_VERSION}),
+            HttpProfile::Private.mcp_profile(),
+        );
+        assert!(
+            initialize["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("private HTTP profile")
+        );
+    }
+
     #[tokio::test]
     async fn public_profile_rejects_hidden_write_tool_calls() {
         let path = PathBuf::from("/tmp/taskrail-public-profile-test.sock");
@@ -2467,6 +2564,32 @@ mod tests {
                 .unwrap()
                 .contains("public read-only profile")
         );
+    }
+
+    #[tokio::test]
+    async fn private_http_profile_still_requires_bearer_auth() {
+        let response = http_response_for_request_with_profile(
+            &HttpRequest {
+                method: "POST".into(),
+                path: "/mcp".into(),
+                headers: BTreeMap::from([
+                    ("content-type".into(), "application/json".into()),
+                    (
+                        "accept".into(),
+                        "application/json, text/event-stream".into(),
+                    ),
+                    ("mcp-protocol-version".into(), MCP_PROTOCOL_VERSION.into()),
+                ]),
+                body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_vec(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-private-profile-test.sock"),
+            "private-token",
+            &[],
+            HttpProfile::Private,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.0, "401 Unauthorized");
     }
 
     #[tokio::test]

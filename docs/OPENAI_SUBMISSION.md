@@ -36,11 +36,14 @@ environment, not committed to the repository:
 export TASKRAIL_MCP_BEARER_TOKEN="$(secret-manager read taskrail/mcp-bearer-token)"
 export TASKRAIL_MCP_ALLOWED_ORIGINS="https://your-approved-chatgpt-origin.example"
 taskrail mcp-http \
+  --profile public-read-only \
   --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-`taskrail mcp-http` always forces the public read-only profile, exposes
+`taskrail mcp-http` defaults to and, unless explicitly passed
+`--profile private`, exposes the public read-only profile. The public profile
+exposes
 `POST /mcp` and `GET /healthz`, requires a constant-time Bearer token, bounds
 request bodies, rejects chunked requests, validates allowed origins, emits
 request logs and an authenticated internal `/metrics` endpoint, and is
@@ -52,6 +55,11 @@ end-user identity system.
 The repository's private Secure MCP Tunnel instructions are for development/
 testing connections only. Do not submit a localhost address, a private-network
 address, a tunnel-only address, or the default full local profile.
+
+The private HTTP profile is for a single protected Fleet target, not for public
+app review. Enable it only with `--profile private`, a non-empty bearer token,
+and a private TLS/authenticated edge. Do not route a public reviewer or a
+shared tenant to this profile.
 
 ## External gates before submission
 

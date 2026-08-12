@@ -84,6 +84,12 @@ loginctl enable-linger "$USER"
 taskrail daemon --install
 ```
 
+The daemon performs a read-only native scheduler inventory refresh every five
+minutes by default. Use `--discovery-interval-seconds` to adjust it. Status and
+overview report the last scan, provider completeness, drift, and confirmed
+missing-source counts; an unavailable provider is not treated as an empty
+provider, so Taskrail does not manufacture deletion alerts.
+
 ## ChatGPT Scheduled tasks
 
 Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT Web, Desktop,
@@ -102,10 +108,10 @@ taskrail integration chatgpt-doctor
 
 The adapter exposes status, fresh native discovery, automation creation, pause and
 resume, immediate runs, run history, logs, cancellation, attention items, and
-audit events. The stable status call also carries a safe local discovery summary
-so an already-connected ChatGPT app with cached tool metadata can still answer
-what is present on the host. Commands remain direct argv; ChatGPT cannot turn a
-free-form string into a shell pipeline through this interface.
+audit events. The daemon also keeps a background read-only observation mirror;
+status carries its safe supervision summary while overview still performs a
+fresh scan. Commands remain direct argv; ChatGPT cannot turn a free-form string
+into a shell pipeline through this interface.
 
 For one private ARM64 macOS or Linux host, connect `taskrail mcp` through
 OpenAI Secure MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app.
@@ -137,14 +143,20 @@ For a public deployment, use the enforced read-only HTTP profile:
 
 ```bash
 export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
-taskrail mcp-http --bind 127.0.0.1:8787
+taskrail mcp-http --profile public-read-only --bind 127.0.0.1:8787
 ```
 
-This endpoint always uses the public read-only profile and omits creation,
+This endpoint defaults to the public read-only profile and omits creation,
 deletion, execution, adoption, and approval tools. Put it behind a production
 HTTPS proxy with end-user authentication and per-user host binding; a local
 tunnel is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md)
 and the [single-host deployment example](deploy/README.md).
+
+For a private, single-host Fleet target that needs explicit write or run
+requests, use `taskrail mcp-http --profile private` with a separate bearer
+secret and private TLS/authentication edge. Never expose that profile as a
+shared public relay; Fleet `allow_writes: true` is intended only for this
+explicitly protected endpoint.
 
 For a local stdio review of the public read-only profile, use:
 
@@ -287,6 +299,9 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 - Commands are executed as argv; arbitrary shell strings are not accepted.
 - Environment values are redacted in persisted automation snapshots.
 - Existing native jobs remain observation-only until explicit adoption.
+- The daemon refreshes native observations in the background and marks drift or
+  confirmed missing sources as attention items; it never deletes a source from
+  the Registry because a provider was unavailable.
 - The ChatGPT MCP adapter reaches the daemon through the restricted local Unix
   socket; it does not expose the Registry directly.
 - Approval requests are persisted locally, expire, are plan-bound, and are
@@ -307,7 +322,7 @@ The following are optional integrations or still future work:
 | --- | --- |
 | Registry, scheduler, runs, logs, events | 🟢 Core |
 | CLI and TUI | 🟢 Core |
-| launchd / cron / systemd / Homebrew discovery | 🔵 Integration |
+| launchd / cron / systemd / Homebrew discovery and background supervision | 🔵 Integration |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
 | Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |

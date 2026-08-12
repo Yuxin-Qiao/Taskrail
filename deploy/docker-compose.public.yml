@@ -34,6 +34,8 @@ services:
       dockerfile: Dockerfile
     command:
       - mcp-http
+      - --profile
+      - public-read-only
       - --bind
       - 0.0.0.0:8787
       - --socket

@@ -4,13 +4,22 @@ use plist::Value;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
 pub trait DiscoveryProvider {
     fn name(&self) -> &'static str;
     fn scan(&self) -> Result<Vec<DiscoveredSource>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeDiscoverySnapshot {
+    pub sources: Vec<DiscoveredSource>,
+    /// Only providers listed here were queried authoritatively. An unavailable
+    /// provider is excluded so its old observations are not falsely reported
+    /// as missing.
+    pub complete_providers: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -546,12 +555,124 @@ pub fn merge_homebrew_sources(
     unmatched
 }
 
+/// Scan every supported native scheduler without mutating native definitions.
+///
+/// This is shared by the CLI, the daemon supervisor, and the MCP/RPC surface so
+/// each entry point observes the same source set and Homebrew/launchd identity
+/// reconciliation rules.
+pub fn scan_native_sources(source: &str) -> Result<Vec<DiscoveredSource>> {
+    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
+        anyhow::bail!(
+            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
+        );
+    }
+
+    let mut discovered = Vec::new();
+    if matches!(source, "all" | "launchd") {
+        discovered.extend(LaunchdProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "cron") {
+        discovered.extend(CronProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "systemd") {
+        discovered.extend(SystemdProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "homebrew") {
+        let homebrew = HomebrewProvider::default().scan()?;
+        if source == "all" {
+            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
+            discovered.extend(unmatched);
+        } else {
+            let mut launchd = LaunchdProvider::default().scan()?;
+            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
+            let mut related = homebrew
+                .iter()
+                .filter_map(|homebrew| {
+                    launchd.iter().find(|native| {
+                        native.provider == "launchd"
+                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
+                    })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            related.extend(unmatched);
+            discovered.extend(related);
+        }
+    }
+    Ok(discovered)
+}
+
+/// Return a complete native snapshot plus the providers that were actually
+/// queried authoritatively on this host. Missing executables or unavailable
+/// user managers are deliberately not considered complete: an unavailable
+/// provider must never make old observations look deleted.
+pub fn scan_native_snapshot(source: &str) -> Result<NativeDiscoverySnapshot> {
+    let sources = scan_native_sources(source)?;
+    let mut complete_providers = BTreeSet::new();
+    let requested = |provider: &str| source == "all" || source == provider;
+
+    if requested("launchd") && cfg!(target_os = "macos") && executable_available("launchctl") {
+        complete_providers.insert("launchd".into());
+    }
+    if requested("cron")
+        && cfg!(any(target_os = "macos", target_os = "linux"))
+        && executable_available("crontab")
+    {
+        complete_providers.insert("cron".into());
+    }
+    if requested("systemd") && cfg!(target_os = "linux") && systemd_user_manager_available() {
+        complete_providers.insert("systemd".into());
+    }
+    if requested("homebrew")
+        && cfg!(any(target_os = "macos", target_os = "linux"))
+        && executable_available("brew")
+    {
+        complete_providers.insert("homebrew".into());
+    }
+
+    Ok(NativeDiscoverySnapshot {
+        sources,
+        complete_providers,
+    })
+}
+
+fn executable_available(name: &str) -> bool {
+    if name.contains(std::path::MAIN_SEPARATOR) {
+        return Path::new(name).is_file();
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(name))
+        .any(|candidate| candidate.is_file())
+}
+
+fn systemd_user_manager_available() -> bool {
+    let Ok(output) = Command::new("systemctl")
+        .args([
+            "--user",
+            "list-unit-files",
+            "--type=service",
+            "--no-legend",
+            "--no-pager",
+        ])
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+}
+
 impl DiscoveryProvider for SystemdProvider {
     fn name(&self) -> &'static str {
         "systemd"
     }
 
     fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        #[cfg(not(target_os = "linux"))]
+        if self.unit_list.is_none() {
+            return Ok(Vec::new());
+        }
         let listing = match &self.unit_list {
             Some(listing) => listing.clone(),
             None => {

@@ -47,6 +47,11 @@ treat a development tunnel as the production endpoint. The static bearer
 token is only the reverse-proxy-to-process boundary; it is not sufficient
 end-user authentication by itself.
 
+For a private Fleet target that needs write or run tools, deploy a separate
+single-host adapter with `mcp-http --profile private`, its own bearer secret,
+and a private TLS/authenticated edge. Do not change the public compose sample
+to private mode and do not share one private endpoint across tenants.
+
 The repository's OpenAI checklist is in
 [`docs/OPENAI_SUBMISSION.md`](../docs/OPENAI_SUBMISSION.md). The official
 deployment guidance is in the [OpenAI MCP server documentation](https://developers.openai.com/plugins/build/mcp-server).

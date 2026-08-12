@@ -1,9 +1,6 @@
 use crate::{
     core::{Automation, CommandSpec, Event, Ownership, RuntimeState, StepSpec, Trigger},
-    discovery::{
-        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
-    },
+    discovery::scan_native_sources,
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
         MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
@@ -243,6 +240,10 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 .filter(|automation| automation.runtime_state == RuntimeState::Paused)
                 .count();
             let host_id = registry.host_id()?;
+            let native_discovery = registry
+                .metadata("native_discovery.status")?
+                .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+                .unwrap_or(Value::Null);
             Ok(serde_json::json!({
                 "protocol_version": PROTOCOL_VERSION,
                 "service": "taskrail",
@@ -257,6 +258,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 "adopted_count": adopted,
                 "observed_count": observed,
                 "paused_count": paused,
+                "native_discovery": native_discovery,
             }))
         }),
         "automation.list" => with_registry(registry_path, |registry| {
@@ -1033,47 +1035,6 @@ fn create_automation(registry: &Registry, params: CreateAutomationParams) -> Res
         }),
     })?;
     Ok(automation)
-}
-
-fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource>> {
-    let mut discovered = Vec::new();
-    if matches!(source, "all" | "launchd") {
-        discovered.extend(LaunchdProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "cron") {
-        discovered.extend(CronProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "systemd") {
-        discovered.extend(SystemdProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "homebrew") {
-        let homebrew = HomebrewProvider::default().scan()?;
-        if source == "all" {
-            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
-            discovered.extend(unmatched);
-        } else {
-            let mut launchd = LaunchdProvider::default().scan()?;
-            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
-            let mut related = homebrew
-                .iter()
-                .filter_map(|homebrew| {
-                    launchd.iter().find(|native| {
-                        native.provider == "launchd"
-                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
-                    })
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            related.extend(unmatched);
-            discovered.extend(related);
-        }
-    }
-    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
-        anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
-        );
-    }
-    Ok(discovered)
 }
 
 fn string_param(params: &Value, key: &str) -> Result<String, String> {

@@ -22,15 +22,15 @@ Execution date: 2026-08-12
 | A1 | Metadata | Rust workspace, package metadata, license, README, and OSS files are present | `Cargo.toml`, `crates/taskrail/Cargo.toml`, `LICENSE`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | PASS |
 | A2 | Repository hygiene | Formatting diff is clean and generated/runtime artifacts are ignored | `git diff --check`, `.gitignore`, tracked-artifact scan | PASS |
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
-| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo fmt --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo test --workspace --all-features`; 156 tests passed | PASS |
+| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 161 tests passed | PASS |
 | B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
 | B3 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31596113419`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
-| C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures | PASS |
+| C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures; background reconciliation and missing-source tests | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | ARM64 macOS/Linux Unix-socket daemons expose lifecycle/log/run APIs with local-only boundaries | Apple Silicon temporary daemon/MCP smoke; Linux ARM64 CI build/test and XDG/runtime smoke | PASS |
-| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 38 local tools; 18 public read-only tools; MCP tests and negative paths passed | PASS |
+| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 38 local tools; 18 public read-only tools; explicit authenticated private HTTP profile; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
 | D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
@@ -47,9 +47,9 @@ Execution date: 2026-08-12
 | G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
 | G4 | Host/package integrations | GitHub/Homebrew/mas/Topgrade adapters use the shared layer without arbitrary writes or sudo | fixture tests; existing discovery preserved | PASS |
 | G5 | Security integrations | OSV-Scanner, Gitleaks, and Trivy normalize findings without retaining secret/match values | fixture tests; malformed and missing-tool paths fail closed | PASS |
-| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 156 tests; approval lifecycle and replay rejection passed | PASS |
-| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 156 tests passed | PASS |
-| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 156 tests passed | PASS |
+| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 161 tests; approval lifecycle and replay rejection passed | PASS |
+| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 161 tests passed | PASS |
+| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 161 tests passed | PASS |
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
 ARM64-only release contract. The updated ARM64 runner evidence is now
@@ -114,9 +114,10 @@ execution.
 The current host passes the Rust full suite, strict Clippy, formatting check,
 and the fleet localhost routing smoke. The SwiftUI desktop client and its 2
 tests pass on Apple Silicon. The public HTTP adapter unit tests cover health,
-authentication, origin, MCP headers, public-profile allowlisting, and protocol
-version boundaries. GitHub Actions run `31596113419` passed the updated ARM64
-matrix, MSRV, package, and Swift jobs; run `31596113153` passed audit and deny;
+authentication, origin, MCP headers, public-profile allowlisting, private
+profile authentication, and protocol version boundaries. GitHub Actions run
+`31596113419` passed the updated ARM64 matrix, MSRV, package, and Swift jobs;
+run `31596113153` passed audit and deny;
 run `31595249271` passed CodeQL. Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 

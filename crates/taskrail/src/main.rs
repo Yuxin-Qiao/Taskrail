@@ -12,10 +12,7 @@ use taskrail::{
     adoption::{adopt_source, rollback_source},
     codex::{self, CodexRequest, CodexSandbox},
     core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
-    discovery::{
-        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
-    },
+    discovery::scan_native_sources,
     github::{self, GhQuery, QueryKind},
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration,
@@ -50,6 +47,14 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum HttpProfileArg {
+    /// Expose only authenticated, read-only inspection tools.
+    PublicReadOnly,
+    /// Expose the full local tool set to an authenticated private host connection.
+    Private,
 }
 
 #[derive(Debug, Subcommand)]
@@ -302,6 +307,9 @@ enum Action {
         /// Remove the installed per-user service.
         #[arg(long, conflicts_with = "install")]
         uninstall: bool,
+        /// Refresh the local native-automation inventory at this interval.
+        #[arg(long, default_value_t = 5 * 60)]
+        discovery_interval_seconds: u64,
     },
     /// Print the Registry path and daemon boundary.
     Status,
@@ -324,7 +332,7 @@ enum Action {
         #[arg(long, env = "TASKRAIL_FLEET_CONFIG")]
         config: Option<PathBuf>,
     },
-    /// Expose the public read-only MCP profile over Streamable HTTP.
+    /// Expose an authenticated MCP profile over Streamable HTTP.
     McpHttp {
         /// Local address for a TLS-terminating reverse proxy to reach.
         #[arg(long, env = "TASKRAIL_MCP_HTTP_BIND", default_value = "127.0.0.1:8787")]
@@ -346,6 +354,14 @@ enum Action {
         /// Maximum accepted JSON request body size.
         #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
         max_body_bytes: usize,
+        /// Explicit HTTP exposure profile; public-read-only is the safe default.
+        #[arg(
+            long,
+            value_enum,
+            env = "TASKRAIL_MCP_HTTP_PROFILE",
+            default_value = "public-read-only"
+        )]
+        profile: HttpProfileArg,
         /// Local endpoint served by `taskrail daemon` (restricted Unix socket).
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -686,14 +702,20 @@ async fn main() -> Result<()> {
             bearer_token_env,
             allowed_origins_env,
             max_body_bytes,
+            profile,
             socket,
         } => {
+            let profile = match profile {
+                HttpProfileArg::PublicReadOnly => mcp::HttpProfile::PublicReadOnly,
+                HttpProfileArg::Private => mcp::HttpProfile::Private,
+            };
             return mcp::serve_http(
                 socket.unwrap_or_else(default_socket_path),
                 bind,
                 bearer_token_env,
                 allowed_origins_env,
                 max_body_bytes,
+                profile,
             )
             .await;
         }
@@ -863,17 +885,28 @@ async fn main() -> Result<()> {
             interval_seconds,
             install,
             uninstall,
+            discovery_interval_seconds,
         } => {
             if install {
-                install_daemon(&registry)
+                install_daemon(&registry, discovery_interval_seconds)
             } else if uninstall {
                 uninstall_daemon()
             } else {
-                daemon(&registry, once, socket, interval_seconds).await
+                daemon(
+                    &registry,
+                    once,
+                    socket,
+                    interval_seconds,
+                    discovery_interval_seconds,
+                )
+                .await
             }
         }
         Action::Status => {
             println!("registry: {}", registry.path().display());
+            if let Some(discovery) = registry.metadata("native_discovery.status")? {
+                println!("native discovery: {discovery}");
+            }
             #[cfg(target_os = "macos")]
             match daemon_launch_agent_path() {
                 Ok(path) if path.exists() => println!("daemon: installed ({})", path.display()),
@@ -1674,7 +1707,10 @@ fn launchctl_user_domain() -> Result<String> {
     Ok(format!("gui/{uid}"))
 }
 
-fn install_daemon(registry: &Registry) -> Result<()> {
+fn install_daemon(registry: &Registry, discovery_interval_seconds: u64) -> Result<()> {
+    if discovery_interval_seconds == 0 {
+        anyhow::bail!("native discovery interval must be greater than zero");
+    }
     #[cfg(all(
         not(target_os = "macos"),
         not(target_os = "linux"),
@@ -1700,6 +1736,8 @@ fn install_daemon(registry: &Registry) -> Result<()> {
             plist::Value::String("daemon".into()),
             plist::Value::String("--socket".into()),
             plist::Value::String(default_socket_path().to_string_lossy().into_owned()),
+            plist::Value::String("--discovery-interval-seconds".into()),
+            plist::Value::String(discovery_interval_seconds.to_string()),
         ];
         let mut plist = plist::Dictionary::new();
         plist.insert(
@@ -1754,7 +1792,12 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         let parent = path.parent().context("resolve systemd user directory")?;
         std::fs::create_dir_all(parent)?;
         let executable = std::env::current_exe().context("resolve taskrail executable")?;
-        let unit = systemd_user_unit(&executable, registry.path(), &default_socket_path());
+        let unit = systemd_user_unit(
+            &executable,
+            registry.path(),
+            &default_socket_path(),
+            discovery_interval_seconds,
+        );
         std::fs::write(&path, unit)
             .with_context(|| format!("write systemd user unit {}", path.display()))?;
         run_systemctl_user(["daemon-reload"])?;
@@ -1881,12 +1924,18 @@ fn systemd_user_unit_path() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn systemd_user_unit(executable: &Path, registry: &Path, socket: &Path) -> String {
+fn systemd_user_unit(
+    executable: &Path,
+    registry: &Path,
+    socket: &Path,
+    discovery_interval_seconds: u64,
+) -> String {
     format!(
-        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {} --discovery-interval-seconds {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(executable),
         systemd_quote(registry),
         systemd_quote(socket),
+        discovery_interval_seconds,
     )
 }
 
@@ -2417,38 +2466,14 @@ fn worktree_action(action: WorktreeAction) -> Result<()> {
 }
 
 fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
-    let mut discovered = Vec::new();
-    if matches!(source, SourceKind::All | SourceKind::Launchd) {
-        discovered.extend(LaunchdProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Cron) {
-        discovered.extend(CronProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Systemd) {
-        discovered.extend(SystemdProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Homebrew) {
-        let homebrew = HomebrewProvider::default().scan()?;
-        if matches!(source, SourceKind::All) {
-            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
-            discovered.extend(unmatched);
-        } else {
-            let mut launchd = LaunchdProvider::default().scan()?;
-            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
-            let mut related = homebrew
-                .iter()
-                .filter_map(|homebrew| {
-                    launchd.iter().find(|native| {
-                        native.provider == "launchd"
-                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
-                    })
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            related.extend(unmatched);
-            discovered.extend(related);
-        }
-    }
+    let source = match source {
+        SourceKind::All => "all",
+        SourceKind::Launchd => "launchd",
+        SourceKind::Cron => "cron",
+        SourceKind::Systemd => "systemd",
+        SourceKind::Homebrew => "homebrew",
+    };
+    let discovered = scan_native_sources(source)?;
     for item in &discovered {
         registry.reconcile_discovered_source(item)?;
     }
@@ -2527,9 +2552,13 @@ async fn daemon(
     once: bool,
     socket: Option<PathBuf>,
     interval_seconds: u64,
+    discovery_interval_seconds: u64,
 ) -> Result<()> {
     if interval_seconds == 0 {
         anyhow::bail!("daemon interval must be greater than zero");
+    }
+    if discovery_interval_seconds == 0 {
+        anyhow::bail!("native discovery interval must be greater than zero");
     }
     let recovered = service::recover_interrupted_runs(registry.path())?;
     if recovered > 0 {
@@ -2544,12 +2573,31 @@ async fn daemon(
             rpc::serve(socket, registry_path).await
         }))
     };
+    let mut next_discovery = std::time::Instant::now();
     loop {
         if let Some(server) = server.as_mut()
             && server.is_finished()
         {
             server.await??;
             anyhow::bail!("RPC server stopped unexpectedly");
+        }
+        if once || std::time::Instant::now() >= next_discovery {
+            match service::native_discovery_pass(registry.path()) {
+                Ok(summary) => eprintln!(
+                    "native discovery: {} source(s), {} drifted, {} missing, {} unrunnable",
+                    summary.source_count, summary.drifted, summary.missing, summary.unrunnable
+                ),
+                Err(error) => {
+                    eprintln!("native discovery failed: {error:#}");
+                    if let Err(record_error) =
+                        service::record_native_discovery_failure(registry.path(), &error)
+                    {
+                        eprintln!("record native discovery failure: {record_error:#}");
+                    }
+                }
+            }
+            next_discovery = std::time::Instant::now()
+                + std::time::Duration::from_secs(discovery_interval_seconds);
         }
         let pass = service::scheduled_pass(registry.path()).await?;
         println!(
@@ -2559,7 +2607,9 @@ async fn daemon(
         if once {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_secs(interval_seconds)).await;
+        let scheduler_sleep = std::time::Duration::from_secs(interval_seconds);
+        let discovery_sleep = next_discovery.saturating_duration_since(std::time::Instant::now());
+        tokio::time::sleep(scheduler_sleep.min(discovery_sleep)).await;
     }
 }
 
@@ -2899,12 +2949,14 @@ mod platform_tests {
             Path::new("/home/me/bin/taskrail"),
             Path::new("/home/me/.local/share/taskrail/registry.sqlite3"),
             Path::new("/run/user/1000/taskrail/taskraild.sock"),
+            300,
         );
         assert!(unit.contains("ExecStart=/home/me/bin/taskrail --registry"));
         assert!(unit.contains("RuntimeDirectory=taskrail"));
         assert!(unit.contains("RuntimeDirectoryMode=0700"));
         assert!(unit.contains("UMask=0077"));
         assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("--discovery-interval-seconds 300"));
     }
 
     #[cfg(target_os = "linux")]
