@@ -32,9 +32,10 @@ add/register → schedule → run → history/logs → browser dashboard
 - The Rust CLI, daemon, TUI, browser dashboard, and local MCP adapter are
   supported only on ARM64 macOS and ARM64 Linux. The daemon uses a restricted
   Unix socket for the control plane and loopback-only HTTP for the dashboard.
-- Private ChatGPT Scheduled tasks can call the local MCP adapter through an
-  OpenAI Secure MCP Tunnel; the public App review and hosted deployment are
-  separate external release gates.
+- A connected ChatGPT client can call the local MCP adapter through an OpenAI
+  Secure MCP Tunnel; an observed future ChatGPT Scheduled trigger is a separate
+  external verification gate. Public App review and hosted deployment are also
+  separate release gates.
 - `taskrail mcp-fleet` can aggregate multiple explicitly configured hosts into
   one MCP app; host endpoints and token environment references remain local,
   and write routing is opt-in and read-only by default. Its private host-targeted

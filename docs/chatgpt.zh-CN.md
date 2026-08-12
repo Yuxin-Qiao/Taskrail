@@ -179,7 +179,9 @@ taskrail mcp-http \
 3. 选择 Tunnel，选中 Taskrail Tunnel，并检查发现的工具；
 4. 修改工具描述符或重新构建 Taskrail 后，刷新应用。
 
-创建 Scheduled 任务前，应先完成应用连接。之后可以使用类似下面的提示：
+创建 Scheduled 任务前，应先完成应用连接。当前已验证连接后的 ChatGPT
+交互式只读调用；在目标 ChatGPT 账号中实际观察到一次未来 Scheduled 触发前，
+不能把它当作已完成的发布级定时工作流。账号和应用配置支持时，可以使用类似下面的提示：
 
 ~~~
 每周日 09:00，在 MacBook 主机上运行名为“Mole cleanup”的 Taskrail 自动化。

@@ -83,10 +83,10 @@ taskrail daemon --install
 
 ## ChatGPT 定时任务
 
-Taskrail 可以作为带类型化工具和可选只读 MCP Apps Widget 的 MCP 应用连接到 ChatGPT。ChatGPT Web、Desktop
-和 Mobile 使用同一套 MCP 工具契约；ChatGPT 的“Scheduled”页面负责自然语言
-调度和通知，Taskrail 则作为 ChatGPT 在选定 ARM64 macOS 或 Linux 主机上调用的
-本地执行后端。
+Taskrail 可以作为带类型化工具和可选只读 MCP Apps Widget 的 MCP 应用连接到 ChatGPT。当前已验证
+连接后的 ChatGPT 客户端可以交互式调用该应用；目标账号中未来 Scheduled 触发仍需实际观察。
+ChatGPT Web、Desktop 和 Mobile 使用同一套 MCP 工具契约；ChatGPT 的“Scheduled”页面负责自然语言
+调度和通知，Taskrail 则作为 ChatGPT 在选定 ARM64 macOS 或 Linux 主机上调用的本地执行后端。
 
 在 Taskrail 守护进程运行后启动本地 MCP 适配器：
 
@@ -103,7 +103,7 @@ taskrail integration chatgpt-doctor
 
 对于私有的 ARM64 macOS 或 Linux 主机，请通过 OpenAI Secure MCP Tunnel
 连接 `taskrail mcp`，然后将该 Tunnel 添加为 ChatGPT 开发者模式应用。连接应用后，
-可以创建类似下面的 Scheduled 任务：
+在支持的账号中可以创建类似下面的 Scheduled 任务；首次触发成功前，不应把它当成已验证的完整工作流：
 
 ~~~
 每周日 09:00，在 MacBook 主机上运行名为“Mole cleanup”的 Taskrail 自动化。
@@ -267,9 +267,9 @@ failed run        run_failure  high
 ~~~
 
 当前仓库包含可选的 Codex CLI 和 Responses 兼容执行器。ChatGPT 是自然语言控制
-界面：它的 Scheduled 任务调用 Taskrail MCP 适配器，而 Taskrail 负责本地发现、
+界面：已验证的交互式调用可以使用 Taskrail MCP 适配器，而 Taskrail 负责本地发现、
 类型化 Automation 定义、执行、审批、历史和日志。ChatGPT 的 Scheduled 任务与
-Taskrail 的本地计划是有意分开的两层：前者唤醒已连接的应用，后者运行持久化的
+Taskrail 的本地计划是有意分开的两层：前者是仍需实测的外部触发，后者运行持久化的
 本地 Automation。
 
 如果 Codex 安装使用其他工具生成的模型目录，Taskrail 在发现已知不支持的
@@ -295,7 +295,8 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## 当前状态
 
-当前软件包版本为 0.1.6，可用于本地命令自动化和私有 ChatGPT Scheduled 任务控制。
+当前软件包版本为 0.1.6，可用于本地命令自动化和私有 ChatGPT 交互式应用控制；未来 Scheduled
+触发仍是尚未验证的账号级工作流门槛。
 稳定的核心路径是：
 
 ~~~
@@ -312,7 +313,7 @@ add/register → list → daemon → run → history/logs → tui
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
 | 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |
-| 私有 ChatGPT MCP/Tunnel 和 Scheduled 任务控制 | 🟢 本地 runtime/MCP 与 ChatGPT 只读 UI 已验证 |
+| 私有 ChatGPT MCP/Tunnel 与 ChatGPT 交互式只读调用 | 🟢 已验证；尚未观察到未来 Scheduled 触发 |
 | ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
 | 公开 ChatGPT 应用托管、审核和发布 | 🟡 外部门槛 |
