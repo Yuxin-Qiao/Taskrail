@@ -803,10 +803,30 @@ fn host_label() -> String {
         .find_map(|name| {
             std::env::var(name)
                 .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
+                .and_then(|value| normalize_host_label(&value))
+        })
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| normalize_host_label(&value))
         })
         .unwrap_or_else(|| "unnamed-host".into())
+}
+
+fn normalize_host_label(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let value = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(128)
+        .collect::<String>();
+    (!value.is_empty()).then_some(value)
 }
 
 #[derive(Debug, Clone)]
@@ -1144,6 +1164,23 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn host_labels_are_trimmed_bounded_and_control_safe() {
+        assert_eq!(
+            normalize_host_label("  macbook-pro.local\n"),
+            Some("macbook-pro.local".into())
+        );
+        assert_eq!(normalize_host_label("\n\t"), None);
+
+        let long = "x".repeat(256);
+        assert_eq!(normalize_host_label(&long).unwrap().len(), 128);
+        assert!(
+            !normalize_host_label("mac\u{0000}book")
+                .unwrap()
+                .contains('\u{0000}')
+        );
     }
 
     #[tokio::test]

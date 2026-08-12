@@ -7,6 +7,10 @@ natural-language conversation, the **Scheduled** page, and notifications.
 Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
 
+Set `TASKRAIL_HOST_LABEL` when you want a stable friendly name in ChatGPT and
+Fleet responses. If it is not set, Taskrail falls back to the operating system
+hostname and only uses `unnamed-host` when no hostname is available.
+
 The connection can be per host, or you can use the explicit fleet gateway to
 present several Taskrail hosts through one MCP app. Each host still owns its
 own Registry, policy, approvals, and execution. Set a stable label so ChatGPT

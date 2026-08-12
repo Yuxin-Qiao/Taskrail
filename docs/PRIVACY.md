@@ -17,7 +17,9 @@ store:
   native source path;
 - a stable random `host_id` generated and stored in the local Registry, host
   operating-system and architecture information, plus the optional
-  `TASKRAIL_HOST_LABEL` chosen by the user;
+  `TASKRAIL_HOST_LABEL` chosen by the user. When no label is configured, MCP
+  host summaries may use the bounded operating-system hostname as a display
+  label; it is not used as an authentication credential;
 - run status, timestamps, exit codes, bounded stdout/stderr, audit events, and
   normalized integration findings;
 - read-only GitHub observations returned by the user's local `gh` client, or

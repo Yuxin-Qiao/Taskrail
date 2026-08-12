@@ -6,6 +6,10 @@ Taskrail 的 ChatGPT 集成是一个仅提供工具的 MCP 应用。ChatGPT 提�
 “Scheduled”页面和通知；Taskrail 提供本地守护进程、调度器、命令执行、运行历史、
 日志和主机本地审计事件。
 
+如果希望 ChatGPT 和 Fleet 响应中显示稳定、易识别的主机名称，可以设置
+`TASKRAIL_HOST_LABEL`。未设置时，Taskrail 会回退到操作系统 hostname；只有在
+系统也无法提供 hostname 时才显示 `unnamed-host`。
+
 该连接可以按主机隔离，也可以通过显式的 fleet 网关把多台 Taskrail 主机呈现为一个 MCP
 应用。每台 ARM64 macOS 或 Linux 机器仍然拥有自己的 Registry、策略、审批和执行边界。
 单主机连接时设置稳定标签，让 ChatGPT 能区分不同主机：
