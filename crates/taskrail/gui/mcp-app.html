@@ -25,7 +25,8 @@
     .taskrail-list li { border-bottom: 1px solid var(--border); display: flex; gap: 8px; justify-content: space-between; padding: 9px 12px; }
     .taskrail-list li:last-child { border-bottom: 0; }
     .taskrail-item-name { min-width: 0; overflow-wrap: anywhere; }
-    .taskrail-item-meta { color: var(--muted); font-size: 11px; text-align: right; }
+    .taskrail-item-detail { color: var(--muted); display: block; font-size: 11px; margin-top: 2px; }
+    .taskrail-item-meta { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
     .taskrail-empty { color: var(--muted); padding: 16px 12px; }
     @media (max-width: 560px) { .taskrail-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .taskrail-head { align-items: flex-start; flex-direction: column; } }
   </style>
@@ -35,7 +36,8 @@
   </div>
   <div class="taskrail-status" data-role="status" aria-live="polite">Waiting for the latest Taskrail overview…</div>
   <div class="taskrail-cards" data-role="cards"></div>
-  <section class="taskrail-panel"><h2>Automations</h2><ul class="taskrail-list" data-role="automations"><li class="taskrail-empty">No overview loaded.</li></ul></section>
+  <section class="taskrail-panel"><h2>Taskrail automations</h2><ul class="taskrail-list" data-role="automations"><li class="taskrail-empty">No overview loaded.</li></ul></section>
+  <section class="taskrail-panel"><h2>Discovered native tasks</h2><ul class="taskrail-list" data-role="native-sources"><li class="taskrail-empty">No overview loaded.</li></ul></section>
   <section class="taskrail-panel"><h2>Needs attention</h2><ul class="taskrail-list" data-role="attention"><li class="taskrail-empty">No overview loaded.</li></ul></section>
 </div>
 <script>
@@ -44,6 +46,7 @@
     const status = root.querySelector('[data-role="status"]');
     const cards = root.querySelector('[data-role="cards"]');
     const automations = root.querySelector('[data-role="automations"]');
+    const nativeSources = root.querySelector('[data-role="native-sources"]');
     const attention = root.querySelector('[data-role="attention"]');
     const pending = new Map();
     let nextId = 1;
@@ -77,8 +80,9 @@
       const host = value.host || daemon.host || {};
       const discovery = value.native_discovery || {};
       const items = list(value.automations);
+      const nativeItems = list(discovery.automations);
       const attentionItems = list(value.attention?.items || value.attention);
-      const nativeCount = Number(discovery.source_count ?? discovery.count ?? list(discovery.automations).length ?? 0);
+      const nativeCount = Number(discovery.source_count ?? discovery.count ?? nativeItems.length ?? 0);
       const runCount = list(value.recent_runs).length;
       cards.innerHTML = [
         ["Host", host.label || host.hostname || "local"],
@@ -87,6 +91,13 @@
         ["Recent runs", runCount],
       ].map(([label, count]) => `<div class="taskrail-card"><div class="taskrail-card-label">${escape(label)}</div><div class="taskrail-card-value">${escape(count)}</div></div>`).join("");
       automations.innerHTML = items.length ? items.slice(0, 12).map(item => `<li><span class="taskrail-item-name">${escape(item.name || item.id || "Unnamed automation")}</span><span class="taskrail-item-meta">${escape(item.runtime_state || item.ownership || "unknown")}</span></li>`).join("") : '<li class="taskrail-empty">No automations registered.</li>';
+      nativeSources.innerHTML = nativeItems.length ? nativeItems.slice(0, 30).map(item => {
+        const trigger = item.trigger?.kind || "manual";
+        const state = item.enabled === false ? "disabled" : "enabled";
+        const provider = item.provider || "native";
+        const path = item.path ? ` · ${item.path}` : "";
+        return `<li><span class="taskrail-item-name">${escape(item.name || item.id || "Unnamed native task")}<span class="taskrail-item-detail">${escape(provider)} · ${escape(trigger)}${escape(path)}</span></span><span class="taskrail-item-meta">${escape(state)}</span></li>`;
+      }).join("") : '<li class="taskrail-empty">No native tasks discovered.</li>';
       attention.innerHTML = attentionItems.length ? attentionItems.slice(0, 12).map(item => `<li><span class="taskrail-item-name">${escape(item.title || item.kind || item.id || "Attention item")}</span><span class="taskrail-item-meta">${escape(item.severity || item.status || "review")}</span></li>`).join("") : '<li class="taskrail-empty">No attention items.</li>';
       setStatus(`Connected · ${text(host.label || host.hostname || "local host")} · ${text(host.platform || "local")} ${text(host.architecture || "")}`);
     }

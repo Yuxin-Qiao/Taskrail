@@ -3054,6 +3054,10 @@ mod tests {
             render["_meta"]["openai/outputTemplate"],
             MCP_APP_RESOURCE_URI
         );
+        let html = MCP_APP_HTML;
+        assert!(html.contains("data-role=\"native-sources\""));
+        assert!(html.contains("Discovered native tasks"));
+        assert!(html.contains("taskrail_discover_local_automations"));
     }
 
     #[test]
