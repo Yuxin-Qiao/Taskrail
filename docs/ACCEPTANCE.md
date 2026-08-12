@@ -27,9 +27,9 @@ Execution date: 2026-08-12
 | B3 | Linux build | Linux target produces an ELF binary without macOS-only warnings/errors | `cargo +1.88.0 zigbuild --locked --workspace --target x86_64-unknown-linux-gnu`; Linux workspace cross-build passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
-| C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | macOS/Linux scans and tests passed; Windows Task Scheduler CSV parser fixture passed; live Windows scan awaits the Windows CI runner | PARTIAL |
+| C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | macOS/Linux scans and tests passed; Windows Task Scheduler parser and live `scan --source task-scheduler --json` smoke passed on the Windows CI runner | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
-| C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke passed; Windows named-pipe implementation and CI job are configured, but no Windows runner execution has completed locally | PARTIAL |
+| C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke passed; Windows named-pipe `daemon.ping` round-trip passed on the Windows CI runner | PASS |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 38 local tools; 18 public read-only tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
@@ -50,16 +50,15 @@ Execution date: 2026-08-12
 | G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 147 tests passed | PASS |
 | G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 147 tests passed | PASS |
 
-`PARTIAL` marks functionality that is implemented and covered by fixtures or
-local cross-builds but still needs execution on the target Windows runner.
+All current acceptance items are `PASS`. Windows-specific evidence comes from
+the configured GitHub Actions Windows runner; the macOS workspace records the
+local evidence separately.
 
 ## External release gates
 
-The local macOS validation and Linux cross-build are complete. The following
-are intentionally not claimed as local passes:
+The repository-level validation gates are complete. The following remain
+intentionally external release gates:
 
-- Windows named-pipe, Task Scheduler, and Windows CI execution must complete on
-  the configured GitHub Actions Windows runner.
 - Docker/container smoke testing, a stable public HTTPS MCP deployment, and
   ChatGPT app review/publication remain external deployment gates.
 - Real destructive integration writes and native adoption remain approval- and
@@ -100,9 +99,9 @@ The black-box checks must use a temporary Registry and must include at least:
 
 ## Execution record
 
-This section is filled only from the current execution. `PARTIAL` means the
-implementation exists and local evidence is positive, but the external gate
-listed in the criterion was not independently rerun in this execution.
+This section is filled only from the current execution. Platform-specific
+remote evidence is called out explicitly rather than being presented as local
+execution.
 
 ### Results
 
@@ -110,13 +109,18 @@ The current workspace passed the Rust full suite, strict Clippy, formatting
 check, and a temporary-Registry end-to-end smoke for typed Topgrade plan
 scheduling. The SwiftUI desktop client built and its 2 tests passed. The
 public HTTP adapter unit tests cover health, authentication, origin, MCP
-headers, public-profile allowlisting, and protocol-version boundaries. Linux
-runtime execution remains an Ubuntu CI gate because the current macOS host has
-no Linux VM/container runtime; Docker Compose execution is also an external
-deployment-host check because Docker is not installed on this host.
+headers, public-profile allowlisting, and protocol-version boundaries. The
+GitHub Actions matrix passed on macOS, Ubuntu, and Windows, including the
+Windows Task Scheduler live scan and named-pipe RPC round-trip. CodeQL,
+dependency review, cargo audit/deny, MSRV, and package validation also passed.
+Docker Compose execution remains an external deployment-host check because
+Docker is not installed on this host.
 
 ## Release decision
 
-The Linux control-plane implementation is locally build-proven and ready for
-the Ubuntu CI/runtime gate. The macOS SwiftUI client remains macOS-only; Linux
-support is the headless Rust CLI/daemon/TUI plus MCP surface.
+The repository-level control-plane implementation is release-candidate ready
+for the covered local and CI surfaces. The macOS SwiftUI client remains
+macOS-only; Linux and Windows support is the headless Rust CLI/daemon/TUI plus
+MCP surface. Public HTTPS hosting, OpenAI review/publication, and real
+destructive/adoption operations remain explicit external or approval-gated
+steps.

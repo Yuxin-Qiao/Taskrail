@@ -67,6 +67,11 @@ jobs:
           cargo run --quiet -- scan --source systemd --json
           cargo run --quiet -- scan --source cron --json
 
+      - name: Smoke-test Windows Task Scheduler discovery
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: cargo run --quiet -- scan --source task-scheduler --json
+
   msrv:
     name: MSRV (1.88.0)
     runs-on: ubuntu-latest
