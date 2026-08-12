@@ -109,6 +109,7 @@ fn redacted_output<'a>(bytes: &[u8], secrets: impl IntoIterator<Item = &'a Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::core::CommandSpec;
 
     #[cfg(unix)]

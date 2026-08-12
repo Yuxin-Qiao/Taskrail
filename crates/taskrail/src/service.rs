@@ -1343,7 +1343,7 @@ pub async fn scheduled_pass(registry_path: impl AsRef<Path>) -> Result<Scheduler
     Ok(pass)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::core::{CommandSpec, StepSpec};
