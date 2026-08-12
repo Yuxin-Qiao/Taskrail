@@ -4,8 +4,9 @@
 
 The daemon exposes a versioned JSON-RPC 2.0 protocol over a per-user Unix
 domain socket. The socket and its parent directory are restricted to the
-current user. The optional desktop view uses the same protocol instead of
-reimplementing Registry and execution logic.
+current user. The daemon also serves a loopback-only browser dashboard whose
+API maps to the same RPC handlers instead of reimplementing Registry and
+execution logic. The TUI and MCP adapter remain additional local clients.
 
 The Registry is opened for short synchronous operations. It is never borrowed
 across an async subprocess wait, because the SQLite connection is not safe to

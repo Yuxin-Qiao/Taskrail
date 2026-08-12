@@ -12,13 +12,15 @@ stdio review tests.
   open-world behavior, and every descriptor includes an output schema.
 - `automation.discover` is a true read-only RPC path; it does not reconcile or
   write the local Registry. The MCP discovery and scan tools use that path.
-- Public-profile tool calls are allowlisted to 18 read-only tools. Write,
+- Public-profile tool calls are allowlisted to 19 read-only tools, including a
+  ChatGPT MCP Apps dashboard render tool. The private Fleet gateway also
+  exposes a separate read-only multi-host dashboard resource. Write,
   delete, adoption, approval, cancellation, and execution tools are both
   omitted from `tools/list` and rejected if called directly.
 - MCP responses omit native raw definitions and environment values, redact
   configured environment values in automation/run snapshots, redact event
   `raw`/`env` fields, and hide the current home-directory prefix in paths.
-- `chatgpt-app-submission.json` contains the app information, all 18 public
+- `chatgpt-app-submission.json` contains the app information, all 19 public
   tools, five positive tests, and three negative tests.
 - `OPENAI_RELEASE_NOTES.md` contains the portal-ready initial-submission
   release notes.
@@ -36,11 +38,14 @@ environment, not committed to the repository:
 export TASKRAIL_MCP_BEARER_TOKEN="$(secret-manager read taskrail/mcp-bearer-token)"
 export TASKRAIL_MCP_ALLOWED_ORIGINS="https://your-approved-chatgpt-origin.example"
 taskrail mcp-http \
+  --profile public-read-only \
   --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-`taskrail mcp-http` always forces the public read-only profile, exposes
+`taskrail mcp-http` defaults to and, unless explicitly passed
+`--profile private`, exposes the public read-only profile. The public profile
+exposes
 `POST /mcp` and `GET /healthz`, requires a constant-time Bearer token, bounds
 request bodies, rejects chunked requests, validates allowed origins, emits
 request logs and an authenticated internal `/metrics` endpoint, and is
@@ -52,6 +57,11 @@ end-user identity system.
 The repository's private Secure MCP Tunnel instructions are for development/
 testing connections only. Do not submit a localhost address, a private-network
 address, a tunnel-only address, or the default full local profile.
+
+The private HTTP profile is for a single protected Fleet target, not for public
+app review. Enable it only with `--profile private`, a non-empty bearer token,
+and a private TLS/authenticated edge. Do not route a public reviewer or a
+shared tenant to this profile.
 
 ## External gates before submission
 
@@ -82,8 +92,8 @@ be completed by a local source change:
 ## Reviewer-facing boundaries
 
 The public profile can inspect local automation inventory, native scheduler
-observations (including Windows Task Scheduler when connected to a Windows
-agent), adoption journal state, read-only GitHub observations, local
+observations on an ARM64 macOS or Linux agent, adoption journal state, read-only
+GitHub observations, local
 package/security findings, run history/logs, attention items, and audit events.
 It cannot create or run commands, change scheduler ownership, change files,
 approve an action, or send a write to GitHub or another public service.

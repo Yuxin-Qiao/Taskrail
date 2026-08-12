@@ -1,9 +1,6 @@
 use crate::{
     core::{Automation, CommandSpec, Event, Ownership, RuntimeState, StepSpec, Trigger},
-    discovery::{
-        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
-    },
+    discovery::scan_native_sources,
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
         MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
@@ -242,14 +239,26 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 .iter()
                 .filter(|automation| automation.runtime_state == RuntimeState::Paused)
                 .count();
+            let host_id = registry.host_id()?;
+            let native_discovery = registry
+                .metadata("native_discovery.status")?
+                .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+                .unwrap_or(Value::Null);
             Ok(serde_json::json!({
                 "protocol_version": PROTOCOL_VERSION,
                 "service": "taskrail",
+                "host": {
+                    "id": host_id,
+                    "label": host_label(),
+                    "platform": std::env::consts::OS,
+                    "architecture": std::env::consts::ARCH,
+                },
                 "automation_count": automations.len(),
                 "managed_count": managed,
                 "adopted_count": adopted,
                 "observed_count": observed,
                 "paused_count": paused,
+                "native_discovery": native_discovery,
             }))
         }),
         "automation.list" => with_registry(registry_path, |registry| {
@@ -329,7 +338,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     _ => {
                         return invalid_params(
                             request.id,
-                            "params.source must be one of all, launchd, cron, systemd, homebrew, task-scheduler"
+                            "params.source must be one of all, launchd, cron, systemd, or homebrew"
                                 .into(),
                         );
                     }
@@ -788,6 +797,38 @@ where
     operation(&registry)
 }
 
+fn host_label() -> String {
+    ["TASKRAIL_HOST_LABEL", "COMPUTERNAME", "HOSTNAME"]
+        .into_iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| normalize_host_label(&value))
+        })
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| normalize_host_label(&value))
+        })
+        .unwrap_or_else(|| "unnamed-host".into())
+}
+
+fn normalize_host_label(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let value = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(128)
+        .collect::<String>();
+    (!value.is_empty()).then_some(value)
+}
+
 #[derive(Debug, Clone)]
 struct CreateAutomationParams {
     id: String,
@@ -1016,54 +1057,6 @@ fn create_automation(registry: &Registry, params: CreateAutomationParams) -> Res
     Ok(automation)
 }
 
-fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource>> {
-    let mut discovered = Vec::new();
-    if matches!(source, "all" | "launchd") {
-        discovered.extend(LaunchdProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "cron") {
-        discovered.extend(CronProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "systemd") {
-        discovered.extend(SystemdProvider::default().scan()?);
-    }
-    #[cfg(windows)]
-    if matches!(source, "all" | "task-scheduler") {
-        discovered.extend(crate::discovery::TaskSchedulerProvider::default().scan()?);
-    }
-    if matches!(source, "all" | "homebrew") {
-        let homebrew = HomebrewProvider::default().scan()?;
-        if source == "all" {
-            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
-            discovered.extend(unmatched);
-        } else {
-            let mut launchd = LaunchdProvider::default().scan()?;
-            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
-            let mut related = homebrew
-                .iter()
-                .filter_map(|homebrew| {
-                    launchd.iter().find(|native| {
-                        native.provider == "launchd"
-                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
-                    })
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            related.extend(unmatched);
-            discovered.extend(related);
-        }
-    }
-    if !matches!(
-        source,
-        "all" | "launchd" | "cron" | "systemd" | "homebrew" | "task-scheduler"
-    ) {
-        anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, homebrew, or task-scheduler"
-        );
-    }
-    Ok(discovered)
-}
-
 fn string_param(params: &Value, key: &str) -> Result<String, String> {
     params
         .get(key)
@@ -1171,6 +1164,23 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn host_labels_are_trimmed_bounded_and_control_safe() {
+        assert_eq!(
+            normalize_host_label("  macbook-pro.local\n"),
+            Some("macbook-pro.local".into())
+        );
+        assert_eq!(normalize_host_label("\n\t"), None);
+
+        let long = "x".repeat(256);
+        assert_eq!(normalize_host_label(&long).unwrap().len(), 128);
+        assert!(
+            !normalize_host_label("mac\u{0000}book")
+                .unwrap()
+                .contains('\u{0000}')
+        );
     }
 
     #[tokio::test]

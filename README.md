@@ -1,8 +1,5 @@
 <div align="center">
-  <img src="docs/assets/taskrail-mark.svg" alt="Taskrail" width="56" />
-  <h1>Taskrail</h1>
-  <p><strong>The automation control plane for your computer.</strong><br />
-  Discover native jobs, schedule commands, run them locally, and inspect every result.</p>
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
 
   <p>
     <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
@@ -10,16 +7,25 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <p><a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a></p>
+  <p><a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
+  <p><sub>Works with</sub> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
 </div>
 
 <p align="center">
   <sub>discover</sub> &nbsp;→&nbsp; <sub>schedule</sub> &nbsp;→&nbsp; <sub>execute</sub> &nbsp;→&nbsp; <sub>inspect</sub>
 </p>
 
-<p align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="Scripts, schedules, native jobs, and AI integrations flow into the Taskrail daemon, which runs work and records history, logs, and events" width="960" />
-</p>
+## Supported targets
+
+Official binaries and CI cover only these ARM64 targets:
+
+- macOS Apple Silicon: `aarch64-apple-darwin`;
+- Linux ARM64: `aarch64-unknown-linux-gnu`.
+
+x86_64 and Windows are not supported release targets. The Rust crate fails
+closed when compiled for another target instead of producing an untested
+binary. Source builds on other architectures are intentionally unsupported.
 
 ## Quick start
 
@@ -62,12 +68,9 @@ taskrail status
 ```
 
 On macOS this installs a LaunchAgent. On Linux this installs a systemd user
-unit under `~/.config/systemd/user/`. On Windows this installs the per-user
-`Taskrail\\Daemon` Task Scheduler task and uses a user-scoped named pipe. The
-Registry is stored under `$XDG_DATA_HOME/taskrail/` (or
-`~/.local/share/taskrail/`) on Linux and `%LOCALAPPDATA%\\taskrail\\` on
-Windows; the Unix daemon socket uses `$XDG_RUNTIME_DIR/taskrail/` when
-available. For a headless Linux host,
+unit under `~/.config/systemd/user/`. The Registry is stored under
+`$XDG_DATA_HOME/taskrail/` (or `~/.local/share/taskrail/`) on Linux; the Unix
+daemon socket uses `$XDG_RUNTIME_DIR/taskrail/` when available. For a headless Linux host,
 enable user lingering before installing:
 
 ```bash
@@ -75,31 +78,51 @@ loginctl enable-linger "$USER"
 taskrail daemon --install
 ```
 
+The daemon performs a read-only native scheduler inventory refresh every five
+minutes by default. Use `--discovery-interval-seconds` to adjust it. Status and
+overview report the last scan, provider completeness, drift, and confirmed
+missing-source counts; an unavailable provider is not treated as an empty
+provider, so Taskrail does not manufacture deletion alerts.
+
 ## ChatGPT Scheduled tasks
 
-Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT Web, Desktop,
+Taskrail can be connected to ChatGPT as an MCP app with typed tools and optional
+read-only MCP Apps widgets. ChatGPT Web, Desktop,
 and Mobile use the same MCP tool contract; ChatGPT's Scheduled
 page remains the natural-language scheduler and notification surface; Taskrail
-is the local execution backend that ChatGPT calls on the selected macOS, Linux,
-or Windows host.
+is the local execution backend that ChatGPT calls on the selected ARM64 macOS
+or Linux host.
 
 Start the local MCP adapter after the Taskrail daemon is running:
 
 ```bash
-taskrail daemon --install       # LaunchAgent/systemd/Task Scheduler by platform
+taskrail daemon --install       # LaunchAgent/systemd by platform
 taskrail mcp                    # MCP stdio adapter for the current host
 taskrail integration chatgpt-doctor
 ```
 
 The adapter exposes status, fresh native discovery, automation creation, pause and
 resume, immediate runs, run history, logs, cancellation, attention items, and
-audit events. The stable status call also carries a safe local discovery summary
-so an already-connected ChatGPT app with cached tool metadata can still answer
-what is present on the host. Commands remain direct argv; ChatGPT cannot turn a
-free-form string into a shell pipeline through this interface.
+audit events. The daemon also keeps a background read-only observation mirror;
+status carries its safe supervision summary while overview still performs a
+fresh scan. Commands remain direct argv; ChatGPT cannot turn a free-form string
+into a shell pipeline through this interface.
 
-For a private macOS, Linux, or Windows host, connect `taskrail mcp` through OpenAI Secure
-MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app. Once the app
+For one private ARM64 macOS or Linux host, connect `taskrail mcp` through
+OpenAI Secure MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app.
+For several hosts, use `taskrail mcp-fleet` with the local `examples/fleet.yaml`
+shape and connect that one gateway. Copy the example outside the repository,
+replace its endpoints and token environment-variable names, and enable only
+the hosts you trust:
+
+```bash
+mkdir -p ~/.config/taskrail
+cp examples/fleet.yaml ~/.config/taskrail/fleet.yaml
+taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
+```
+
+The checked-in example keeps its hosts disabled and uses placeholder endpoints;
+it never makes an outbound request until you edit the local copy. Once the app
 is connected, a Scheduled task can use prompts such as:
 
 ```text
@@ -108,21 +131,27 @@ If it fails, inspect the run logs and tell me what needs attention.
 ```
 
 See [ChatGPT integration](docs/chatgpt.md) for the tunnel, permissions, and
-multi-host setup details. Set `TASKRAIL_HOST_LABEL` for a stable label when
-more than one host is connected.
+multi-host setup details. With the fleet gateway, always name the target
+`host_id` in a request; do not rely on a display label alone.
 
 For a public deployment, use the enforced read-only HTTP profile:
 
 ```bash
 export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
-taskrail mcp-http --bind 127.0.0.1:8787
+taskrail mcp-http --profile public-read-only --bind 127.0.0.1:8787
 ```
 
-This endpoint always uses the public read-only profile and omits creation,
+This endpoint defaults to the public read-only profile and omits creation,
 deletion, execution, adoption, and approval tools. Put it behind a production
 HTTPS proxy with end-user authentication and per-user host binding; a local
 tunnel is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md)
 and the [single-host deployment example](deploy/README.md).
+
+For a private, single-host Fleet target that needs explicit write or run
+requests, use `taskrail mcp-http --profile private` with a separate bearer
+secret and private TLS/authentication edge. Never expose that profile as a
+shared public relay; Fleet `allow_writes: true` is intended only for this
+explicitly protected endpoint.
 
 For a local stdio review of the public read-only profile, use:
 
@@ -131,15 +160,39 @@ TASKRAIL_MCP_PROFILE=public taskrail mcp
 ```
 
 This profile omits creation, deletion, execution, adoption, and approval
-tools. For a public deployment, use `taskrail mcp-http` behind a production
-HTTPS endpoint with authentication and per-user host binding; a local tunnel
-is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
+tools.
 
 Open the live terminal dashboard:
 
 ```bash
 taskrail tui
 ```
+
+The daemon is also the local web server for the primary browser dashboard. It
+listens on `127.0.0.1:10100` by default; open it with:
+
+```bash
+taskrail gui
+```
+
+The dashboard shows discovery, automations, runs, logs, integrations, inbox,
+approvals, metrics, and audit events. Its write actions call the same local RPC
+and policy boundary as the CLI/TUI. It is loopback-only, requires a same-origin
+browser request for writes, and is never exposed through the ChatGPT MCP or
+Tunnel endpoint. Use `taskrail daemon --http-bind 127.0.0.1:10100` to choose a
+different local port. If another local service owns `10100`, Taskrail falls
+back to the next loopback ports and `taskrail gui` discovers the active
+Taskrail endpoint instead of opening the other service.
+
+The browser dashboard supports English, Simplified Chinese, Japanese, and
+Korean. It selects a supported browser language on first load; use the language
+selector in the top-right corner to change it. The selection is stored only in
+the browser's local storage.
+
+The ChatGPT MCP app can render the same bounded overview through a versioned
+MCP Apps resource. The optional Fleet gateway also exposes a read-only
+multi-host view; both widgets call typed MCP tools and never the local browser
+HTTP endpoint.
 
 For definitions that need more fields, use YAML:
 
@@ -158,7 +211,7 @@ Taskrail can manage commands and scripts you already use:
 
 - one-shot commands and recurring interval or cron jobs;
 - local run history, stdout, stderr, and operational events;
-- launchd, cron, systemd user services, Windows Task Scheduler, and Homebrew service discovery;
+- launchd, cron, systemd user services, and Homebrew service discovery;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;
@@ -267,6 +320,9 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 - Commands are executed as argv; arbitrary shell strings are not accepted.
 - Environment values are redacted in persisted automation snapshots.
 - Existing native jobs remain observation-only until explicit adoption.
+- The daemon refreshes native observations in the background and marks drift or
+  confirmed missing sources as attention items; it never deletes a source from
+  the Registry because a provider was unavailable.
 - The ChatGPT MCP adapter reaches the daemon through the restricted local Unix
   socket; it does not expose the Registry directly.
 - Approval requests are persisted locally, expire, are plan-bound, and are
@@ -274,33 +330,38 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## Current status
 
-The current package is `0.1.5` and is usable for local command automation and
+The current package is `0.1.6` and is usable for local command automation and
 private ChatGPT Scheduled-task control. The stable center is:
 
 ```text
 add/register → list → daemon → run → history/logs → tui
 ```
 
-The following are optional integrations or still future work:
+The current implementation and remaining release gates are:
 
 | Area | Status |
 | --- | --- |
 | Registry, scheduler, runs, logs, events | 🟢 Core |
 | CLI and TUI | 🟢 Core |
-| launchd / cron / systemd / Homebrew discovery | 🔵 Integration |
+| launchd / cron / systemd / Homebrew discovery and background supervision | 🔵 Integration |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
-| Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
-| Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟢 Verified |
+| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
+| Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟡 Runtime recheck pending |
+| Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
+| Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
-| Packaged CLI and unsigned macOS app releases | 🟢 Tag-triggered workflow |
+| ARM64 CLI releases | 🟡 Tag-triggered workflow; release not yet run |
 | Homebrew formula | 🟡 Future |
 
 ## Documentation
 
+- [简体中文 README](README.zh-CN.md)
+- [中文文档索引](docs/README.zh-CN.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 - [ChatGPT integration](docs/chatgpt.md)
+- [中文 ChatGPT 集成指南](docs/chatgpt.zh-CN.md)
 - [Acceptance checklist](docs/ACCEPTANCE.md)
 - [Architecture decisions](docs/adr/)
 - [Research notes](deep-research-report.md)

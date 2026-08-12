@@ -1,23 +1,51 @@
 # ChatGPT integration
 
-Taskrail's ChatGPT integration is a tool-only MCP app. ChatGPT provides the
+[简体中文](chatgpt.zh-CN.md)
+
+Taskrail's ChatGPT integration is an MCP app with typed tools and optional
+read-only MCP Apps widgets. ChatGPT provides the
 natural-language conversation, the **Scheduled** page, and notifications.
 Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
 
-The connection is deliberately per host: run one Taskrail daemon and one MCP
-tunnel profile on each macOS, Linux, or Windows machine. Set a stable label so ChatGPT can
-distinguish them:
+Set `TASKRAIL_HOST_LABEL` when you want a stable friendly name in ChatGPT and
+Fleet responses. If it is not set, Taskrail falls back to the operating system
+hostname and only uses `unnamed-host` when no hostname is available.
+
+The connection can be per host, or you can use the explicit fleet gateway to
+present several Taskrail hosts through one MCP app. Each host still owns its
+own Registry, policy, approvals, and execution. Set a stable label so ChatGPT
+can distinguish them:
 
 ```bash
 export TASKRAIL_HOST_LABEL="macbook-pro"
 ```
 
+For several hosts, copy `examples/fleet.yaml` to the local ignored config path,
+replace the example endpoints, inject each token through its `token_env`, and
+start the gateway:
+
+```bash
+taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
+```
+
+The fleet app exposes `taskrail_fleet_overview` first, followed by the optional
+`taskrail_fleet_render_overview` MCP Apps view and then explicit `host_id`-targeted
+discovery, inventory, native integrations, adoption, drift,
+audit events, run history, logs, approval, and lifecycle tools. Fleet hosts are
+read-only by default.
+`allow_writes: true` is an explicit opt-in for a trusted private endpoint; the
+remote Taskrail host still enforces its own policy and approval boundary.
+
 ## Start the local backend
 
-The daemon owns the SQLite Registry and listens on a user-scoped local endpoint:
-a restricted Unix socket on macOS/Linux or a named pipe that rejects remote
-clients on Windows.
+The daemon owns the SQLite Registry and listens on a user-scoped restricted Unix
+socket on supported ARM64 macOS/Linux hosts.
+After startup it performs a read-only native discovery pass every five minutes
+by default. Use `--discovery-interval-seconds` to adjust the interval. The pass
+reconciles observed jobs, records drift, and marks a source missing only when
+that provider was successfully queried; unavailable providers are not treated
+as empty.
 On macOS, install the LaunchAgent:
 
 ```bash
@@ -39,12 +67,6 @@ directory selected by `XDG_CONFIG_HOME`). The Registry uses `XDG_DATA_HOME`
 and the socket uses `XDG_RUNTIME_DIR` when those variables are absolute;
 otherwise taskrail falls back to `~/.local/share/taskrail/`. The install command
 fails closed if a systemd user manager is not available.
-
-On Windows, `taskrail daemon --install` creates and starts the current-user
-`Taskrail\\Daemon` Task Scheduler task. The Registry defaults to
-`%LOCALAPPDATA%\\taskrail\\registry.sqlite3`; the local RPC endpoint is a
-per-user named pipe. Windows Task Scheduler is discovery-only for now, so
-`taskrail scan --source task-scheduler` never changes a native task.
 
 If you manage systemd units yourself, the explicit foreground form remains:
 
@@ -136,11 +158,12 @@ TLS-terminating reverse proxy:
 ```bash
 export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
 taskrail mcp-http \
+  --profile public-read-only \
   --bind 127.0.0.1:8787 \
   --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
-`taskrail mcp-http` always launches the public read-only profile. It exposes
+`taskrail mcp-http` defaults to the public read-only profile. It exposes
 `POST /mcp` and `GET /healthz`, requires Bearer authentication, bounds request
 bodies, and refuses chunked requests. The proxy/hosting layer must still add
 end-user authentication and per-user host binding. The public profile exposes
@@ -148,8 +171,24 @@ only status, native discovery, inventory, adoption
 journal inspection, read-only GitHub observations, local package/security
 inspection, run history/logs, attention items, and audit events. It does not
 expose automation creation, deletion, pause/resume, execution, cancellation,
-native adoption, integration writes, or approval operations. The local default
-profile remains available for a private, user-owned host connection.
+native adoption, integration writes, or approval operations.
+
+For a private, single-host Fleet target that must receive explicit write or
+run requests, use the authenticated private profile instead:
+
+```bash
+export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
+taskrail mcp-http \
+  --profile private \
+  --bind 127.0.0.1:8788 \
+  --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
+```
+
+Private mode is never the default: keep it bound behind a private TLS/auth
+edge, use one authorized host per endpoint, and do not expose it as a shared
+public relay. The Fleet gateway's `allow_writes: true` hosts must point to
+such an explicitly protected private endpoint; public-read-only endpoints
+correctly reject Fleet write calls.
 
 The public endpoint must add its own user authentication and host binding
 before proxying to a user's daemon. Do not turn the read-only profile into a
@@ -175,15 +214,19 @@ Every Sunday at 09:00, run the Taskrail automation "Mole cleanup" on the MacBook
 If the run fails, get its logs and notify me with the exit status and the next action.
 ```
 
-For multiple hosts, use a separate tunnel/profile and host label for each
-machine. In the Scheduled task, name the target host explicitly. Always call
-`taskrail_overview` first when the user wants a complete host summary. It
+For multiple hosts without the fleet gateway, use a separate tunnel/profile and
+host label for each machine. With the fleet gateway, call
+`taskrail_fleet_overview` first and name the configured `host_id` explicitly.
+Always call `taskrail_overview` or
+`taskrail_fleet_overview` first when the user wants a complete host summary. It
 returns the host identity, daemon state, fresh discovery, Taskrail inventory,
 recent runs, and attention items in one read-only result. Use
 `taskrail_status` for a lightweight connectivity check. When
 the user asks what automation tasks already exist on the host, prefer
 `taskrail_discover_local_automations` for a fresh native scan; a successful
 ChatGPT response is not proof that a different host's daemon ran the task.
+Daemon status also includes the last background discovery timestamp, complete
+providers, drift count, and confirmed missing-source count.
 
 ## Tool surface
 
@@ -192,12 +235,20 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_status` — verify daemon connectivity and identify the host.
 - `taskrail_overview` — return one safe host summary combining identity,
   discovery, Taskrail automations, recent runs, and attention items.
+- `taskrail_render_overview` — after `taskrail_overview`, render the same
+  read-only snapshot as an interactive MCP Apps control-plane view inside
+  ChatGPT. It shows the discovered native-task list as well as Taskrail-owned
+  automations and attention items; its refresh and native-scan buttons call
+  typed read-only tools and never expose the local browser HTTP API.
+- `taskrail_fleet_render_overview` — after `taskrail_fleet_overview`, render
+  configured host status as an interactive read-only MCP Apps view; it never
+  bypasses per-host routing, policy, approval, or execution boundaries.
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
-  Windows Task Scheduler, and Homebrew services and return safe observed-task summaries.
+  and Homebrew services and return safe observed-task summaries.
 - `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd,
-  Windows Task Scheduler, or Homebrew scan without mutating native definitions
+  or Homebrew scan without mutating native definitions
   or the Registry.
 - `taskrail_list_integrations` — inspect the built-in integration catalog,
   executable detection, and doctor status on this host.
@@ -235,6 +286,12 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   `taskrail_reject`, and `taskrail_execute_approved` — review and operate the
   persisted, plan-bound approval flow. Approval is one-time and never a shell
   grant.
+
+The fleet gateway exposes the corresponding host-targeted operations with the
+`taskrail_fleet_` prefix, including adoption, drift acknowledgement, typed
+integration scheduling, and approval lifecycle. Every fleet operation requires
+an explicit `host_id`; write-capable operations are rejected before network
+access unless that host is explicitly configured with `allow_writes: true`.
 
 The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local

@@ -6,6 +6,7 @@ on:
   pull_request:
   schedule:
     - cron: '23 3 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,6 +16,8 @@ permissions:
 jobs:
   analyze:
     name: Analyze Rust
+    # CodeQL's bundled CLI currently requires the x64 Linux runner. Product
+    # builds and tests remain ARM64 in CI; this job is static analysis only.
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -24,9 +27,7 @@ jobs:
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
         with:
           languages: rust
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+          build-mode: none
 
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4

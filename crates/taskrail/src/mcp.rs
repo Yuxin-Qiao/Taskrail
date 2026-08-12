@@ -21,13 +21,19 @@ use tokio::net::{TcpListener, TcpStream};
 const SERVER_NAME: &str = "Taskrail";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+const MCP_APP_RESOURCE_URI: &str = "ui://taskrail/dashboard/v1.html";
+const MCP_FLEET_APP_RESOURCE_URI: &str = "ui://taskrail/fleet/v1.html";
+const MCP_APP_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 const MAX_HTTP_HEADER_BYTES: usize = 32 * 1024;
 const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_APP_HTML: &str = include_str!("../gui/mcp-app.html");
+const MCP_FLEET_APP_HTML: &str = include_str!("../gui/mcp-fleet-app.html");
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Linux cron/systemd, and Windows Task Scheduler discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
-const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, or taskrail_status for a lightweight connectivity check, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, then call taskrail_render_overview when an interactive control-plane view is useful; use taskrail_status for a lightweight connectivity check. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
+const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -43,11 +49,38 @@ struct Request {
 enum McpProfile {
     Local,
     PublicReadOnly,
+    PrivateHttp,
+}
+
+/// HTTP exposure profile. Both profiles require a bearer token; private mode
+/// is an explicit opt-in for a single authorized host and exposes the full
+/// local MCP tool set behind that authenticated boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpProfile {
+    PublicReadOnly,
+    Private,
+}
+
+impl HttpProfile {
+    fn mcp_profile(self) -> McpProfile {
+        match self {
+            Self::PublicReadOnly => McpProfile::PublicReadOnly,
+            Self::Private => McpProfile::PrivateHttp,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::PublicReadOnly => "public-read-only",
+            Self::Private => "private",
+        }
+    }
 }
 
 const PUBLIC_READ_ONLY_TOOLS: &[&str] = &[
     "taskrail_status",
     "taskrail_overview",
+    "taskrail_render_overview",
     "taskrail_list_automations",
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
@@ -108,17 +141,59 @@ pub async fn serve_stdio(socket_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Serve the public read-only MCP profile over stateless Streamable HTTP.
+/// Serve the local fleet gateway over stdio.
+///
+/// Unlike `taskrail mcp`, this process does not open a local Registry or
+/// execute commands itself. It routes explicitly named fleet tools to the
+/// configured remote Taskrail hosts; each remote host remains responsible for
+/// its own policy, approvals, and execution.
+pub async fn serve_fleet_stdio(config_path: PathBuf) -> Result<()> {
+    let gateway = crate::fleet::FleetGateway::from_config(
+        crate::fleet::FleetConfig::load(&config_path)
+            .with_context(|| format!("load fleet gateway config {}", config_path.display()))?,
+    )?;
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let mut stdout = tokio::io::stdout();
+    let mut line = String::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        if line.trim().is_empty() {
+            line.clear();
+            continue;
+        }
+        let response = match serde_json::from_str::<Request>(&line) {
+            Ok(request) => handle_fleet_request(request, &gateway).await,
+            Err(error) => Some(error_response(
+                Value::Null,
+                -32700,
+                format!("invalid JSON: {error}"),
+            )),
+        };
+        if let Some(response) = response {
+            let mut payload = serde_json::to_vec(&response)?;
+            payload.push(b'\n');
+            stdout.write_all(&payload).await?;
+            stdout.flush().await?;
+        }
+        line.clear();
+    }
+    Ok(())
+}
+
+/// Serve an authenticated MCP profile over stateless Streamable HTTP.
 ///
 /// TLS is deliberately terminated by the deployment's reverse proxy. The
-/// process binds locally by default, requires a bearer token from an
-/// environment variable, and never exposes the full local profile.
+/// process binds locally by default and requires a bearer token from an
+/// environment variable. The public profile is read-only; the private profile
+/// is an explicit opt-in for a protected, single-host deployment.
 pub async fn serve_http(
     socket_path: PathBuf,
     bind: SocketAddr,
     bearer_token_env: String,
     allowed_origins_env: String,
     max_body_bytes: usize,
+    profile: HttpProfile,
 ) -> Result<()> {
     if max_body_bytes == 0 || max_body_bytes > 8 * 1024 * 1024 {
         anyhow::bail!("HTTP body limit must be between 1 and 8388608 bytes");
@@ -142,7 +217,10 @@ pub async fn serve_http(
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("bind Taskrail MCP HTTP endpoint {bind}"))?;
-    eprintln!("Taskrail public read-only MCP HTTP endpoint listening on http://{bind}/mcp");
+    eprintln!(
+        "Taskrail {} MCP HTTP endpoint listening on http://{bind}/mcp",
+        profile.name()
+    );
     loop {
         let (stream, _) = listener.accept().await.context("accept MCP HTTP client")?;
         let socket_path = socket_path.clone();
@@ -155,6 +233,7 @@ pub async fn serve_http(
                 &token,
                 &allowed_origins,
                 max_body_bytes,
+                profile,
             )
             .await
             {
@@ -178,6 +257,7 @@ async fn handle_http_connection(
     bearer_token: &str,
     allowed_origins: &[String],
     max_body_bytes: usize,
+    profile: HttpProfile,
 ) -> Result<()> {
     let mut reader = BufReader::new(stream);
     let request = tokio::time::timeout(
@@ -192,8 +272,14 @@ async fn handle_http_connection(
     let request_started = Instant::now();
     let request_method = request.method.clone();
     let request_path = request.path.clone();
-    let response =
-        http_response_for_request(&request, &socket_path, bearer_token, allowed_origins).await;
+    let response = http_response_for_request_with_profile(
+        &request,
+        &socket_path,
+        bearer_token,
+        allowed_origins,
+        profile,
+    )
+    .await;
     let (status, content_type, body, protocol_header) = match response {
         Ok(response) => response,
         Err(error) => {
@@ -313,11 +399,29 @@ async fn read_http_request(
     }))
 }
 
+#[cfg(test)]
 async fn http_response_for_request(
     request: &HttpRequest,
     socket_path: &PathBuf,
     bearer_token: &str,
     allowed_origins: &[String],
+) -> Result<(&'static str, &'static str, Vec<u8>, bool)> {
+    http_response_for_request_with_profile(
+        request,
+        socket_path,
+        bearer_token,
+        allowed_origins,
+        HttpProfile::PublicReadOnly,
+    )
+    .await
+}
+
+async fn http_response_for_request_with_profile(
+    request: &HttpRequest,
+    socket_path: &PathBuf,
+    bearer_token: &str,
+    allowed_origins: &[String],
+    profile: HttpProfile,
 ) -> Result<(&'static str, &'static str, Vec<u8>, bool)> {
     if let Some(origin) = request.headers.get("origin")
         && !allowed_origins.iter().any(|allowed| allowed == origin)
@@ -336,7 +440,7 @@ async fn http_response_for_request(
             serde_json::to_vec(&json!({
                 "status": "ok",
                 "server": SERVER_NAME,
-                "profile": "public-read-only",
+                "profile": profile.name(),
             }))?,
             false,
         ));
@@ -432,7 +536,7 @@ async fn http_response_for_request(
         ));
     }
     let response =
-        handle_request_with_profile(mcp_request, socket_path, McpProfile::PublicReadOnly).await;
+        handle_request_with_profile(mcp_request, socket_path, profile.mcp_profile()).await;
     let Some(response) = response else {
         return Ok(("202 Accepted", "application/json", Vec::new(), true));
     };
@@ -526,7 +630,10 @@ async fn handle_request_with_profile(
         "initialize" => Ok(initialize_result_for_profile(&request.params, profile)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_descriptors_for_profile(profile) })),
-        "resources/list" => Ok(json!({ "resources": [] })),
+        "resources/list" => Ok(json!({
+            "resources": resources_for_profile(profile)
+        })),
+        "resources/read" => read_app_resource(&request.params),
         "prompts/list" => Ok(json!({ "prompts": [] })),
         "tools/call" => call_tool_with_profile(&request.params, socket_path, profile).await,
         "notifications/initialized" => Ok(Value::Null),
@@ -538,6 +645,852 @@ async fn handle_request_with_profile(
     })
 }
 
+async fn handle_fleet_request(
+    request: Request,
+    gateway: &crate::fleet::FleetGateway,
+) -> Option<Value> {
+    request.id.as_ref()?;
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if request.jsonrpc != "2.0" {
+        return Some(error_response(id, -32600, "jsonrpc must be \"2.0\"".into()));
+    }
+    let result = match request.method.as_str() {
+        "initialize" => Ok(fleet_initialize_result()),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({"tools": fleet_tool_descriptors()})),
+        "resources/list" => Ok(json!({
+            "resources": [fleet_app_resource_descriptor()]
+        })),
+        "resources/read" => read_fleet_app_resource(&request.params),
+        "prompts/list" => Ok(json!({"prompts": []})),
+        "notifications/initialized" => Ok(Value::Null),
+        "tools/call" => fleet_call_tool(&request.params, gateway).await,
+        method => Err(anyhow::anyhow!("method not found: {method}")),
+    };
+    Some(match result {
+        Ok(result) => success_response(id, result),
+        Err(error) => error_response(id, -32000, error.to_string()),
+    })
+}
+
+fn fleet_initialize_result() -> Value {
+    json!({
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+        "capabilities": {
+            "tools": {"listChanged": false},
+            "resources": {"listChanged": false, "subscribe": false}
+        },
+        "serverInfo": {"name": "Taskrail Fleet", "version": SERVER_VERSION},
+        "instructions": "Taskrail Fleet routes explicit host-targeted tools to user-configured Taskrail daemons. Call taskrail_fleet_overview first, then call taskrail_fleet_render_overview when an interactive multi-host view is useful; name a host_id for every host-specific operation. Host endpoints, policies, approvals, and execution remain authoritative on the target host. Never claim a remote run succeeded unless its tool result reports that status.",
+    })
+}
+
+fn fleet_tool_descriptors() -> Vec<Value> {
+    vec![
+        tool(
+            "taskrail_fleet_overview",
+            "Taskrail fleet overview",
+            "Use this first when the user wants a complete overview of every configured Taskrail host. It probes each enabled host and returns online/offline state plus safe host summaries without changing any host.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_render_overview",
+            "Render Taskrail fleet overview",
+            "Use this after taskrail_fleet_overview when the user wants an interactive view of configured Taskrail hosts. It renders only the safe fleet status snapshot and never changes a host.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_host_overview",
+            "Taskrail host overview",
+            "Use this when the user names one configured Taskrail host and wants its identity, native discovery, automations, recent runs, and attention items.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_status",
+            "Remote Taskrail status",
+            "Use this for a lightweight connectivity and daemon status check on one named host before another Fleet operation.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_discover",
+            "Discover a remote host",
+            "Use this when the user wants a fresh read-only native scheduler scan on one configured host. It never mutates that host's scheduler definitions or Registry.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "source":{"type":"string","enum":["all","launchd","cron","systemd","homebrew"],"default":"all"}
+                }),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_automations",
+            "List remote automations",
+            "Use this when the user wants the managed, adopted, observed, paused, or scheduled automations on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_integrations",
+            "List remote integrations",
+            "Use this when the user wants to know which typed native integrations are available and configured on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_get_automation",
+            "Inspect remote automation",
+            "Use this when the user wants the definition, ownership, trigger, or next run of an automation on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_runs",
+            "List remote runs",
+            "Use this when the user wants recent run status on one named host, optionally filtered by automation id.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "automation_id":{"type":"string","minLength":1},
+                    "limit":{"type":"integer","minimum":1,"maximum":500}
+                }),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_attention",
+            "List remote attention items",
+            "Use this when the user wants failures, drift, paused automations, or other attention items from one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_events",
+            "List remote audit events",
+            "Use this when the user wants a bounded audit trail for recent activity on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_adoptions",
+            "List remote adoption transactions",
+            "Use this when the user wants to inspect native-scheduler adoption transactions and recovery state on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_get_adoption",
+            "Inspect remote adoption",
+            "Use this when the user wants the snapshot, state, or recovery step for one native adoption transaction on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"tx_id":{"type":"string","minLength":1}}),
+                &["host_id", "tx_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_adopt_automation",
+            "Adopt remote native automation",
+            "Use this first with apply=false to preflight a native scheduler entry on a named host. Only use apply=true when the user explicitly asks Taskrail to disable that native entry and make the remote control plane its owner.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1},"apply":{"type":"boolean","default":false}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_rollback_adoption",
+            "Rollback remote adoption",
+            "Use this only when the user explicitly requests restoring a native scheduler snapshot on a named host. The transaction ID is required and the remote owner remains fail-closed for review.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"tx_id":{"type":"string","minLength":1}}),
+                &["host_id", "tx_id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_acknowledge_drift",
+            "Acknowledge remote drift",
+            "Use this after a fresh remote native scan confirms an intentional external change. It updates the remote baseline and leaves the owned automation paused.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_mole",
+            "Remote Mole integration",
+            "Use this for typed Mole actions on one named host: detect, doctor, version, analyze, status, history, or clean. Prefer clean with dry_run=true; real cleanup remains policy-controlled and requires a write-enabled private host.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","version","analyze","status","history","clean"]},
+                    "dry_run":{"type":"boolean","default":true},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_restic",
+            "Remote restic integration",
+            "Use this for typed restic repository actions on one named host: detect, doctor, snapshots, backup, check, forget, or prune. Credentials remain environment references on the target host; writes require a write-enabled private host and remote approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","snapshots","backup","check","forget","prune"]},
+                    "path":{"type":"string","minLength":1},
+                    "repository_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "password_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_rclone",
+            "Remote rclone integration",
+            "Use this for typed rclone actions on one named host: detect, doctor, list-remotes, check, copy, or sync. Prefer sync with dry_run=true; copy and real sync require a write-enabled private host and remote policy approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","list-remotes","check","copy","sync"]},
+                    "source":{"type":"string","minLength":1},
+                    "destination":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "config_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_github",
+            "Remote GitHub integration",
+            "Use this for typed, read-only GitHub observations on one named host: detect, doctor, issues, pulls, failed-runs, or checks. It never accepts arbitrary gh api or write arguments.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","issues","pulls","failed-runs","checks"]},
+                    "repo":{"type":"string","pattern":"^[^/\\s]+/[^/\\s]+$"},
+                    "pull_number":{"type":"integer","minimum":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_homebrew",
+            "Remote Homebrew integration",
+            "Use this for typed Homebrew actions on one named host: detect, doctor, outdated, bundle-check, upgrade, or cleanup. Prefer upgrade and cleanup with dry_run=true; real writes require a write-enabled private host and remote approval, and sudo is never used.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","outdated","bundle-check","upgrade","cleanup"]},
+                    "file":{"type":"string","minLength":1},
+                    "dry_run":{"type":"boolean","default":true},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_mas",
+            "Remote Mac App Store integration",
+            "Use this for typed, read-only Mac App Store inspection on one named macOS host: detect, doctor, list, or outdated. It never installs or updates an app.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","list","outdated"]}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_osv_scanner",
+            "Remote OSV scanner integration",
+            "Use this for a typed, read-only OSV dependency scan on one named host. Findings are normalized by the target and raw secret values are not returned.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_gitleaks",
+            "Remote Gitleaks integration",
+            "Use this for a typed, read-only Gitleaks scan on one named host. Only rule, location, severity, and derived fingerprints are exposed; secret or match values are never returned.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1},
+                    "baseline":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_trivy",
+            "Remote Trivy integration",
+            "Use this for typed, read-only Trivy filesystem or repository scans on one named host. Vulnerabilities, misconfigurations, secrets, and licenses are normalized without raw secret values.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "path":{"type":"string","minLength":1},
+                    "scan_type":{"type":"string","enum":["filesystem","repository"],"default":"filesystem"}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_topgrade",
+            "Remote Topgrade integration",
+            "Use this for typed Topgrade doctor, inspect, plan, or run actions on one named host. Inspect and plan are read-only; run is a system write that requires a write-enabled private host and remote approval.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","inspect","plan","run"]},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_create_automation",
+            "Create remote automation",
+            "Use this only when the user explicitly asks to create a direct-argv automation on a named private host. The fleet config must opt that host into writes; the remote host still validates and owns the operation. Never create shell pipelines.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "id":{"type":"string","minLength":1},
+                    "name":{"type":"string","minLength":1},
+                    "executable":{"type":"string","minLength":1},
+                    "args":{"type":"array","items":{"type":"string"}},
+                    "cwd":{"type":"string","minLength":1},
+                    "trigger":{"type":"string","enum":["manual","interval","cron"],"default":"manual"},
+                    "interval_seconds":{"type":"integer","minimum":1},
+                    "cron":{"type":"string","minLength":1},
+                    "timezone":{"type":"string","default":"local"},
+                    "timeout_seconds":{"type":"integer","minimum":1,"maximum":86400}
+                }),
+                &["host_id", "id", "executable"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_delete_automation",
+            "Delete remote automation",
+            "Use this only when the user explicitly asks to delete one managed automation on a named private host. The remote host protects observed, adopted, and history-bearing definitions.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_schedule_integration",
+            "Schedule remote integration",
+            "Use this when the user explicitly asks to persist a typed read-only or dry-run integration automation on a named private host. The remote host still applies policy and refuses unsupported recurring writes.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "id":{"type":"string","minLength":1},
+                    "name":{"type":"string","minLength":1},
+                    "integration":{"type":"string","minLength":1},
+                    "action":{"type":"string","minLength":1},
+                    "parameters":{"type":"object"},
+                    "trigger":{"type":"string","enum":["manual","interval","cron"],"default":"manual"},
+                    "interval_seconds":{"type":"integer","minimum":1},
+                    "cron":{"type":"string","minLength":1},
+                    "timezone":{"type":"string","default":"local"}
+                }),
+                &["host_id", "id", "integration", "action"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_list_approvals",
+            "List remote approvals",
+            "Use this when the user wants to inspect pending or completed typed-action approvals on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_request_approval",
+            "Request remote approval",
+            "Use this to create a persisted, plan-bound approval request for a typed native integration on a named private host. It never executes the action.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","topgrade"]},
+                    "action":{"type":"string","minLength":1},
+                    "parameters":{"type":"object"},
+                    "ttl_seconds":{"type":"integer","minimum":1,"maximum":604800,"default":3600}
+                }),
+                &["host_id", "integration", "action"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_approve",
+            "Approve remote action",
+            "Use this only after the operator explicitly approves a specific persisted request on a named host; approval is one-time and plan-bound.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_reject",
+            "Reject remote action",
+            "Use this to reject a persisted native integration approval request on a named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_execute_approved",
+            "Execute approved remote action",
+            "Use this to execute one specific approved typed integration request on a named host. The remote plan must match exactly and the grant is consumed once before execution.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"approval_id":{"type":"string","minLength":1}}),
+                &["host_id", "approval_id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_pause_automation",
+            "Pause remote automation",
+            "Use this only when the user explicitly asks to pause a named automation on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_resume_automation",
+            "Resume remote automation",
+            "Use this only when the user explicitly asks to resume a named automation on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_run_automation",
+            "Run remote automation now",
+            "Use this only when the user explicitly asks to run a named automation now on a configured private host. Do not report success until the remote result contains its run status.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1},"allow_observed":{"type":"boolean","default":false}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_get_run_logs",
+            "Get remote run logs",
+            "Use this when the user wants bounded stdout or stderr for a run on a named host, usually after a reported failure.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"run_id":{"type":"string","minLength":1}}),
+                &["host_id", "run_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_cancel_run",
+            "Cancel remote run",
+            "Use this only when the user explicitly asks to stop an active run on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"run_id":{"type":"string","minLength":1}}),
+                &["host_id", "run_id"],
+            ),
+            false,
+            true,
+            true,
+        ),
+    ]
+}
+
+async fn fleet_call_tool(params: &Value, gateway: &crate::fleet::FleetGateway) -> Result<Value> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .context("tools/call requires params.name")?;
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if matches!(
+        name,
+        "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+    ) {
+        let result = gateway.fleet_overview().await;
+        return Ok(tool_result(name, result));
+    }
+    let host_id = arguments
+        .get("host_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .context("fleet tool requires a non-empty host_id")?
+        .to_owned();
+    let remote_tool =
+        fleet_remote_tool(name).with_context(|| format!("unknown Taskrail fleet tool: {name}"))?;
+    let mut remote_arguments = arguments;
+    remote_arguments
+        .as_object_mut()
+        .context("fleet tool arguments must be an object")?
+        .remove("host_id");
+    let result = gateway
+        .call_tool(&host_id, remote_tool, remote_arguments)
+        .await?;
+    Ok(tool_result(
+        name,
+        json!({"host_id": host_id, "result": result}),
+    ))
+}
+
+fn fleet_remote_tool(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "taskrail_fleet_host_overview" => "taskrail_overview",
+        "taskrail_fleet_status" => "taskrail_status",
+        "taskrail_fleet_discover" => "taskrail_discover_local_automations",
+        "taskrail_fleet_list_automations" => "taskrail_list_automations",
+        "taskrail_fleet_list_integrations" => "taskrail_list_integrations",
+        "taskrail_fleet_get_automation" => "taskrail_get_automation",
+        "taskrail_fleet_list_runs" => "taskrail_list_runs",
+        "taskrail_fleet_list_attention" => "taskrail_list_attention",
+        "taskrail_fleet_list_events" => "taskrail_list_events",
+        "taskrail_fleet_list_adoptions" => "taskrail_list_adoptions",
+        "taskrail_fleet_get_adoption" => "taskrail_get_adoption",
+        "taskrail_fleet_adopt_automation" => "taskrail_adopt_automation",
+        "taskrail_fleet_rollback_adoption" => "taskrail_rollback_adoption",
+        "taskrail_fleet_acknowledge_drift" => "taskrail_acknowledge_drift",
+        "taskrail_fleet_mole" => "taskrail_mole",
+        "taskrail_fleet_restic" => "taskrail_restic",
+        "taskrail_fleet_rclone" => "taskrail_rclone",
+        "taskrail_fleet_github" => "taskrail_github",
+        "taskrail_fleet_homebrew" => "taskrail_homebrew",
+        "taskrail_fleet_mas" => "taskrail_mas",
+        "taskrail_fleet_osv_scanner" => "taskrail_osv_scanner",
+        "taskrail_fleet_gitleaks" => "taskrail_gitleaks",
+        "taskrail_fleet_trivy" => "taskrail_trivy",
+        "taskrail_fleet_topgrade" => "taskrail_topgrade",
+        "taskrail_fleet_create_automation" => "taskrail_create_automation",
+        "taskrail_fleet_delete_automation" => "taskrail_delete_automation",
+        "taskrail_fleet_schedule_integration" => "taskrail_schedule_integration",
+        "taskrail_fleet_list_approvals" => "taskrail_list_approvals",
+        "taskrail_fleet_request_approval" => "taskrail_request_approval",
+        "taskrail_fleet_approve" => "taskrail_approve",
+        "taskrail_fleet_reject" => "taskrail_reject",
+        "taskrail_fleet_execute_approved" => "taskrail_execute_approved",
+        "taskrail_fleet_pause_automation" => "taskrail_pause_automation",
+        "taskrail_fleet_resume_automation" => "taskrail_resume_automation",
+        "taskrail_fleet_run_automation" => "taskrail_run_automation",
+        "taskrail_fleet_get_run_logs" => "taskrail_get_run_logs",
+        "taskrail_fleet_cancel_run" => "taskrail_cancel_run",
+        _ => return None,
+    })
+}
+
+fn tool_result(name: &str, result: Value) -> Value {
+    let summary = match name {
+        "taskrail_fleet_overview" | "taskrail_fleet_render_overview" => format!(
+            "Taskrail fleet overview: {} configured host(s), {} online.",
+            result
+                .get("host_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            result
+                .get("online_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        ),
+        _ => format!("Taskrail fleet tool {name} completed for the requested host."),
+    };
+    json!({
+        "content": [{"type":"text","text":summary}],
+        "structuredContent": {"result": result},
+        "isError": false,
+    })
+}
+
+#[cfg(test)]
+mod fleet_contract_tests {
+    use super::*;
+
+    #[test]
+    fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
+        let tools = fleet_tool_descriptors();
+        assert_eq!(tools.len(), 39);
+        let overview = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_overview")
+            .unwrap();
+        assert_eq!(overview["annotations"]["readOnlyHint"], true);
+        assert_eq!(overview["annotations"]["openWorldHint"], true);
+        let render = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_render_overview")
+            .unwrap();
+        assert_eq!(render["annotations"]["readOnlyHint"], true);
+        assert_eq!(
+            render["_meta"]["ui"]["resourceUri"],
+            MCP_FLEET_APP_RESOURCE_URI
+        );
+        let host_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_run_automation")
+            .unwrap();
+        assert_eq!(host_tool["annotations"]["destructiveHint"], true);
+        assert!(
+            host_tool["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "host_id")
+        );
+        for descriptor in &tools {
+            let name = descriptor["name"].as_str().unwrap();
+            if matches!(
+                name,
+                "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+            ) {
+                continue;
+            }
+            assert!(
+                descriptor["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value == "host_id"),
+                "{name} must require host_id"
+            );
+        }
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "taskrail_fleet_adopt_automation")
+                .unwrap()["annotations"]["destructiveHint"],
+            true
+        );
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "taskrail_fleet_execute_approved")
+                .unwrap()["annotations"]["destructiveHint"],
+            true
+        );
+        for descriptor in tools {
+            let name = descriptor["name"].as_str().unwrap();
+            if !matches!(
+                name,
+                "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+            ) {
+                assert!(fleet_remote_tool(name).is_some(), "{name} lacks a route");
+            }
+        }
+    }
+
+    #[test]
+    fn fleet_app_resource_is_versioned_and_embedded() {
+        let resource = fleet_app_resource_descriptor();
+        assert_eq!(resource["uri"], MCP_FLEET_APP_RESOURCE_URI);
+        assert_eq!(resource["mimeType"], MCP_APP_RESOURCE_MIME_TYPE);
+        let read = read_fleet_app_resource(&json!({"uri": MCP_FLEET_APP_RESOURCE_URI})).unwrap();
+        assert_eq!(read["contents"][0]["uri"], MCP_FLEET_APP_RESOURCE_URI);
+        assert!(
+            read["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("taskrail-fleet-app")
+        );
+        assert!(
+            read_fleet_app_resource(&json!({
+                "uri": "ui://taskrail/fleet/v0.html"
+            }))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn fleet_resource_routes_advertise_and_read_the_widget() {
+        let gateway = crate::fleet::FleetGateway::from_config(crate::fleet::FleetConfig {
+            version: 1,
+            hosts: vec![crate::fleet::FleetHost {
+                id: "disabled".into(),
+                label: "Disabled host".into(),
+                endpoint: "https://example.invalid/mcp".into(),
+                token_env: None,
+                enabled: false,
+                allow_writes: false,
+            }],
+        })
+        .unwrap();
+        let list = handle_fleet_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/list".into(),
+                params: json!({}),
+            },
+            &gateway,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list["result"]["resources"][0]["uri"],
+            MCP_FLEET_APP_RESOURCE_URI
+        );
+        let read = handle_fleet_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: "resources/read".into(),
+                params: json!({"uri": MCP_FLEET_APP_RESOURCE_URI}),
+            },
+            &gateway,
+        )
+        .await
+        .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Taskrail Fleet")
+        );
+    }
+}
+
 fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
     let protocol_version = params
         .get("protocolVersion")
@@ -547,7 +1500,8 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": {"listChanged": false}
+            "tools": {"listChanged": false},
+            "resources": {"listChanged": false, "subscribe": false}
         },
         "serverInfo": {
             "name": SERVER_NAME,
@@ -556,8 +1510,101 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
         "instructions": match profile {
             McpProfile::Local => INSTRUCTIONS,
             McpProfile::PublicReadOnly => PUBLIC_INSTRUCTIONS,
+            McpProfile::PrivateHttp => PRIVATE_HTTP_INSTRUCTIONS,
         }
     })
+}
+
+fn app_resource_descriptor() -> Value {
+    json!({
+        "uri": MCP_APP_RESOURCE_URI,
+        "name": "Taskrail dashboard",
+        "description": "Interactive local automation overview and safe control surface.",
+        "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+        "_meta": {
+            "ui": {
+                "prefersBorder": true,
+                "csp": {
+                    "connectDomains": [],
+                    "resourceDomains": []
+                }
+            }
+        }
+    })
+}
+
+fn fleet_app_resource_descriptor() -> Value {
+    json!({
+        "uri": MCP_FLEET_APP_RESOURCE_URI,
+        "name": "Taskrail fleet dashboard",
+        "description": "Interactive read-only overview of configured Taskrail hosts.",
+        "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+        "_meta": {
+            "ui": {
+                "prefersBorder": true,
+                "csp": {
+                    "connectDomains": [],
+                    "resourceDomains": []
+                }
+            }
+        }
+    })
+}
+
+fn read_app_resource(params: &Value) -> Result<Value> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .context("resources/read requires params.uri")?;
+    if uri != MCP_APP_RESOURCE_URI {
+        anyhow::bail!("unknown Taskrail app resource: {uri}");
+    }
+    Ok(json!({
+        "contents": [{
+            "uri": MCP_APP_RESOURCE_URI,
+            "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+            "text": MCP_APP_HTML,
+            "_meta": {
+                "ui": {
+                    "prefersBorder": true,
+                    "csp": {
+                        "connectDomains": [],
+                        "resourceDomains": []
+                    }
+                }
+            }
+        }]
+    }))
+}
+
+fn read_fleet_app_resource(params: &Value) -> Result<Value> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .context("resources/read requires params.uri")?;
+    if uri != MCP_FLEET_APP_RESOURCE_URI {
+        anyhow::bail!("unknown Taskrail Fleet app resource: {uri}");
+    }
+    Ok(json!({
+        "contents": [{
+            "uri": MCP_FLEET_APP_RESOURCE_URI,
+            "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+            "text": MCP_FLEET_APP_HTML,
+            "_meta": {
+                "ui": {
+                    "prefersBorder": true,
+                    "csp": {
+                        "connectDomains": [],
+                        "resourceDomains": []
+                    }
+                }
+            }
+        }]
+    }))
+}
+
+fn resources_for_profile(_profile: McpProfile) -> Vec<Value> {
+    vec![app_resource_descriptor()]
 }
 
 fn tool_descriptors() -> Vec<Value> {
@@ -565,7 +1612,7 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_status",
             "Taskrail status",
-            "Use this first to verify that the Taskrail daemon is connected and identify the local macOS, Linux, or Windows host. This check only reads daemon status and a fresh native-scheduler summary.",
+            "Use this first to verify that the Taskrail daemon is connected and identify the local ARM64 macOS or Linux host. This check only reads daemon status and a fresh native-scheduler summary.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -575,6 +1622,15 @@ fn tool_descriptors() -> Vec<Value> {
             "taskrail_overview",
             "Taskrail host overview",
             "Use this first when the user wants one safe summary of this host: identity, daemon state, fresh native discovery, Taskrail automations, recent runs, and attention items. It is read-only and does not change scheduler definitions, the Registry, or any external service.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_render_overview",
+            "Render Taskrail overview",
+            "Use this after taskrail_overview when the user wants an interactive Taskrail control-plane view inside ChatGPT. It returns the same safe, read-only host snapshot and never changes the host.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -592,10 +1648,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_discover_local_automations",
             "Discover local automations",
-            "Use this when the user asks what automation tasks already exist on this macOS, Linux, or Windows host. It performs a fresh read-only scan of launchd, cron, systemd, Windows Task Scheduler, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user asks what automation tasks already exist on this ARM64 macOS or Linux host. It performs a fresh read-only scan of launchd, cron, systemd, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"], "default":"all"},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"], "default":"all"},
                 }),
                 &[],
             ),
@@ -606,10 +1662,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_scan_native",
             "Scan native schedulers",
-            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, Windows Task Scheduler, or Homebrew services on this host. It does not modify native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, or Homebrew services on this ARM64 host. It does not modify native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"]},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"]},
                 }),
                 &[],
             ),
@@ -1057,7 +2113,7 @@ fn tool_descriptors() -> Vec<Value> {
 fn tool_descriptors_for_profile(profile: McpProfile) -> Vec<Value> {
     let tools = tool_descriptors();
     match profile {
-        McpProfile::Local => tools,
+        McpProfile::Local | McpProfile::PrivateHttp => tools,
         McpProfile::PublicReadOnly => tools
             .into_iter()
             .filter(|tool| tool["name"].as_str().is_some_and(is_public_tool))
@@ -1086,18 +2142,19 @@ fn tool(
     destructive: bool,
     idempotent: bool,
 ) -> Value {
-    let open_world = matches!(
-        name,
-        "taskrail_restic"
-            | "taskrail_rclone"
-            | "taskrail_github"
-            | "taskrail_mas"
-            | "taskrail_osv_scanner"
-            | "taskrail_trivy"
-            | "taskrail_run_automation"
-            | "taskrail_execute_approved"
-    );
-    json!({
+    let open_world = name.starts_with("taskrail_fleet_")
+        || matches!(
+            name,
+            "taskrail_restic"
+                | "taskrail_rclone"
+                | "taskrail_github"
+                | "taskrail_mas"
+                | "taskrail_osv_scanner"
+                | "taskrail_trivy"
+                | "taskrail_run_automation"
+                | "taskrail_execute_approved"
+        );
+    let mut descriptor = json!({
         "name": name,
         "title": title,
         "description": description,
@@ -1109,7 +2166,24 @@ fn tool(
             "openWorldHint": open_world,
             "idempotentHint": idempotent,
         }
-    })
+    });
+    let app_resource_uri = match name {
+        "taskrail_render_overview" => Some(MCP_APP_RESOURCE_URI),
+        "taskrail_fleet_render_overview" => Some(MCP_FLEET_APP_RESOURCE_URI),
+        _ => None,
+    };
+    if let Some(resource_uri) = app_resource_uri {
+        descriptor["_meta"] = json!({
+            "ui": {
+                "resourceUri": resource_uri,
+                "prefersBorder": true
+            },
+            "openai/outputTemplate": resource_uri,
+            "openai/toolInvocation/invoking": "Loading Taskrail overview…",
+            "openai/toolInvocation/invoked": "Taskrail overview ready."
+        });
+    }
+    descriptor
 }
 
 async fn call_tool_with_profile(
@@ -1128,7 +2202,7 @@ async fn call_tool_with_profile(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if name == "taskrail_overview" {
+    if matches!(name, "taskrail_overview" | "taskrail_render_overview") {
         return call_overview_tool(socket_path).await;
     }
     let (rpc_method, rpc_params) = match name {
@@ -1328,11 +2402,7 @@ async fn call_tool_with_profile(
             .map(sanitize_discovered_sources)?;
         json!({
             "daemon": value,
-            "host": {
-                "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
-                "platform": std::env::consts::OS,
-                "architecture": std::env::consts::ARCH,
-            },
+            "host": local_host_identity(&value),
             "local_discovery": discovery,
         })
     } else {
@@ -1363,11 +2433,7 @@ async fn call_overview_tool(socket_path: &PathBuf) -> Result<Value> {
         rpc::call(socket_path, "inbox.list", json!({"limit":100})).await?,
     );
     let value = json!({
-        "host": {
-            "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
-            "platform": std::env::consts::OS,
-            "architecture": std::env::consts::ARCH,
-        },
+        "host": local_host_identity(&daemon),
         "daemon": daemon,
         "native_discovery": native_discovery,
         "automations": automations,
@@ -1380,6 +2446,27 @@ async fn call_overview_tool(socket_path: &PathBuf) -> Result<Value> {
         "structuredContent": {"result": value},
         "isError": false,
     }))
+}
+
+fn local_host_identity(daemon: &Value) -> Value {
+    let mut host = daemon.get("host").cloned().unwrap_or_else(|| json!({}));
+    let Some(object) = host.as_object_mut() else {
+        return json!({
+            "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
+            "platform": std::env::consts::OS,
+            "architecture": std::env::consts::ARCH,
+        });
+    };
+    object
+        .entry("label")
+        .or_insert_with(|| json!(std::env::var("TASKRAIL_HOST_LABEL").ok()));
+    object
+        .entry("platform")
+        .or_insert_with(|| json!(std::env::consts::OS));
+    object
+        .entry("architecture")
+        .or_insert_with(|| json!(std::env::consts::ARCH));
+    host
 }
 
 async fn call_rpc_tool(
@@ -1653,7 +2740,7 @@ fn sanitize_run_list_value(mut value: Value) -> Value {
 fn summarize(name: &str, value: &Value) -> String {
     match name {
         "taskrail_status" => format!(
-            "Taskrail daemon connected on {} ({}), managing {} automation(s); fresh local scan found {} source(s).",
+            "Taskrail daemon connected on {} ({}), managing {} automation(s); fresh local scan found {} source(s), background supervision is {}.",
             std::env::consts::OS,
             std::env::consts::ARCH,
             value
@@ -1665,10 +2752,16 @@ fn summarize(name: &str, value: &Value) -> String {
                 .get("local_discovery")
                 .and_then(|discovery| discovery.get("count"))
                 .and_then(Value::as_u64)
-                .unwrap_or(0)
+                .unwrap_or(0),
+            value
+                .get("daemon")
+                .and_then(|daemon| daemon.get("native_discovery"))
+                .and_then(|discovery| discovery.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         ),
         "taskrail_overview" => format!(
-            "Taskrail overview for {}: {} automation(s), {} native source(s), {} recent run(s), and {} attention item(s).",
+            "Taskrail overview for {}: {} automation(s), {} native source(s), {} recent run(s), and {} attention item(s); background supervision is {}.",
             value
                 .get("host")
                 .and_then(|host| host.get("label"))
@@ -1691,7 +2784,13 @@ fn summarize(name: &str, value: &Value) -> String {
             value
                 .get("attention")
                 .and_then(Value::as_array)
-                .map_or(0, Vec::len)
+                .map_or(0, Vec::len),
+            value
+                .get("daemon")
+                .and_then(|daemon| daemon.get("native_discovery"))
+                .and_then(|discovery| discovery.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         ),
         "taskrail_list_automations" => format!(
             "Taskrail returned {} automation(s).",
@@ -1930,6 +3029,88 @@ mod tests {
                 .unwrap()
                 .contains("discover_local_automations")
         );
+        assert_eq!(result["capabilities"]["resources"]["listChanged"], false);
+    }
+
+    #[test]
+    fn app_resource_is_embedded_and_render_tool_is_the_ui_entrypoint() {
+        let resource = app_resource_descriptor();
+        assert_eq!(resource["uri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(resource["mimeType"], MCP_APP_RESOURCE_MIME_TYPE);
+        assert_eq!(resource["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+
+        let tools = tool_descriptors();
+        let overview = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_overview")
+            .unwrap();
+        assert!(overview.get("_meta").is_none());
+        let render = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_render_overview")
+            .unwrap();
+        assert_eq!(render["_meta"]["ui"]["resourceUri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(
+            render["_meta"]["openai/outputTemplate"],
+            MCP_APP_RESOURCE_URI
+        );
+        let html = MCP_APP_HTML;
+        assert!(html.contains("data-role=\"native-sources\""));
+        assert!(html.contains("Discovered native tasks"));
+        assert!(html.contains("taskrail_discover_local_automations"));
+    }
+
+    #[test]
+    fn app_resource_read_is_versioned_and_rejects_unknown_uris() {
+        let resource = read_app_resource(&json!({"uri": MCP_APP_RESOURCE_URI})).unwrap();
+        assert_eq!(resource["contents"][0]["uri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(
+            resource["contents"][0]["mimeType"],
+            MCP_APP_RESOURCE_MIME_TYPE
+        );
+        assert!(
+            resource["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("taskrail-app")
+        );
+        assert!(read_app_resource(&json!({"uri": "ui://taskrail/dashboard/v0.html"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn local_resource_routes_advertise_and_read_the_widget() {
+        let socket_path = PathBuf::from("/tmp/taskrail-resource-route-test.sock");
+        let list = handle_request_with_profile(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/list".into(),
+                params: json!({}),
+            },
+            &socket_path,
+            McpProfile::PublicReadOnly,
+        )
+        .await
+        .unwrap();
+        assert_eq!(list["result"]["resources"][0]["uri"], MCP_APP_RESOURCE_URI);
+        let read = handle_request_with_profile(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: "resources/read".into(),
+                params: json!({"uri": MCP_APP_RESOURCE_URI}),
+            },
+            &socket_path,
+            McpProfile::PublicReadOnly,
+        )
+        .await
+        .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Taskrail")
+        );
     }
 
     #[test]
@@ -2078,6 +3259,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn private_http_profile_exposes_the_authenticated_local_tool_set() {
+        let tools = tool_descriptors_for_profile(HttpProfile::Private.mcp_profile());
+        assert_eq!(tools.len(), tool_descriptors().len());
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == "taskrail_run_automation")
+        );
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["name"] == "taskrail_execute_approved")
+        );
+        let initialize = initialize_result_for_profile(
+            &json!({"protocolVersion": MCP_PROTOCOL_VERSION}),
+            HttpProfile::Private.mcp_profile(),
+        );
+        assert!(
+            initialize["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("private HTTP profile")
+        );
+    }
+
     #[tokio::test]
     async fn public_profile_rejects_hidden_write_tool_calls() {
         let path = PathBuf::from("/tmp/taskrail-public-profile-test.sock");
@@ -2103,6 +3310,32 @@ mod tests {
                 .unwrap()
                 .contains("public read-only profile")
         );
+    }
+
+    #[tokio::test]
+    async fn private_http_profile_still_requires_bearer_auth() {
+        let response = http_response_for_request_with_profile(
+            &HttpRequest {
+                method: "POST".into(),
+                path: "/mcp".into(),
+                headers: BTreeMap::from([
+                    ("content-type".into(), "application/json".into()),
+                    (
+                        "accept".into(),
+                        "application/json, text/event-stream".into(),
+                    ),
+                    ("mcp-protocol-version".into(), MCP_PROTOCOL_VERSION.into()),
+                ]),
+                body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_vec(),
+            },
+            &PathBuf::from("/tmp/taskrail-http-private-profile-test.sock"),
+            "private-token",
+            &[],
+            HttpProfile::Private,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.0, "401 Unauthorized");
     }
 
     #[tokio::test]
@@ -2242,6 +3475,12 @@ mod tests {
             headers: headers.clone(),
             body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#.to_vec(),
         };
+        let request_with_body = |body: &[u8]| HttpRequest {
+            method: initialize_request.method.clone(),
+            path: initialize_request.path.clone(),
+            headers: initialize_request.headers.clone(),
+            body: body.to_vec(),
+        };
         let initialize = http_response_for_request(
             &initialize_request,
             &PathBuf::from("/tmp/taskrail-http-test.sock"),
@@ -2258,10 +3497,7 @@ mod tests {
         );
 
         let tools = http_response_for_request(
-            &HttpRequest {
-                body: br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#.to_vec(),
-                ..initialize_request
-            },
+            &request_with_body(br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#),
             &PathBuf::from("/tmp/taskrail-http-test.sock"),
             "review-token",
             &[],
@@ -2276,6 +3512,38 @@ mod tests {
             tool["annotations"]["readOnlyHint"] == true
                 && tool["annotations"]["destructiveHint"] == false
         }));
+
+        let resources = http_response_for_request(
+            &request_with_body(
+                br#"{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}"#,
+            ),
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(resources.0, "200 OK");
+        let resources: Value = serde_json::from_slice(&resources.2).unwrap();
+        assert_eq!(
+            resources["result"]["resources"][0]["uri"],
+            MCP_APP_RESOURCE_URI
+        );
+
+        let resource = http_response_for_request(
+            &request_with_body(br#"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"ui://taskrail/dashboard/v1.html"}}"#),
+            &PathBuf::from("/tmp/taskrail-http-test.sock"),
+            "review-token",
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(resource.0, "200 OK");
+        let resource: Value = serde_json::from_slice(&resource.2).unwrap();
+        assert_eq!(
+            resource["result"]["contents"][0]["mimeType"],
+            MCP_APP_RESOURCE_MIME_TYPE
+        );
 
         let missing_accept = http_response_for_request(
             &HttpRequest {

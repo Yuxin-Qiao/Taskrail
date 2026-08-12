@@ -1,12 +1,13 @@
 [package]
 name = "taskrail"
-version = "0.1.5"
-description = "A local-first, cross-platform automation control plane"
+version = "0.1.6"
+description = "A local-first ARM64 automation control plane for macOS and Linux"
 repository = "https://github.com/Yuxin-Qiao/Taskrail"
 homepage = "https://github.com/Yuxin-Qiao/Taskrail"
 readme = "../../README.md"
-keywords = ["automation", "scheduler", "mcp", "macos", "linux", "windows"]
+keywords = ["automation", "scheduler", "mcp", "macos", "linux"]
 categories = ["command-line-utilities", "development-tools"]
+include = ["src/**", "gui/**", "Cargo.toml", "README.md", "../../README.md", "../../LICENSE"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

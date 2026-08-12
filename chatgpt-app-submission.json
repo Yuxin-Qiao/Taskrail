@@ -32,6 +32,18 @@
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
     },
+    "taskrail_render_overview": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only renders the latest safe overview of the user-owned Taskrail host and does not change scheduler definitions, the Registry, or any external service.",
+        "open_world_justification": "Only presents private local Taskrail state already returned by the read-only overview and does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
     "taskrail_list_automations": {
       "annotations": {
         "readOnlyHint": true,
@@ -51,7 +63,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Scans native launchd, cron, systemd, Windows Task Scheduler, and Homebrew sources and returns sanitized observations without reconciling or writing the Registry.",
+        "read_only_justification": "Scans native launchd, cron, systemd, and Homebrew sources on the supported ARM64 host and returns sanitized observations without reconciling or writing the Registry.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -63,7 +75,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Performs a fresh native scheduler scan, including Windows Task Scheduler when present, and returns sanitized observations without changing native definitions or the Registry.",
+        "read_only_justification": "Performs a fresh native scheduler scan on the supported ARM64 host and returns sanitized observations without changing native definitions or the Registry.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -230,13 +242,13 @@
       "description": "Verify the connection and summarize the complete host state.",
       "user_prompt": "Give me a complete Taskrail overview of this host: what automations exist, what native jobs were discovered, what ran recently, and what needs attention.",
       "file_attachment_urls": null,
-      "tools_triggered": "taskrail_overview",
-      "expected_output": "Reports the connected host, Taskrail automations, fresh local discovery, recent runs, and bounded attention items without changing the host.",
+      "tools_triggered": "taskrail_overview; taskrail_render_overview",
+      "expected_output": "Reports the connected host, Taskrail automations, fresh local discovery, recent runs, and bounded attention items, then renders the same safe read-only state in the interactive Taskrail dashboard without changing the host.",
       "expected_output_url": null
     },
     {
       "description": "Discover native scheduler jobs without changing them.",
-      "user_prompt": "What launchd, cron, systemd, Windows Task Scheduler, and Homebrew automation jobs are present on this computer? Do not modify anything.",
+      "user_prompt": "What launchd, cron, systemd, and Homebrew automation jobs are present on this ARM64 computer? Do not modify anything.",
       "file_attachment_urls": null,
       "tools_triggered": "taskrail_discover_local_automations",
       "expected_output": "Returns a sanitized provider-grouped inventory with safe command summaries and explicitly states that native definitions and the Registry were not changed.",

@@ -1,5 +1,6 @@
 services:
   taskrail-daemon:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -27,11 +28,14 @@ services:
       - ALL
 
   taskrail-http:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: Dockerfile
     command:
       - mcp-http
+      - --profile
+      - public-read-only
       - --bind
       - 0.0.0.0:8787
       - --socket
@@ -56,6 +60,7 @@ services:
       - ALL
 
   taskrail-healthcheck:
+    platform: linux/arm64
     image: curlimages/curl:8.10.1
     profiles: [smoke]
     depends_on:

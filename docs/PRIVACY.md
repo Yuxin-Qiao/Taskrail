@@ -15,8 +15,11 @@ store:
 - automation metadata such as an identifier, name, scheduler/provider,
   executable, arguments, working directory, trigger, enabled state, and a
   native source path;
-- host operating-system and architecture information, plus the optional
-  `TASKRAIL_HOST_LABEL` chosen by the user;
+- a stable random `host_id` generated and stored in the local Registry, host
+  operating-system and architecture information, plus the optional
+  `TASKRAIL_HOST_LABEL` chosen by the user. When no label is configured, MCP
+  host summaries may use the bounded operating-system hostname as a display
+  label; it is not used as an authentication credential;
 - run status, timestamps, exit codes, bounded stdout/stderr, audit events, and
   normalized integration findings;
 - read-only GitHub observations returned by the user's local `gh` client, or
@@ -47,6 +50,11 @@ When a user connects Taskrail to ChatGPT, selected tool inputs and outputs are
 processed by ChatGPT/OpenAI as part of that user's conversation and according
 to the applicable OpenAI terms and privacy controls. Taskrail does not sell
 data, use it for advertising, or add a separate analytics service.
+
+The optional `taskrail mcp-fleet` gateway keeps a local inventory of named MCP
+endpoints and token environment-variable names. It never stores token values.
+Each remote host is queried explicitly by `host_id`; remote Registry data,
+policies, approvals, and run results remain authoritative on that host.
 
 The future public deployment described in the submission checklist must add
 authentication and per-user host binding before proxying to a user's daemon.

@@ -16,6 +16,7 @@ MCP_MANIFEST = ROOT / ".mcp.json"
 PUBLIC_TOOLS = {
     "taskrail_status",
     "taskrail_overview",
+    "taskrail_render_overview",
     "taskrail_list_automations",
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
@@ -75,6 +76,9 @@ def main() -> None:
     if not isinstance(tools, dict):
         errors.append("tools must be an object")
         tools = {}
+
+    if "taskrail_render_overview" not in tools:
+        errors.append("submission must include the read-only Taskrail dashboard render tool")
     if set(tools) != PUBLIC_TOOLS:
         errors.append(
             "submission tools must exactly match the public read-only allowlist: "

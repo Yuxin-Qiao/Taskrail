@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,15 +14,19 @@ env:
 
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
+    # Keep the protected-branch contexts stable while the runners move to ARM64.
+    name: Rust (${{ matrix.required_context }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - os: ubuntu-24.04-arm
+            required_context: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15
+            required_context: macos-latest
+            target: aarch64-apple-darwin
 
     steps:
       - name: Check out repository
@@ -36,23 +41,28 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      - name: Verify ARM64 target
+        shell: bash
+        run: |
+          rustc +stable -vV | grep -F "host: ${{ matrix.target }}"
+
       - name: Check formatting
         run: cargo +stable fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo +stable clippy --locked --workspace --all-targets --all-features -- -D warnings
+        run: cargo +stable clippy --locked --workspace --all-targets --all-features --target "${{ matrix.target }}" -- -D warnings
 
       - name: Run tests
-        run: cargo +stable test --locked --workspace --all-features
+        run: cargo +stable test --locked --workspace --all-features --target "${{ matrix.target }}"
 
       - name: Run doc-tests
-        run: cargo +stable test --locked --workspace --doc
+        run: cargo +stable test --locked --workspace --doc --target "${{ matrix.target }}"
 
       - name: Build workspace
-        run: cargo +stable build --locked --workspace
+        run: cargo +stable build --locked --workspace --target "${{ matrix.target }}"
 
-      - name: Smoke-test Linux XDG defaults
-        if: matrix.os == 'ubuntu-latest'
+      - name: Smoke-test Linux ARM64 XDG defaults
+        if: matrix.os == 'ubuntu-24.04-arm'
         run: |
           tmp="$(mktemp -d)"
           rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
@@ -62,19 +72,14 @@ jobs:
           export XDG_RUNTIME_DIR="$tmp/runtime"
           mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          cargo run --quiet -- status
+          cargo run --quiet --target "${{ matrix.target }}" -- status
           test -f "$XDG_DATA_HOME/taskrail/registry.sqlite3"
-          cargo run --quiet -- scan --source systemd --json
-          cargo run --quiet -- scan --source cron --json
-
-      - name: Smoke-test Windows Task Scheduler discovery
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: cargo run --quiet -- scan --source task-scheduler --json
+          cargo run --quiet --target "${{ matrix.target }}" -- scan --source systemd --json
+          cargo run --quiet --target "${{ matrix.target }}" -- scan --source cron --json
 
   msrv:
     name: MSRV (1.88.0)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -92,7 +97,7 @@ jobs:
 
   package:
     name: Cargo package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -105,18 +110,17 @@ jobs:
       - name: Validate crate packaging
         run: cargo +stable package --locked --package taskrail
 
-  desktop:
-    name: Swift desktop client
-    runs-on: macos-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Build desktop client
-        working-directory: macos/DesktopApp
-        run: swift build
-
-      - name: Run desktop client tests
-        working-directory: macos/DesktopApp
-        run: swift test
+      - name: Verify embedded browser dashboard assets
+        run: |
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/index.html'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/app.js'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/styles.css'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/favicon.svg'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/mcp-app.html'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/mcp-fleet-app.html'

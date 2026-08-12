@@ -3,7 +3,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     collections::BTreeMap,
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
@@ -12,10 +12,7 @@ use taskrail::{
     adoption::{adopt_source, rollback_source},
     codex::{self, CodexRequest, CodexSandbox},
     core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
-    discovery::{
-        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        TaskSchedulerProvider, merge_homebrew_sources, same_native_path,
-    },
+    discovery::scan_native_sources,
     github::{self, GhQuery, QueryKind},
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration,
@@ -25,7 +22,7 @@ use taskrail::{
     mcp, rpc, service,
     storage::Registry,
     verification::{self, VerificationCommand},
-    worktree,
+    web, worktree,
 };
 use uuid::Uuid;
 
@@ -33,7 +30,7 @@ use uuid::Uuid;
 #[command(
     name = "taskrail",
     version,
-    about = "A local-first, cross-platform automation control plane"
+    about = "A local-first ARM64 automation control plane for macOS and Linux"
 )]
 struct Cli {
     /// Override the local SQLite Registry path.
@@ -50,11 +47,24 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
-    TaskScheduler,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum HttpProfileArg {
+    /// Expose only authenticated, read-only inspection tools.
+    PublicReadOnly,
+    /// Expose the full local tool set to an authenticated private host connection.
+    Private,
 }
 
 #[derive(Debug, Subcommand)]
 enum Action {
+    /// Open the daemon-hosted browser dashboard.
+    Gui {
+        /// Local dashboard address.
+        #[arg(long, default_value = "127.0.0.1:10100")]
+        bind: SocketAddr,
+    },
     /// Discover existing native automations without changing them.
     Scan {
         #[arg(long, value_enum, default_value_t = SourceKind::All)]
@@ -303,6 +313,12 @@ enum Action {
         /// Remove the installed per-user service.
         #[arg(long, conflicts_with = "install")]
         uninstall: bool,
+        /// Refresh the local native-automation inventory at this interval.
+        #[arg(long, default_value_t = 5 * 60)]
+        discovery_interval_seconds: u64,
+        /// Local loopback address for the daemon-hosted browser dashboard.
+        #[arg(long, default_value = "127.0.0.1:10100")]
+        http_bind: SocketAddr,
     },
     /// Print the Registry path and daemon boundary.
     Status,
@@ -319,7 +335,13 @@ enum Action {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
-    /// Expose the public read-only MCP profile over Streamable HTTP.
+    /// Expose an explicit multi-host Taskrail fleet gateway over stdio.
+    McpFleet {
+        /// YAML config containing named MCP endpoints and token environment references.
+        #[arg(long, env = "TASKRAIL_FLEET_CONFIG")]
+        config: Option<PathBuf>,
+    },
+    /// Expose an authenticated MCP profile over Streamable HTTP.
     McpHttp {
         /// Local address for a TLS-terminating reverse proxy to reach.
         #[arg(long, env = "TASKRAIL_MCP_HTTP_BIND", default_value = "127.0.0.1:8787")]
@@ -341,7 +363,15 @@ enum Action {
         /// Maximum accepted JSON request body size.
         #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
         max_body_bytes: usize,
-        /// Local endpoint served by `taskrail daemon` (Unix socket or Windows named pipe).
+        /// Explicit HTTP exposure profile; public-read-only is the safe default.
+        #[arg(
+            long,
+            value_enum,
+            env = "TASKRAIL_MCP_HTTP_PROFILE",
+            default_value = "public-read-only"
+        )]
+        profile: HttpProfileArg,
+        /// Local endpoint served by `taskrail daemon` (restricted Unix socket).
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -670,22 +700,32 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let registry_path = cli.registry.unwrap_or_else(default_registry_path);
     let command = match cli.command {
+        Action::Gui { bind } => return open_dashboard(bind),
         Action::Mcp { socket } => {
             return mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await;
+        }
+        Action::McpFleet { config } => {
+            return mcp::serve_fleet_stdio(config.unwrap_or_else(default_fleet_config_path)).await;
         }
         Action::McpHttp {
             bind,
             bearer_token_env,
             allowed_origins_env,
             max_body_bytes,
+            profile,
             socket,
         } => {
+            let profile = match profile {
+                HttpProfileArg::PublicReadOnly => mcp::HttpProfile::PublicReadOnly,
+                HttpProfileArg::Private => mcp::HttpProfile::Private,
+            };
             return mcp::serve_http(
                 socket.unwrap_or_else(default_socket_path),
                 bind,
                 bearer_token_env,
                 allowed_origins_env,
                 max_body_bytes,
+                profile,
             )
             .await;
         }
@@ -855,17 +895,30 @@ async fn main() -> Result<()> {
             interval_seconds,
             install,
             uninstall,
+            discovery_interval_seconds,
+            http_bind,
         } => {
             if install {
-                install_daemon(&registry)
+                install_daemon(&registry, discovery_interval_seconds, http_bind)
             } else if uninstall {
                 uninstall_daemon()
             } else {
-                daemon(&registry, once, socket, interval_seconds).await
+                daemon(
+                    &registry,
+                    once,
+                    socket,
+                    interval_seconds,
+                    discovery_interval_seconds,
+                    http_bind,
+                )
+                .await
             }
         }
         Action::Status => {
             println!("registry: {}", registry.path().display());
+            if let Some(discovery) = registry.metadata("native_discovery.status")? {
+                println!("native discovery: {discovery}");
+            }
             #[cfg(target_os = "macos")]
             match daemon_launch_agent_path() {
                 Ok(path) if path.exists() => println!("daemon: installed ({})", path.display()),
@@ -884,8 +937,11 @@ async fn main() -> Result<()> {
         }
         Action::Integrations => integrations(&registry),
         Action::Integration { action } => integration_doctor(&registry, action).await,
-        Action::Mcp { .. } | Action::McpHttp { .. } => {
+        Action::Mcp { .. } | Action::McpFleet { .. } | Action::McpHttp { .. } => {
             unreachable!("MCP transports return before opening the local Registry")
+        }
+        Action::Gui { .. } => {
+            unreachable!("the GUI command returns before opening the local Registry")
         }
     }
 }
@@ -1666,7 +1722,14 @@ fn launchctl_user_domain() -> Result<String> {
     Ok(format!("gui/{uid}"))
 }
 
-fn install_daemon(registry: &Registry) -> Result<()> {
+fn install_daemon(
+    registry: &Registry,
+    discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
+) -> Result<()> {
+    if discovery_interval_seconds == 0 {
+        anyhow::bail!("native discovery interval must be greater than zero");
+    }
     #[cfg(all(
         not(target_os = "macos"),
         not(target_os = "linux"),
@@ -1675,7 +1738,7 @@ fn install_daemon(registry: &Registry) -> Result<()> {
     {
         let _ = registry;
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
+            "daemon installation currently supports ARM64 macOS LaunchAgents and ARM64 Linux user systemd"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1692,6 +1755,10 @@ fn install_daemon(registry: &Registry) -> Result<()> {
             plist::Value::String("daemon".into()),
             plist::Value::String("--socket".into()),
             plist::Value::String(default_socket_path().to_string_lossy().into_owned()),
+            plist::Value::String("--discovery-interval-seconds".into()),
+            plist::Value::String(discovery_interval_seconds.to_string()),
+            plist::Value::String("--http-bind".into()),
+            plist::Value::String(http_bind.to_string()),
         ];
         let mut plist = plist::Dictionary::new();
         plist.insert(
@@ -1746,7 +1813,13 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         let parent = path.parent().context("resolve systemd user directory")?;
         std::fs::create_dir_all(parent)?;
         let executable = std::env::current_exe().context("resolve taskrail executable")?;
-        let unit = systemd_user_unit(&executable, registry.path(), &default_socket_path());
+        let unit = systemd_user_unit(
+            &executable,
+            registry.path(),
+            &default_socket_path(),
+            discovery_interval_seconds,
+            http_bind,
+        );
         std::fs::write(&path, unit)
             .with_context(|| format!("write systemd user unit {}", path.display()))?;
         run_systemctl_user(["daemon-reload"])?;
@@ -1759,10 +1832,11 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         let executable = std::env::current_exe().context("resolve taskrail executable")?;
         let task_name = "Taskrail\\Daemon";
         let task_command = format!(
-            "{} --registry {} daemon --socket {}",
+            "{} --registry {} daemon --socket {} --http-bind {}",
             windows_quote_argument(&executable.to_string_lossy()),
             windows_quote_argument(&registry.path().to_string_lossy()),
             windows_quote_argument(&default_socket_path().to_string_lossy()),
+            windows_quote_argument(&http_bind.to_string()),
         );
         let output = ProcessCommand::new("schtasks.exe")
             .args([
@@ -1808,7 +1882,7 @@ fn uninstall_daemon() -> Result<()> {
     ))]
     {
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
+            "daemon installation currently supports ARM64 macOS LaunchAgents and ARM64 Linux user systemd"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1873,12 +1947,20 @@ fn systemd_user_unit_path() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn systemd_user_unit(executable: &Path, registry: &Path, socket: &Path) -> String {
+fn systemd_user_unit(
+    executable: &Path,
+    registry: &Path,
+    socket: &Path,
+    discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
+) -> String {
     format!(
-        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {} --discovery-interval-seconds {} --http-bind {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(executable),
         systemd_quote(registry),
         systemd_quote(socket),
+        discovery_interval_seconds,
+        http_bind,
     )
 }
 
@@ -1954,6 +2036,22 @@ fn default_registry_path() -> PathBuf {
     {
         user_home().join(".local/share/taskrail/registry.sqlite3")
     }
+}
+
+fn default_fleet_config_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| user_home().join("AppData/Roaming"));
+        return base.join("taskrail/fleet.yaml");
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(config_home) = absolute_env_path("XDG_CONFIG_HOME") {
+        return config_home.join("taskrail/fleet.yaml");
+    }
+    user_home().join(".config/taskrail/fleet.yaml")
 }
 
 fn default_socket_path() -> PathBuf {
@@ -2393,41 +2491,14 @@ fn worktree_action(action: WorktreeAction) -> Result<()> {
 }
 
 fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
-    let mut discovered = Vec::new();
-    if matches!(source, SourceKind::All | SourceKind::Launchd) {
-        discovered.extend(LaunchdProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Cron) {
-        discovered.extend(CronProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Systemd) {
-        discovered.extend(SystemdProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::TaskScheduler) {
-        discovered.extend(TaskSchedulerProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::Homebrew) {
-        let homebrew = HomebrewProvider::default().scan()?;
-        if matches!(source, SourceKind::All) {
-            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
-            discovered.extend(unmatched);
-        } else {
-            let mut launchd = LaunchdProvider::default().scan()?;
-            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
-            let mut related = homebrew
-                .iter()
-                .filter_map(|homebrew| {
-                    launchd.iter().find(|native| {
-                        native.provider == "launchd"
-                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
-                    })
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            related.extend(unmatched);
-            discovered.extend(related);
-        }
-    }
+    let source = match source {
+        SourceKind::All => "all",
+        SourceKind::Launchd => "launchd",
+        SourceKind::Cron => "cron",
+        SourceKind::Systemd => "systemd",
+        SourceKind::Homebrew => "homebrew",
+    };
+    let discovered = scan_native_sources(source)?;
     for item in &discovered {
         registry.reconcile_discovered_source(item)?;
     }
@@ -2506,29 +2577,79 @@ async fn daemon(
     once: bool,
     socket: Option<PathBuf>,
     interval_seconds: u64,
+    discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
 ) -> Result<()> {
     if interval_seconds == 0 {
         anyhow::bail!("daemon interval must be greater than zero");
+    }
+    if discovery_interval_seconds == 0 {
+        anyhow::bail!("native discovery interval must be greater than zero");
     }
     let recovered = service::recover_interrupted_runs(registry.path())?;
     if recovered > 0 {
         eprintln!("recovered {recovered} interrupted run(s) after daemon restart");
     }
+    let socket = socket.unwrap_or_else(default_socket_path);
+    let rpc_socket = socket.clone();
     let mut server = if once {
         None
     } else {
-        let socket = socket.unwrap_or_else(default_socket_path);
         let registry_path = registry.path().to_path_buf();
         Some(tokio::spawn(async move {
-            rpc::serve(socket, registry_path).await
+            rpc::serve(rpc_socket, registry_path).await
         }))
     };
+    let mut dashboard_server = if once {
+        None
+    } else {
+        let registry_path = registry.path().to_path_buf();
+        Some(tokio::spawn(async move {
+            web::serve(http_bind, registry_path).await
+        }))
+    };
+    let mut next_discovery = std::time::Instant::now();
     loop {
         if let Some(server) = server.as_mut()
             && server.is_finished()
         {
             server.await??;
             anyhow::bail!("RPC server stopped unexpectedly");
+        }
+        if dashboard_server
+            .as_ref()
+            .is_some_and(|server| server.is_finished())
+        {
+            let server = dashboard_server
+                .take()
+                .expect("dashboard server exists after finished check");
+            match server.await {
+                Ok(Ok(())) => eprintln!("dashboard server stopped; core daemon continues"),
+                Ok(Err(error)) => eprintln!(
+                    "dashboard unavailable; core daemon continues without browser UI: {error:#}"
+                ),
+                Err(error) => eprintln!(
+                    "dashboard task failed; core daemon continues without browser UI: {error:#}"
+                ),
+            }
+        }
+        if once || std::time::Instant::now() >= next_discovery {
+            match service::native_discovery_pass(registry.path()) {
+                Ok(summary) => eprintln!(
+                    "native discovery: {} source(s), {} drifted, {} missing, {} unrunnable",
+                    summary.source_count, summary.drifted, summary.missing, summary.unrunnable
+                ),
+                Err(error) => {
+                    eprintln!("native discovery failed: {error:#}");
+                    if let Err(record_error) =
+                        service::record_native_discovery_failure(registry.path(), &error)
+                    {
+                        eprintln!("record native discovery failure: {record_error:#}");
+                    }
+                }
+            }
+            next_discovery = std::time::Instant::now()
+                + std::time::Duration::from_secs(discovery_interval_seconds);
         }
         let pass = service::scheduled_pass(registry.path()).await?;
         println!(
@@ -2538,7 +2659,9 @@ async fn daemon(
         if once {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_secs(interval_seconds)).await;
+        let scheduler_sleep = std::time::Duration::from_secs(interval_seconds);
+        let discovery_sleep = next_discovery.saturating_duration_since(std::time::Instant::now());
+        tokio::time::sleep(scheduler_sleep.min(discovery_sleep)).await;
     }
 }
 
@@ -2825,6 +2948,77 @@ fn dashboard(registry: &Registry) -> Result<()> {
     text_dashboard(registry)
 }
 
+fn open_dashboard(bind: SocketAddr) -> Result<()> {
+    if !bind.ip().is_loopback() {
+        anyhow::bail!("Taskrail dashboard must use a loopback address, got {bind}");
+    }
+    let Some(endpoint) = taskrail_dashboard_endpoint(bind) else {
+        anyhow::bail!(
+            "Taskrail dashboard is unavailable at http://{bind}; start `taskrail daemon` first"
+        );
+    };
+    let address = format!("http://{endpoint}");
+    #[cfg(target_os = "macos")]
+    let mut command = ProcessCommand::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = ProcessCommand::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = ProcessCommand::new("cmd");
+    #[cfg(target_os = "windows")]
+    command.args(["/C", "start", "", &address]);
+    #[cfg(not(target_os = "windows"))]
+    command.arg(&address);
+    let output = command
+        .output()
+        .context("open Taskrail dashboard in browser")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "browser launcher failed: {}",
+            first_non_empty_line(&output.stderr).unwrap_or_default()
+        );
+    }
+    println!("opened Taskrail dashboard at {address}");
+    Ok(())
+}
+
+fn taskrail_dashboard_endpoint(bind: SocketAddr) -> Option<SocketAddr> {
+    let mut candidates = vec![bind];
+    if bind.port() == 10100 {
+        for offset in 1..=10 {
+            if let Some(port) = bind.port().checked_add(offset) {
+                candidates.push(SocketAddr::new(bind.ip(), port));
+            }
+        }
+    }
+    candidates.into_iter().find(taskrail_dashboard_is_ready)
+}
+
+fn taskrail_dashboard_is_ready(bind: &SocketAddr) -> bool {
+    let Ok(mut stream) =
+        std::net::TcpStream::connect_timeout(bind, std::time::Duration::from_millis(500))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(500)));
+    if write!(
+        stream,
+        "GET /healthz HTTP/1.1\r\nHost: {bind}\r\nConnection: close\r\n\r\n"
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let mut response = Vec::new();
+    if stream.read_to_end(&mut response).is_err() {
+        return false;
+    }
+    let response = String::from_utf8_lossy(&response);
+    response.starts_with("HTTP/1.1 200 ")
+        && response.contains("\"service\":\"taskrail\"")
+        && response.contains("\"dashboard\":true")
+}
+
 fn text_dashboard(registry: &Registry) -> Result<()> {
     let automations = registry.list_automations()?;
     let inbox = registry.list_inbox(100)?;
@@ -2878,12 +3072,16 @@ mod platform_tests {
             Path::new("/home/me/bin/taskrail"),
             Path::new("/home/me/.local/share/taskrail/registry.sqlite3"),
             Path::new("/run/user/1000/taskrail/taskraild.sock"),
+            300,
+            "127.0.0.1:10100".parse().unwrap(),
         );
         assert!(unit.contains("ExecStart=/home/me/bin/taskrail --registry"));
         assert!(unit.contains("RuntimeDirectory=taskrail"));
         assert!(unit.contains("RuntimeDirectoryMode=0700"));
         assert!(unit.contains("UMask=0077"));
         assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("--discovery-interval-seconds 300"));
+        assert!(unit.contains("--http-bind 127.0.0.1:10100"));
     }
 
     #[cfg(target_os = "linux")]

@@ -2,6 +2,7 @@ use crate::{
     core::{
         Automation, Event, IntegrationSpec, Ownership, RunResult, RuntimeState, StepSpec, Trigger,
     },
+    discovery::scan_native_snapshot,
     executor,
     integrations::{
         DefaultPolicy, Integration, IntegrationAction, IntegrationResult, IntegrationStatus,
@@ -9,12 +10,12 @@ use crate::{
         VerificationStatus,
     },
     scheduler,
-    storage::Registry,
+    storage::{Registry, SourceReconciliation},
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::Path,
     sync::{Mutex, OnceLock},
     time::Instant,
@@ -28,6 +29,140 @@ pub struct IntegrationExecution {
     pub run: RunResult,
     pub result: IntegrationResult,
     pub verification: VerificationResult,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct NativeDiscoveryPass {
+    pub source_count: usize,
+    pub created_observed: usize,
+    pub updated_observed: usize,
+    pub retained_owned: usize,
+    pub drifted: usize,
+    pub unrunnable: usize,
+    pub missing: usize,
+}
+
+/// Refresh native scheduler observations and reconcile them into the local
+/// Registry. Provider scans are read-only; only the local observation mirror
+/// and owned-automation drift state are updated.
+pub fn native_discovery_pass(registry_path: &Path) -> Result<NativeDiscoveryPass> {
+    let snapshot = scan_native_snapshot("all")?;
+    reconcile_native_sources(
+        registry_path,
+        &snapshot.sources,
+        &snapshot.complete_providers,
+    )
+}
+
+/// Reconcile a complete native snapshot. Keeping this separate from provider
+/// execution makes the missing-source safety rule directly testable.
+pub fn reconcile_native_sources(
+    registry_path: &Path,
+    discovered: &[crate::core::DiscoveredSource],
+    complete_providers: &BTreeSet<String>,
+) -> Result<NativeDiscoveryPass> {
+    let registry = Registry::open(registry_path)?;
+    let previous_status = registry.metadata("native_discovery.status")?;
+    let mut summary = NativeDiscoveryPass {
+        source_count: discovered.len(),
+        created_observed: 0,
+        updated_observed: 0,
+        retained_owned: 0,
+        drifted: 0,
+        unrunnable: 0,
+        missing: 0,
+    };
+    let mut seen_source_ids = BTreeSet::new();
+    for source in discovered {
+        seen_source_ids.insert(source.source_id.clone());
+        match registry.reconcile_discovered_source(source)? {
+            SourceReconciliation::CreatedObserved => summary.created_observed += 1,
+            SourceReconciliation::UpdatedObserved => summary.updated_observed += 1,
+            SourceReconciliation::RetainedOwned => summary.retained_owned += 1,
+            SourceReconciliation::Drifted => summary.drifted += 1,
+            SourceReconciliation::Unrunnable => summary.unrunnable += 1,
+        }
+    }
+    summary.missing = registry.mark_missing_sources(&seen_source_ids, complete_providers)?;
+    let status = serde_json::json!({
+        "state": "ok",
+        "scanned_at": Utc::now().to_rfc3339(),
+        "source_count": summary.source_count,
+        "created_observed": summary.created_observed,
+        "updated_observed": summary.updated_observed,
+        "retained_owned": summary.retained_owned,
+        "drifted": summary.drifted,
+        "unrunnable": summary.unrunnable,
+        "missing": summary.missing,
+        "complete_providers": complete_providers,
+    });
+    registry.set_metadata("native_discovery.status", &status.to_string())?;
+    let previous_state = previous_status
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .and_then(|value| {
+            value
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    let noteworthy = previous_state.as_deref() != Some("ok")
+        || summary.created_observed > 0
+        || summary.drifted > 0
+        || summary.unrunnable > 0
+        || summary.missing > 0;
+    if noteworthy {
+        registry.append_event(&Event {
+            run_id: None,
+            occurred_at: Utc::now(),
+            event_type: "native_discovery.completed".into(),
+            payload: serde_json::json!({
+                "source_count": summary.source_count,
+                "created_observed": summary.created_observed,
+                "updated_observed": summary.updated_observed,
+                "retained_owned": summary.retained_owned,
+                "drifted": summary.drifted,
+                "unrunnable": summary.unrunnable,
+                "missing": summary.missing,
+                "complete_providers": complete_providers,
+            }),
+        })?;
+    }
+    Ok(summary)
+}
+
+/// Record only a generic failure state in the local status read model. The
+/// detailed provider error remains on stderr, avoiding accidental disclosure
+/// of local paths or command output through MCP status responses.
+pub fn record_native_discovery_failure(registry_path: &Path, _error: &anyhow::Error) -> Result<()> {
+    let registry = Registry::open(registry_path)?;
+    let previous_state = registry
+        .metadata("native_discovery.status")?
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+        .and_then(|value| {
+            value
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    registry.set_metadata(
+        "native_discovery.status",
+        &serde_json::json!({
+            "state": "failed",
+            "failed_at": Utc::now().to_rfc3339(),
+            "error": "native discovery failed; inspect daemon stderr",
+        })
+        .to_string(),
+    )?;
+    if previous_state.as_deref() != Some("failed") {
+        registry.append_event(&Event {
+            run_id: None,
+            occurred_at: Utc::now(),
+            event_type: "native_discovery.failed".into(),
+            payload: serde_json::json!({"error": "native discovery failed"}),
+        })?;
+    }
+    Ok(())
 }
 
 impl IntegrationExecution {
@@ -1346,9 +1481,10 @@ pub async fn scheduled_pass(registry_path: impl AsRef<Path>) -> Result<Scheduler
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::core::{CommandSpec, StepSpec};
+    use crate::core::{CommandSpec, DiscoveredSource, StepSpec, Trigger};
     use crate::integrations::{IntegrationAction, MoleIntegration};
     use chrono::Duration;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     #[cfg(unix)]
@@ -1375,6 +1511,66 @@ mod tests {
         let result = run_named(&path, "service-test", false).await.unwrap();
         assert_eq!(result.status, "succeeded");
         assert_eq!(result.stdout.trim(), "rpc-ok");
+    }
+
+    #[test]
+    fn complete_native_reconciliation_persists_status_and_missing_attention() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let source = DiscoveredSource {
+            source_id: "cron:line-1".into(),
+            provider: "cron".into(),
+            native_id: "line-1".into(),
+            path: None,
+            enabled: true,
+            kind: "task".into(),
+            fingerprint: "sha256:one".into(),
+            command: Some(CommandSpec::argv("/bin/echo", ["one"])),
+            trigger: Trigger::Manual,
+            raw: "one".into(),
+        };
+        let complete = BTreeSet::from(["cron".to_owned()]);
+        let first = reconcile_native_sources(&path, &[source], &complete).unwrap();
+        assert_eq!(first.source_count, 1);
+        assert_eq!(first.created_observed, 1);
+        assert_eq!(first.missing, 0);
+
+        let second = reconcile_native_sources(&path, &[], &complete).unwrap();
+        assert_eq!(second.source_count, 0);
+        assert_eq!(second.missing, 1);
+        let registry = Registry::open(&path).unwrap();
+        let status: Value = serde_json::from_str(
+            &registry
+                .metadata("native_discovery.status")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status["state"], "ok");
+        assert_eq!(status["missing"], 1);
+        assert!(
+            registry
+                .list_events(20)
+                .unwrap()
+                .iter()
+                .any(|event| event.event_type == "source.missing")
+        );
+    }
+
+    #[test]
+    fn native_discovery_failure_status_does_not_store_provider_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let error = anyhow::anyhow!("secret-provider-path /tmp/private");
+        record_native_discovery_failure(&path, &error).unwrap();
+        let registry = Registry::open(&path).unwrap();
+        let status = registry
+            .metadata("native_discovery.status")
+            .unwrap()
+            .unwrap();
+        assert!(!status.contains("secret-provider-path"));
+        assert!(!status.contains("/tmp/private"));
+        assert!(status.contains("inspect daemon stderr"));
     }
 
     #[cfg(unix)]

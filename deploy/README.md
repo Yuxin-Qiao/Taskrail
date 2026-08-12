@@ -3,7 +3,8 @@
 This directory provides a reproducible single-host deployment for the public
 read-only MCP profile. It runs the local daemon and the stateless HTTP adapter
 as separate, non-root containers sharing only the registry volume and Unix
-socket.
+socket. The container deployment is ARM64-only (`linux/arm64`), matching the
+official Taskrail release targets.
 
 ## Local deployment smoke test
 
@@ -19,9 +20,8 @@ The compose file intentionally uses `expose`, not `ports`, so the HTTP
 adapter is not directly published to the host. The smoke profile runs a
 temporary in-network curl container. Attach a TLS reverse proxy to the
 compose network and use `deploy/Caddyfile.example` as a starting point.
-Docker is not required for the local Rust/Swift validation suite; this compose
-sample must be validated with Docker Compose on the deployment host before it
-is used.
+Docker is not required for the local Rust validation suite; this compose sample
+must be validated with Docker Compose on the deployment host before it is used.
 
 ## Production requirements
 
@@ -45,6 +45,11 @@ Do not expose port 8787 directly, use a localhost URL in the submission, or
 treat a development tunnel as the production endpoint. The static bearer
 token is only the reverse-proxy-to-process boundary; it is not sufficient
 end-user authentication by itself.
+
+For a private Fleet target that needs write or run tools, deploy a separate
+single-host adapter with `mcp-http --profile private`, its own bearer secret,
+and a private TLS/authenticated edge. Do not change the public compose sample
+to private mode and do not share one private endpoint across tenants.
 
 The repository's OpenAI checklist is in
 [`docs/OPENAI_SUBMISSION.md`](../docs/OPENAI_SUBMISSION.md). The official
