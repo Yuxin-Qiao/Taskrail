@@ -347,7 +347,7 @@ The current implementation and remaining release gates are:
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
 | Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
-| Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟡 Runtime recheck pending |
+| Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟢 Local runtime/MCP verified; ChatGPT UI recheck pending unlock |
 | Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
