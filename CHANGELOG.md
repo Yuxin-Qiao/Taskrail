@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Add an optional loopback browser dashboard served by the local daemon;
+  `taskrail gui` opens the dashboard and `taskrail tui` remains the terminal
+  fallback.
+
 ## [0.1.6] - 2026-08-12
 
 - Make ARM64 macOS (Apple Silicon) and ARM64 Linux the only supported release

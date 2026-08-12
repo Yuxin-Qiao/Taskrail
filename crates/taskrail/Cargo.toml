@@ -7,6 +7,7 @@ homepage = "https://github.com/Yuxin-Qiao/Taskrail"
 readme = "../../README.md"
 keywords = ["automation", "scheduler", "mcp", "macos", "linux"]
 categories = ["command-line-utilities", "development-tools"]
+include = ["src/**", "gui/**", "Cargo.toml", "README.md", "../../README.md", "../../LICENSE"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

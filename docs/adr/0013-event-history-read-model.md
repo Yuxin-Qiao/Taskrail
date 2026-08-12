@@ -8,8 +8,8 @@ Accepted for the local audit surface.
 
 The Registry exposes `events.list` with a caller-supplied limit from 1 to 500,
 defaulting to 100. Events are returned newest first with their sequence number,
-run ID, timestamp, type, and structured payload. The CLI and SwiftUI client use
-the same read model through the daemon.
+run ID, timestamp, type, and structured payload. The CLI, TUI, browser
+dashboard, and MCP adapter use the same read model through the daemon.
 
 ## Consequences
 

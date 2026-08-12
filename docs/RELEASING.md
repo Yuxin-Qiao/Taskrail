@@ -10,10 +10,11 @@ private paths are present.
 
 Pushing a tag such as `v0.1.6` runs `.github/workflows/release.yml`. The tag
 must match the `taskrail` Cargo package version and the macOS bundle version.
-The workflow builds only ARM64 artifacts: an `aarch64-unknown-linux-gnu` Linux
-CLI, an `aarch64-apple-darwin` macOS CLI, and an Apple Silicon unsigned
-`Taskrail.app`. It publishes SHA-256 checksums and SPDX SBOMs, and creates
-GitHub artifact attestations for the CLI archives.
+The workflow builds ARM64 CLI archives for `aarch64-unknown-linux-gnu` and
+`aarch64-apple-darwin`, plus the existing unsigned Apple Silicon `Taskrail.app`.
+The CLI archives contain the daemon-hosted browser dashboard assets. The
+workflow publishes SHA-256 checksums, SPDX SBOMs, and GitHub artifact
+attestations for the CLI archives.
 
 The final publish job is attached to the `release` GitHub Environment. The
 repository currently restricts that environment to `v*` tags and applies a
@@ -22,8 +23,10 @@ workflow run and tag before that timer elapses; add an independent reviewer
 once the repository has more than one release maintainer.
 
 Before tagging a release, update the crate and desktop bundle versions together,
-run the full Rust and Swift validation commands in `docs/ACCEPTANCE.md`, and
-verify that the generated app executable matches `Info.plist` (`taskrail`).
+run the full Rust and Swift validation commands in `docs/ACCEPTANCE.md`, verify
+that the generated app executable matches `Info.plist` (`taskrail`), and verify
+that `cargo package` contains `gui/index.html`, `gui/app.js`, `gui/styles.css`,
+and `gui/favicon.svg`.
 
 The supported release contract is ARM64 macOS (Apple Silicon) and ARM64 Linux.
 x86_64 and Windows are not supported release targets. The Rust crate fails

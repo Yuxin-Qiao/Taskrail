@@ -110,6 +110,17 @@ jobs:
       - name: Validate crate packaging
         run: cargo +stable package --locked --package taskrail
 
+      - name: Verify embedded browser dashboard assets
+        run: |
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/index.html'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/app.js'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/styles.css'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/favicon.svg'
+
   desktop:
     name: Swift ARM64 desktop client
     runs-on: macos-15

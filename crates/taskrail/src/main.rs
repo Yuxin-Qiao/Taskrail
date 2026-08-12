@@ -3,7 +3,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     collections::BTreeMap,
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
@@ -22,7 +22,7 @@ use taskrail::{
     mcp, rpc, service,
     storage::Registry,
     verification::{self, VerificationCommand},
-    worktree,
+    web, worktree,
 };
 use uuid::Uuid;
 
@@ -59,6 +59,12 @@ enum HttpProfileArg {
 
 #[derive(Debug, Subcommand)]
 enum Action {
+    /// Open the daemon-hosted browser dashboard.
+    Gui {
+        /// Local dashboard address.
+        #[arg(long, default_value = "127.0.0.1:10100")]
+        bind: SocketAddr,
+    },
     /// Discover existing native automations without changing them.
     Scan {
         #[arg(long, value_enum, default_value_t = SourceKind::All)]
@@ -310,6 +316,9 @@ enum Action {
         /// Refresh the local native-automation inventory at this interval.
         #[arg(long, default_value_t = 5 * 60)]
         discovery_interval_seconds: u64,
+        /// Local loopback address for the daemon-hosted browser dashboard.
+        #[arg(long, default_value = "127.0.0.1:10100")]
+        http_bind: SocketAddr,
     },
     /// Print the Registry path and daemon boundary.
     Status,
@@ -691,6 +700,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let registry_path = cli.registry.unwrap_or_else(default_registry_path);
     let command = match cli.command {
+        Action::Gui { bind } => return open_dashboard(bind),
         Action::Mcp { socket } => {
             return mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await;
         }
@@ -886,9 +896,10 @@ async fn main() -> Result<()> {
             install,
             uninstall,
             discovery_interval_seconds,
+            http_bind,
         } => {
             if install {
-                install_daemon(&registry, discovery_interval_seconds)
+                install_daemon(&registry, discovery_interval_seconds, http_bind)
             } else if uninstall {
                 uninstall_daemon()
             } else {
@@ -898,6 +909,7 @@ async fn main() -> Result<()> {
                     socket,
                     interval_seconds,
                     discovery_interval_seconds,
+                    http_bind,
                 )
                 .await
             }
@@ -927,6 +939,9 @@ async fn main() -> Result<()> {
         Action::Integration { action } => integration_doctor(&registry, action).await,
         Action::Mcp { .. } | Action::McpFleet { .. } | Action::McpHttp { .. } => {
             unreachable!("MCP transports return before opening the local Registry")
+        }
+        Action::Gui { .. } => {
+            unreachable!("the GUI command returns before opening the local Registry")
         }
     }
 }
@@ -1707,7 +1722,11 @@ fn launchctl_user_domain() -> Result<String> {
     Ok(format!("gui/{uid}"))
 }
 
-fn install_daemon(registry: &Registry, discovery_interval_seconds: u64) -> Result<()> {
+fn install_daemon(
+    registry: &Registry,
+    discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
+) -> Result<()> {
     if discovery_interval_seconds == 0 {
         anyhow::bail!("native discovery interval must be greater than zero");
     }
@@ -1738,6 +1757,8 @@ fn install_daemon(registry: &Registry, discovery_interval_seconds: u64) -> Resul
             plist::Value::String(default_socket_path().to_string_lossy().into_owned()),
             plist::Value::String("--discovery-interval-seconds".into()),
             plist::Value::String(discovery_interval_seconds.to_string()),
+            plist::Value::String("--http-bind".into()),
+            plist::Value::String(http_bind.to_string()),
         ];
         let mut plist = plist::Dictionary::new();
         plist.insert(
@@ -1797,6 +1818,7 @@ fn install_daemon(registry: &Registry, discovery_interval_seconds: u64) -> Resul
             registry.path(),
             &default_socket_path(),
             discovery_interval_seconds,
+            http_bind,
         );
         std::fs::write(&path, unit)
             .with_context(|| format!("write systemd user unit {}", path.display()))?;
@@ -1810,10 +1832,11 @@ fn install_daemon(registry: &Registry, discovery_interval_seconds: u64) -> Resul
         let executable = std::env::current_exe().context("resolve taskrail executable")?;
         let task_name = "Taskrail\\Daemon";
         let task_command = format!(
-            "{} --registry {} daemon --socket {}",
+            "{} --registry {} daemon --socket {} --http-bind {}",
             windows_quote_argument(&executable.to_string_lossy()),
             windows_quote_argument(&registry.path().to_string_lossy()),
             windows_quote_argument(&default_socket_path().to_string_lossy()),
+            windows_quote_argument(&http_bind.to_string()),
         );
         let output = ProcessCommand::new("schtasks.exe")
             .args([
@@ -1929,13 +1952,15 @@ fn systemd_user_unit(
     registry: &Path,
     socket: &Path,
     discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
 ) -> String {
     format!(
-        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {} --discovery-interval-seconds {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {} --discovery-interval-seconds {} --http-bind {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(executable),
         systemd_quote(registry),
         systemd_quote(socket),
         discovery_interval_seconds,
+        http_bind,
     )
 }
 
@@ -2553,6 +2578,7 @@ async fn daemon(
     socket: Option<PathBuf>,
     interval_seconds: u64,
     discovery_interval_seconds: u64,
+    http_bind: SocketAddr,
 ) -> Result<()> {
     if interval_seconds == 0 {
         anyhow::bail!("daemon interval must be greater than zero");
@@ -2564,13 +2590,22 @@ async fn daemon(
     if recovered > 0 {
         eprintln!("recovered {recovered} interrupted run(s) after daemon restart");
     }
+    let socket = socket.unwrap_or_else(default_socket_path);
+    let rpc_socket = socket.clone();
     let mut server = if once {
         None
     } else {
-        let socket = socket.unwrap_or_else(default_socket_path);
         let registry_path = registry.path().to_path_buf();
         Some(tokio::spawn(async move {
-            rpc::serve(socket, registry_path).await
+            rpc::serve(rpc_socket, registry_path).await
+        }))
+    };
+    let mut dashboard_server = if once {
+        None
+    } else {
+        let registry_path = registry.path().to_path_buf();
+        Some(tokio::spawn(async move {
+            web::serve(http_bind, registry_path).await
         }))
     };
     let mut next_discovery = std::time::Instant::now();
@@ -2580,6 +2615,23 @@ async fn daemon(
         {
             server.await??;
             anyhow::bail!("RPC server stopped unexpectedly");
+        }
+        if dashboard_server
+            .as_ref()
+            .is_some_and(|server| server.is_finished())
+        {
+            let server = dashboard_server
+                .take()
+                .expect("dashboard server exists after finished check");
+            match server.await {
+                Ok(Ok(())) => eprintln!("dashboard server stopped; core daemon continues"),
+                Ok(Err(error)) => eprintln!(
+                    "dashboard unavailable; core daemon continues without browser UI: {error:#}"
+                ),
+                Err(error) => eprintln!(
+                    "dashboard task failed; core daemon continues without browser UI: {error:#}"
+                ),
+            }
         }
         if once || std::time::Instant::now() >= next_discovery {
             match service::native_discovery_pass(registry.path()) {
@@ -2896,6 +2948,79 @@ fn dashboard(registry: &Registry) -> Result<()> {
     text_dashboard(registry)
 }
 
+fn open_dashboard(bind: SocketAddr) -> Result<()> {
+    if !bind.ip().is_loopback() {
+        anyhow::bail!("Taskrail dashboard must use a loopback address, got {bind}");
+    }
+    let Some(endpoint) = taskrail_dashboard_endpoint(bind) else {
+        anyhow::bail!(
+            "Taskrail dashboard is unavailable at http://{bind}; start `taskrail daemon` first"
+        );
+    };
+    let address = format!("http://{endpoint}");
+    #[cfg(target_os = "macos")]
+    let mut command = ProcessCommand::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = ProcessCommand::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = ProcessCommand::new("cmd");
+    #[cfg(target_os = "windows")]
+    command.args(["/C", "start", "", &address]);
+    #[cfg(not(target_os = "windows"))]
+    command.arg(&address);
+    let output = command
+        .output()
+        .context("open Taskrail dashboard in browser")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "browser launcher failed: {}",
+            first_non_empty_line(&output.stderr).unwrap_or_default()
+        );
+    }
+    println!("opened Taskrail dashboard at {address}");
+    Ok(())
+}
+
+fn taskrail_dashboard_endpoint(bind: SocketAddr) -> Option<SocketAddr> {
+    let mut candidates = vec![bind];
+    if bind.port() == 10100 {
+        for offset in 1..=10 {
+            if let Some(port) = bind.port().checked_add(offset) {
+                candidates.push(SocketAddr::new(bind.ip(), port));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| taskrail_dashboard_is_ready(candidate))
+}
+
+fn taskrail_dashboard_is_ready(bind: &SocketAddr) -> bool {
+    let Ok(mut stream) =
+        std::net::TcpStream::connect_timeout(bind, std::time::Duration::from_millis(500))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(500)));
+    if write!(
+        stream,
+        "GET /healthz HTTP/1.1\r\nHost: {bind}\r\nConnection: close\r\n\r\n"
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let mut response = Vec::new();
+    if stream.read_to_end(&mut response).is_err() {
+        return false;
+    }
+    let response = String::from_utf8_lossy(&response);
+    response.starts_with("HTTP/1.1 200 ")
+        && response.contains("\"service\":\"taskrail\"")
+        && response.contains("\"dashboard\":true")
+}
+
 fn text_dashboard(registry: &Registry) -> Result<()> {
     let automations = registry.list_automations()?;
     let inbox = registry.list_inbox(100)?;
@@ -2950,6 +3075,7 @@ mod platform_tests {
             Path::new("/home/me/.local/share/taskrail/registry.sqlite3"),
             Path::new("/run/user/1000/taskrail/taskraild.sock"),
             300,
+            "127.0.0.1:10100".parse().unwrap(),
         );
         assert!(unit.contains("ExecStart=/home/me/bin/taskrail --registry"));
         assert!(unit.contains("RuntimeDirectory=taskrail"));
@@ -2957,6 +3083,7 @@ mod platform_tests {
         assert!(unit.contains("UMask=0077"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("--discovery-interval-seconds 300"));
+        assert!(unit.contains("--http-bind 127.0.0.1:10100"));
     }
 
     #[cfg(target_os = "linux")]

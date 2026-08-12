@@ -3,7 +3,7 @@
 Taskrail 是面向开发者的本地自动化管理器。产品核心路径很小：
 
 ~~~
-add/register → schedule → run → history/logs → tui
+add/register → schedule → run → history/logs → 浏览器控制台
 ~~~
 
 返回[中文 README](../README.zh-CN.md)或阅读 [English README](../README.md)。
@@ -13,9 +13,13 @@ add/register → schedule → run → history/logs → tui
 - Rust crate 和 CLI 的名称都是 `taskrail`；
 - 本地 Registry 存储自动化、运行、日志、事件和指标；
 - 守护进程负责计算 interval 和 cron 触发器；
-- TUI 是主要的可视化界面；
-- Rust CLI、守护进程、TUI 和本地 MCP 适配器只支持 ARM64 macOS 和 ARM64 Linux；两者都使用
-  受限 Unix socket，SwiftUI 桌面视图只支持 Apple Silicon；
+- 守护进程默认在 `http://127.0.0.1:10100` 上提供主要的 loopback 浏览器控制台；`taskrail gui`
+  可以打开它，`taskrail tui` 是终端备用入口；
+- 如果 `10100` 已被占用，守护进程会在有限的 loopback 端口范围内尝试到 `10110`，`taskrail gui` 会发现真正的
+  Taskrail 地址，不会误打开其他本地服务；
+- 浏览器控制台只是守护进程本地 RPC handler 的薄客户端，不是公开服务，也不会通过 Tunnel 暴露；
+- Rust CLI、守护进程、TUI、浏览器控制台和本地 MCP 适配器只支持 ARM64 macOS 和 ARM64 Linux；
+  控制平面使用受限 Unix socket，浏览器控制台只使用 loopback HTTP；
 - 私有 ChatGPT Scheduled 任务可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；
   公开应用审核和托管部署属于独立的外部发布门槛；
 - `taskrail mcp-fleet` 可以把明确配置的多台主机聚合为一个 MCP 应用；端点和令牌环境变量名

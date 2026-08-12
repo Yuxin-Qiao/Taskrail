@@ -22,6 +22,7 @@ pub mod service;
 pub mod storage;
 pub mod tui;
 pub mod verification;
+pub mod web;
 pub mod worktree;
 
 pub use core::{Automation, CommandSpec, DiscoveredSource, Ownership, RunResult};

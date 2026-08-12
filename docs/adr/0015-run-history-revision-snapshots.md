@@ -20,8 +20,8 @@ taskrail runs --limit 100
 taskrail runs --automation weekly-clean
 ```
 
-The limit is bounded to 1–500. The SwiftUI client presents the same read-only
-records through the Runs section.
+The limit is bounded to 1–500. The browser dashboard presents the same
+read-only records through its Runs section.
 
 ## Migration
 

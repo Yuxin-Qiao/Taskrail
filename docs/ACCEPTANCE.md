@@ -4,7 +4,7 @@ This checklist is the release-gate for the current Taskrail workspace. It is
 intentionally evidence-based: a feature is accepted only when the stated
 command, test, or runtime observation succeeds.
 
-Execution date: 2026-08-12
+Execution date: 2026-08-13
 
 ## Scope and safety
 
@@ -22,9 +22,10 @@ Execution date: 2026-08-12
 | A1 | Metadata | Rust workspace, package metadata, license, README, and OSS files are present | `Cargo.toml`, `crates/taskrail/Cargo.toml`, `LICENSE`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | PASS |
 | A2 | Repository hygiene | Formatting diff is clean and generated/runtime artifacts are ignored | `git diff --check`, `.gitignore`, tracked-artifact scan | PASS |
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
-| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 162 tests passed | PASS |
-| B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
-| B3 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31602413568`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
+| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 166 tests passed | PASS |
+| B2 | Browser dashboard | Dashboard source is embedded in the published crate and its HTTP route/origin mapping tests pass | `cargo package --locked --package taskrail`; `cargo test --locked --workspace --lib web`; loopback browser smoke | PASS |
+| B3 | Swift client | Historical Apple Silicon desktop client still builds and its model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
+| B4 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31602413568`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
 | C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures; background reconciliation and missing-source tests | PASS |
@@ -39,18 +40,18 @@ Execution date: 2026-08-12
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
-| F1 | Desktop runtime | Installed daemon is running, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; Tunnel ready; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
-| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging, Apple Silicon Swift, dependency review, and supply-chain audit jobs | CI run `31609200189`, Security run `31609206606`, and CodeQL run `31609216549` passed on `e1ebcc6`; dependency-review workflow present and prior run passed | PASS |
-| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives, unsigned Apple Silicon desktop bundle, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
+| F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; browser shows connected host and 26 native rows; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
+| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging with embedded dashboard assets, dependency review, and supply-chain audit jobs | CI workflow and package asset checks inspected; security workflows retained | PASS |
+| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
 | G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
 | G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
 | G4 | Host/package integrations | GitHub/Homebrew/mas/Topgrade adapters use the shared layer without arbitrary writes or sudo | fixture tests; existing discovery preserved | PASS |
 | G5 | Security integrations | OSV-Scanner, Gitleaks, and Trivy normalize findings without retaining secret/match values | fixture tests; malformed and missing-tool paths fail closed | PASS |
-| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 162 tests; approval lifecycle and replay rejection passed | PASS |
-| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 162 tests passed | PASS |
-| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 162 tests passed | PASS |
+| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 166 tests; approval lifecycle and replay rejection passed | PASS |
+| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 166 tests passed | PASS |
+| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 166 tests passed | PASS |
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
 ARM64-only release contract. The updated ARM64 runner evidence is now
@@ -84,11 +85,12 @@ cargo audit -D warnings
 cargo deny check advisories bans licenses sources
 
 cargo package --locked --package taskrail
+cargo package --locked --package taskrail --list | grep -F 'gui/index.html'
+cargo package --locked --package taskrail --list | grep -F 'gui/app.js'
+cargo package --locked --package taskrail --list | grep -F 'gui/styles.css'
+cargo package --locked --package taskrail --list | grep -F 'gui/favicon.svg'
 
-cd macos/DesktopApp
-swift build
-swift test
-cd ../..
+(cd macos/DesktopApp && swift build && swift test)
 
 cargo +1.88.0 build --locked --workspace --target aarch64-unknown-linux-gnu
 git diff --check
@@ -102,7 +104,7 @@ The black-box checks must use a temporary Registry and must include at least:
 4. native scan;
 5. MCP initialize, tools/list, discovery, error, and shell-rejection paths;
 6. MCP overview plus Codex, Responses, and GitHub read-only integrations;
-7. daemon restart/status and socket permission checks.
+7. daemon restart/status, dashboard health, browser route, same-origin write rejection, and socket permission checks.
 
 ## Execution record
 
@@ -112,24 +114,25 @@ execution.
 
 ### Results
 
-The current host passes the Rust full suite (162 tests), strict Clippy,
-formatting check, build, package verification, OpenAI submission validator,
-and the Fleet localhost routing smoke. The Fleet black-box exposed 38 tools;
+The current host passes the Rust full suite (166 tests, including the dashboard
+route and origin tests), strict Clippy, formatting check, build, package verification,
+OpenAI submission validator, and the Fleet localhost routing smoke. The Fleet
+black-box exposed 38 tools;
 remote status, integration catalog, and a plan-only Topgrade route succeeded,
 while an unavailable Mole executable returned its real remote error and a
 destructive Mole clean was blocked before network access on a read-only host.
 The real local MCP stdio probe completed initialize, tools/list, overview,
 fresh discovery, and automation listing; the authenticated private HTTP probe
 completed initialize, tools/list, and overview, while the public HTTP probe
-confirmed 18 read-only tools and rejected execution calls. The SwiftUI desktop
-client and its 2 tests pass on Apple Silicon. The public HTTP adapter unit
-tests cover health, authentication, origin, MCP headers, public-profile
-allowlisting, private profile authentication, and protocol version boundaries.
-GitHub Actions run `31609200189` passed the updated ARM64 matrix, MSRV,
-package, and Swift jobs; run `31609206606` passed audit and deny; run
-`31609216549` passed CodeQL on validated implementation head `e1ebcc6`.
-Follow-up commits `9b7f82a` and `3af892a` contain documentation-only evidence
-alignment.
+confirmed 18 read-only tools and rejected execution calls. The dashboard HTTP
+smoke covers health, embedded assets, API reads, same-origin writes, and run
+logs; the in-app browser loaded the connected dashboard and returned 26 native
+discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
+MCP headers, public-profile allowlisting, private profile authentication, and
+protocol version boundaries.
+GitHub Actions runs `31612857925`, `31612856592`, and `31612856654` passed on implementation head `714b315`; this Dashboard follow-up is validated locally and will receive fresh branch checks after push.
+The implementation head also includes documentation-only evidence alignment
+from commits `9b7f82a`, `3af892a`, and `bea7d8c`.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
@@ -137,8 +140,6 @@ deployment-host check because Docker is not installed on this host.
 
 The repository-level control-plane implementation is release-candidate-shaped
 for the ARM64-only contract. It is not release-complete until a matching tag
-has produced and published the release assets. The macOS SwiftUI client
-remains Apple Silicon-only; ARM64 Linux support is the headless Rust
-CLI/daemon/TUI plus MCP surface. Public HTTPS hosting, OpenAI review/
-publication, and real destructive/adoption operations remain explicit
-external or approval-gated steps.
+has produced and published the CLI archives with the embedded dashboard.
+Public HTTPS hosting, OpenAI review/publication, and real destructive/adoption
+operations remain explicit external or approval-gated steps.

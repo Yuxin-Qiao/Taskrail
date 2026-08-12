@@ -8,10 +8,11 @@ runs, logs, events, attention items, and metrics. A run button sends only a
 registered automation ID.
 
 The app does not open SQLite, parse launchd, schedule jobs, or execute commands.
-Those responsibilities remain in the Rust daemon so the CLI, TUI, and optional
-desktop view have one source of truth.
+Those responsibilities remain in the Rust daemon so the CLI, TUI, browser
+dashboard, and optional desktop view have one source of truth.
 
 ## Verification
 
-`swift build --package-path macos/DesktopApp` is the desktop compile gate. A
-daemon socket smoke test remains the runtime boundary for the client protocol.
+`swift build --package-path macos/DesktopApp` and `swift test --package-path
+macos/DesktopApp` remain the desktop compile gates. The browser dashboard adds
+Rust route tests, crate packaging asset checks, and a loopback HTTP smoke test.

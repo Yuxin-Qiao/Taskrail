@@ -6,7 +6,7 @@ Taskrail is a local automation manager for developers. The product center is
 small:
 
 ```text
-add/register → schedule → run → history/logs → tui
+add/register → schedule → run → history/logs → browser dashboard
 ```
 
 ## Current product
@@ -14,10 +14,18 @@ add/register → schedule → run → history/logs → tui
 - The Rust crate and CLI are named `taskrail`.
 - The local Registry stores automations, runs, logs, events, and metrics.
 - The daemon evaluates interval and cron triggers.
-- The TUI is the primary visual view.
-- The Rust CLI, daemon, TUI, and local MCP adapter are supported only on ARM64
-  macOS and ARM64 Linux; both use a restricted Unix socket, and the SwiftUI
-  desktop view is Apple Silicon-only.
+- The daemon hosts the primary loopback browser dashboard at
+  `http://127.0.0.1:10100` by default; `taskrail gui` opens it, while `taskrail tui` is the
+  terminal fallback.
+- If `10100` is occupied, the daemon tries the bounded loopback range through
+  `10110`, and `taskrail gui` discovers the active Taskrail endpoint instead of
+  opening an unrelated local service.
+- The browser dashboard is a thin client over the daemon's local RPC handlers;
+  it is a local convenience surface, not a public or Tunnel-exposed web
+  service.
+- The Rust CLI, daemon, TUI, browser dashboard, and local MCP adapter are
+  supported only on ARM64 macOS and ARM64 Linux. The daemon uses a restricted
+  Unix socket for the control plane and loopback-only HTTP for the dashboard.
 - Private ChatGPT Scheduled tasks can call the local MCP adapter through an
   OpenAI Secure MCP Tunnel; the public App review and hosted deployment are
   separate external release gates.
