@@ -63,6 +63,10 @@ following remain intentionally remote or external release gates:
 
 - Docker/container smoke testing, a stable public HTTPS MCP deployment, and
   ChatGPT app review/publication remain external deployment gates.
+- The current feature branch is pushed and all latest branch CI/security
+  evidence is green, but `main` is protected and rejects direct updates,
+  including histories with merge commits; the changes therefore are not yet
+  part of the default branch.
 - Real destructive integration writes and native adoption remain approval- and
   host-specific; the checklist keeps them dry-run or fixture-only.
 
