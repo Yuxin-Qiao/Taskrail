@@ -422,6 +422,8 @@ impl Registry {
     }
 
     pub fn save_automation(&self, automation: &Automation) -> Result<()> {
+        let revision = i64::try_from(automation.revision)
+            .context("automation revision exceeds SQLite integer range")?;
         self.connection.execute(
             "INSERT INTO automations (id, name, ownership, runtime_state, definition_json, revision, source_id, fingerprint, next_run_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -435,7 +437,7 @@ impl Registry {
                 ownership_db(automation.ownership),
                 runtime_state_db(automation.runtime_state),
                 canonical_json(automation)?,
-                automation.revision,
+                revision,
                 automation.source_id,
                 automation.fingerprint,
                 automation.next_run_at.map(|d| d.to_rfc3339()),
@@ -668,13 +670,15 @@ impl Registry {
         automation: &Automation,
         scheduled_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
+        let revision = i64::try_from(automation.revision)
+            .context("automation revision exceeds SQLite integer range")?;
         self.connection.execute(
             "INSERT INTO runs (id, automation_id, automation_revision, status, scheduled_at, started_at, automation_snapshot_json, stdout, stderr)
              VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, '', '')",
             params![
                 run_id,
                 automation.id,
-                automation.revision,
+                revision,
                 scheduled_at.map(|d| d.to_rfc3339()),
                 Utc::now().to_rfc3339(),
                 redacted_automation_snapshot(automation)?,
@@ -694,6 +698,8 @@ impl Registry {
         automation: &Automation,
         scheduled_at: Option<DateTime<Utc>>,
     ) -> Result<bool> {
+        let revision = i64::try_from(automation.revision)
+            .context("automation revision exceeds SQLite integer range")?;
         self.connection.execute_batch("BEGIN IMMEDIATE")?;
         let result: anyhow::Result<bool> = (|| {
             if automation.concurrency == crate::core::ConcurrencyPolicy::ForbidOverlap {
@@ -712,7 +718,7 @@ impl Registry {
                 params![
                     run_id,
                     automation.id,
-                    automation.revision,
+                    revision,
                     scheduled_at.map(|d| d.to_rfc3339()),
                     Utc::now().to_rfc3339(),
                     redacted_automation_snapshot(automation)?,
@@ -1245,6 +1251,25 @@ mod tests {
             })
             .unwrap();
         assert!(seq > 0);
+    }
+
+    #[test]
+    fn rejects_revisions_that_do_not_fit_sqlite_integer() {
+        let registry = Registry::in_memory().unwrap();
+        let mut automation = automation();
+        automation.revision = i64::MAX as u64 + 1;
+
+        assert!(registry.save_automation(&automation).is_err());
+        assert!(
+            registry
+                .record_run_start("run-too-large", &automation, None)
+                .is_err()
+        );
+        assert!(
+            registry
+                .try_record_run_start("run-too-large-atomic", &automation, None)
+                .is_err()
+        );
     }
 
     #[test]
