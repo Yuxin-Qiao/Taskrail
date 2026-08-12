@@ -24,8 +24,8 @@ add/register → schedule → run → history/logs → 浏览器控制台
   类型化 MCP 工具，不会访问本地浏览器 HTTP 接口；
 - Rust CLI、守护进程、TUI、浏览器控制台和本地 MCP 适配器只支持 ARM64 macOS 和 ARM64 Linux；
   控制平面使用受限 Unix socket，浏览器控制台只使用 loopback HTTP；
-- 私有 ChatGPT Scheduled 任务可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；
-  公开应用审核和托管部署属于独立的外部发布门槛；
+- 已连接的 ChatGPT 客户端可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；
+  未来 Scheduled 触发的实测属于独立的外部验证门槛，公开应用审核和托管部署同样如此；
 - `taskrail mcp-fleet` 可以把明确配置的多台主机聚合为一个 MCP 应用；端点和令牌环境变量名
   保留在本机，默认只读，写入路由必须显式启用；私有主机定向能力包括只读 Fleet 控制面、原生领养、
   漂移确认、类型化集成和持久化审批；

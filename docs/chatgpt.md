@@ -206,8 +206,11 @@ In ChatGPT:
    tools.
 4. Refresh the app after changing tool descriptors or rebuilding Taskrail.
 
-The app should be connected before creating a Scheduled task. Scheduled tasks
-can then call the app at the requested time, for example:
+The app should be connected before creating a Scheduled task. The connected
+app's interactive read-only call has been verified locally; a future Scheduled
+trigger still needs to be observed in the target ChatGPT account before it is
+treated as a release-proven workflow. When supported by the account and app
+configuration, use a prompt such as:
 
 ```text
 Every Sunday at 09:00, run the Taskrail automation "Mole cleanup" on the MacBook host.
