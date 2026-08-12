@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct Registry {
@@ -124,6 +125,39 @@ impl Registry {
         &self.path
     }
 
+    /// Return the stable identity for this Taskrail host.
+    ///
+    /// The identity is generated once and stored in the local Registry. It is
+    /// not a credential; it is the routing key a trusted fleet gateway can
+    /// use to distinguish this host from another connected Taskrail daemon.
+    pub fn host_id(&self) -> Result<String> {
+        const KEY: &str = "host_id";
+        if let Some(value) = self
+            .connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = ?1",
+                params![KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(value);
+        }
+
+        let generated = format!("host_{}", Uuid::new_v4());
+        self.connection.execute(
+            "INSERT OR IGNORE INTO metadata (key, value) VALUES (?1, ?2)",
+            params![KEY, generated],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = ?1",
+                params![KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+    }
+
     fn migrate(&self) -> Result<()> {
         self.connection.execute_batch(
             "PRAGMA foreign_keys = ON;
@@ -215,6 +249,10 @@ impl Registry {
                expires_at TEXT NOT NULL,
                decided_at TEXT
              );
+             CREATE TABLE IF NOT EXISTS metadata (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );
              CREATE INDEX IF NOT EXISTS runs_automation_idx ON runs(automation_id, started_at DESC);
              CREATE INDEX IF NOT EXISTS events_run_idx ON events(run_id, seq);
              CREATE INDEX IF NOT EXISTS metrics_recorded_idx ON metrics(recorded_at DESC);
@@ -227,6 +265,10 @@ impl Registry {
         )?;
         self.ensure_column("approvals", "plan_json", "TEXT NOT NULL DEFAULT '{}'")?;
         self.ensure_column("approvals", "request_json", "TEXT NOT NULL DEFAULT '{}'")?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO metadata (key, value) VALUES (?1, ?2)",
+            params!["host_id", format!("host_{}", Uuid::new_v4())],
+        )?;
         Ok(())
     }
 
@@ -1332,6 +1374,17 @@ mod tests {
             })
             .unwrap();
         assert!(seq > 0);
+    }
+
+    #[test]
+    fn host_id_is_stable_and_registry_local() {
+        let first = Registry::in_memory().unwrap();
+        let first_id = first.host_id().unwrap();
+        assert!(first_id.starts_with("host_"));
+        assert_eq!(first.host_id().unwrap(), first_id);
+
+        let second = Registry::in_memory().unwrap();
+        assert_ne!(second.host_id().unwrap(), first_id);
     }
 
     #[test]

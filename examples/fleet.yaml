@@ -1,0 +1,19 @@
+# Taskrail Fleet gateway configuration.
+#
+# This file contains endpoint metadata only. Never put a bearer token here;
+# reference an environment variable whose value is injected by the local
+# process manager or secret store.
+version: 1
+hosts:
+  - id: macbook
+    label: MacBook Pro
+    endpoint: https://macbook.example.com/mcp
+    token_env: TASKRAIL_MACBOOK_TOKEN
+    enabled: false
+    allow_writes: false
+  - id: linux-vps
+    label: Linux VPS
+    endpoint: https://linux-vps.example.com/mcp
+    token_env: TASKRAIL_LINUX_VPS_TOKEN
+    enabled: false
+    allow_writes: false

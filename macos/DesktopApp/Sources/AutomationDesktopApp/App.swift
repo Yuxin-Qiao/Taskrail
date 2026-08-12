@@ -1,4 +1,9 @@
 import Foundation
+// Taskrail's supported macOS binary target is Apple Silicon only.
+#if !arch(arm64)
+#error("Taskrail supports only Apple Silicon (arm64) macOS")
+#endif
+
 import SwiftUI
 
 @main

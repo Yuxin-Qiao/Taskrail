@@ -1,23 +1,39 @@
 # ChatGPT integration
 
+[简体中文](chatgpt.zh-CN.md)
+
 Taskrail's ChatGPT integration is a tool-only MCP app. ChatGPT provides the
 natural-language conversation, the **Scheduled** page, and notifications.
 Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
 
-The connection is deliberately per host: run one Taskrail daemon and one MCP
-tunnel profile on each macOS, Linux, or Windows machine. Set a stable label so ChatGPT can
-distinguish them:
+The connection can be per host, or you can use the explicit fleet gateway to
+present several Taskrail hosts through one MCP app. Each host still owns its
+own Registry, policy, approvals, and execution. Set a stable label so ChatGPT
+can distinguish them:
 
 ```bash
 export TASKRAIL_HOST_LABEL="macbook-pro"
 ```
 
+For several hosts, copy `examples/fleet.yaml` to the local ignored config path,
+replace the example endpoints, inject each token through its `token_env`, and
+start the gateway:
+
+```bash
+taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
+```
+
+The fleet app exposes `taskrail_fleet_overview` first, followed by explicit
+`host_id`-targeted discovery, inventory, run history, logs, and lifecycle tools.
+Fleet hosts are read-only by default. `allow_writes: true` is an explicit opt-in
+for a trusted private endpoint; the remote Taskrail host still enforces its own
+policy and approval boundary.
+
 ## Start the local backend
 
-The daemon owns the SQLite Registry and listens on a user-scoped local endpoint:
-a restricted Unix socket on macOS/Linux or a named pipe that rejects remote
-clients on Windows.
+The daemon owns the SQLite Registry and listens on a user-scoped restricted Unix
+socket on supported ARM64 macOS/Linux hosts.
 On macOS, install the LaunchAgent:
 
 ```bash
@@ -39,12 +55,6 @@ directory selected by `XDG_CONFIG_HOME`). The Registry uses `XDG_DATA_HOME`
 and the socket uses `XDG_RUNTIME_DIR` when those variables are absolute;
 otherwise taskrail falls back to `~/.local/share/taskrail/`. The install command
 fails closed if a systemd user manager is not available.
-
-On Windows, `taskrail daemon --install` creates and starts the current-user
-`Taskrail\\Daemon` Task Scheduler task. The Registry defaults to
-`%LOCALAPPDATA%\\taskrail\\registry.sqlite3`; the local RPC endpoint is a
-per-user named pipe. Windows Task Scheduler is discovery-only for now, so
-`taskrail scan --source task-scheduler` never changes a native task.
 
 If you manage systemd units yourself, the explicit foreground form remains:
 
@@ -175,9 +185,11 @@ Every Sunday at 09:00, run the Taskrail automation "Mole cleanup" on the MacBook
 If the run fails, get its logs and notify me with the exit status and the next action.
 ```
 
-For multiple hosts, use a separate tunnel/profile and host label for each
-machine. In the Scheduled task, name the target host explicitly. Always call
-`taskrail_overview` first when the user wants a complete host summary. It
+For multiple hosts without the fleet gateway, use a separate tunnel/profile and
+host label for each machine. With the fleet gateway, call
+`taskrail_fleet_overview` first and name the configured `host_id` explicitly.
+Always call `taskrail_overview` or
+`taskrail_fleet_overview` first when the user wants a complete host summary. It
 returns the host identity, daemon state, fresh discovery, Taskrail inventory,
 recent runs, and attention items in one read-only result. Use
 `taskrail_status` for a lightweight connectivity check. When
@@ -195,9 +207,9 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
-  Windows Task Scheduler, and Homebrew services and return safe observed-task summaries.
+  and Homebrew services and return safe observed-task summaries.
 - `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd,
-  Windows Task Scheduler, or Homebrew scan without mutating native definitions
+  or Homebrew scan without mutating native definitions
   or the Registry.
 - `taskrail_list_integrations` — inspect the built-in integration catalog,
   executable detection, and doctor status on this host.

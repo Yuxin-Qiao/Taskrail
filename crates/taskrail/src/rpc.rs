@@ -242,9 +242,16 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 .iter()
                 .filter(|automation| automation.runtime_state == RuntimeState::Paused)
                 .count();
+            let host_id = registry.host_id()?;
             Ok(serde_json::json!({
                 "protocol_version": PROTOCOL_VERSION,
                 "service": "taskrail",
+                "host": {
+                    "id": host_id,
+                    "label": host_label(),
+                    "platform": std::env::consts::OS,
+                    "architecture": std::env::consts::ARCH,
+                },
                 "automation_count": automations.len(),
                 "managed_count": managed,
                 "adopted_count": adopted,
@@ -329,7 +336,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     _ => {
                         return invalid_params(
                             request.id,
-                            "params.source must be one of all, launchd, cron, systemd, homebrew, task-scheduler"
+                            "params.source must be one of all, launchd, cron, systemd, or homebrew"
                                 .into(),
                         );
                     }
@@ -788,6 +795,18 @@ where
     operation(&registry)
 }
 
+fn host_label() -> String {
+    ["TASKRAIL_HOST_LABEL", "COMPUTERNAME", "HOSTNAME"]
+        .into_iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "unnamed-host".into())
+}
+
 #[derive(Debug, Clone)]
 struct CreateAutomationParams {
     id: String,
@@ -1027,10 +1046,6 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
     if matches!(source, "all" | "systemd") {
         discovered.extend(SystemdProvider::default().scan()?);
     }
-    #[cfg(windows)]
-    if matches!(source, "all" | "task-scheduler") {
-        discovered.extend(crate::discovery::TaskSchedulerProvider::default().scan()?);
-    }
     if matches!(source, "all" | "homebrew") {
         let homebrew = HomebrewProvider::default().scan()?;
         if source == "all" {
@@ -1053,12 +1068,9 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
             discovered.extend(related);
         }
     }
-    if !matches!(
-        source,
-        "all" | "launchd" | "cron" | "systemd" | "homebrew" | "task-scheduler"
-    ) {
+    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
         anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, homebrew, or task-scheduler"
+            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
         );
     }
     Ok(discovered)

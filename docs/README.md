@@ -1,5 +1,7 @@
 # Taskrail documentation
 
+[简体中文文档](README.zh-CN.md) · [中文 ChatGPT 集成指南](chatgpt.zh-CN.md)
+
 Taskrail is a local automation manager for developers. The product center is
 small:
 
@@ -13,12 +15,15 @@ add/register → schedule → run → history/logs → tui
 - The local Registry stores automations, runs, logs, events, and metrics.
 - The daemon evaluates interval and cron triggers.
 - The TUI is the primary visual view.
-- The Rust CLI, daemon, TUI, and local MCP adapter are supported on macOS, Linux,
-  and Windows; macOS/Linux use a restricted Unix socket, Windows uses a named
-  pipe and Task Scheduler, and the SwiftUI desktop view remains macOS-only.
+- The Rust CLI, daemon, TUI, and local MCP adapter are supported only on ARM64
+  macOS and ARM64 Linux; both use a restricted Unix socket, and the SwiftUI
+  desktop view is Apple Silicon-only.
 - Private ChatGPT Scheduled tasks can call the local MCP adapter through an
   OpenAI Secure MCP Tunnel; the public App review and hosted deployment are
   separate external release gates.
+- `taskrail mcp-fleet` can aggregate multiple explicitly configured hosts into
+  one MCP app; host endpoints and token environment references remain local,
+  and write routing is opt-in and read-only by default.
 - The public read-only `taskrail mcp-http` adapter is available for deployment
   behind a TLS/authentication edge; the container example under `deploy/` is
   single-host only and is not a hosted multi-tenant service.
@@ -38,8 +43,10 @@ add/register → schedule → run → history/logs → tui
 - [Research report](../deep-research-report.md) — historical product and
   architecture research; it contains proposals that were intentionally removed
   from the current MVP.
-- [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to a
-  macOS, Linux, or Windows Taskrail host.
+- [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to an
+  ARM64 macOS or Linux Taskrail host.
+- [Fleet example](../examples/fleet.yaml) — local multi-host endpoint metadata
+  template; copy it outside the repository before enabling hosts.
 - [OpenAI submission checklist](OPENAI_SUBMISSION.md) — public review profile,
   metadata, test cases, policy pages, and external launch gates.
 - [OpenAI release notes](OPENAI_RELEASE_NOTES.md) — portal-ready initial

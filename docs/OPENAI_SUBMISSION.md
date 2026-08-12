@@ -82,8 +82,8 @@ be completed by a local source change:
 ## Reviewer-facing boundaries
 
 The public profile can inspect local automation inventory, native scheduler
-observations (including Windows Task Scheduler when connected to a Windows
-agent), adoption journal state, read-only GitHub observations, local
+observations on an ARM64 macOS or Linux agent, adoption journal state, read-only
+GitHub observations, local
 package/security findings, run history/logs, attention items, and audit events.
 It cannot create or run commands, change scheduler ownership, change files,
 approve an action, or send a write to GitHub or another public service.

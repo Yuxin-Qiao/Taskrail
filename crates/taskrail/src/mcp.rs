@@ -26,7 +26,7 @@ const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Linux cron/systemd, and Windows Task Scheduler discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, or taskrail_status for a lightweight connectivity check, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +91,46 @@ pub async fn serve_stdio(socket_path: PathBuf) -> Result<()> {
         }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(request) => handle_request_with_profile(request, &socket_path, profile).await,
+            Err(error) => Some(error_response(
+                Value::Null,
+                -32700,
+                format!("invalid JSON: {error}"),
+            )),
+        };
+        if let Some(response) = response {
+            let mut payload = serde_json::to_vec(&response)?;
+            payload.push(b'\n');
+            stdout.write_all(&payload).await?;
+            stdout.flush().await?;
+        }
+        line.clear();
+    }
+    Ok(())
+}
+
+/// Serve the local fleet gateway over stdio.
+///
+/// Unlike `taskrail mcp`, this process does not open a local Registry or
+/// execute commands itself. It routes explicitly named fleet tools to the
+/// configured remote Taskrail hosts; each remote host remains responsible for
+/// its own policy, approvals, and execution.
+pub async fn serve_fleet_stdio(config_path: PathBuf) -> Result<()> {
+    let gateway = crate::fleet::FleetGateway::from_config(
+        crate::fleet::FleetConfig::load(&config_path)
+            .with_context(|| format!("load fleet gateway config {}", config_path.display()))?,
+    )?;
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let mut stdout = tokio::io::stdout();
+    let mut line = String::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        if line.trim().is_empty() {
+            line.clear();
+            continue;
+        }
+        let response = match serde_json::from_str::<Request>(&line) {
+            Ok(request) => handle_fleet_request(request, &gateway).await,
             Err(error) => Some(error_response(
                 Value::Null,
                 -32700,
@@ -538,6 +578,316 @@ async fn handle_request_with_profile(
     })
 }
 
+async fn handle_fleet_request(
+    request: Request,
+    gateway: &crate::fleet::FleetGateway,
+) -> Option<Value> {
+    request.id.as_ref()?;
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if request.jsonrpc != "2.0" {
+        return Some(error_response(id, -32600, "jsonrpc must be \"2.0\"".into()));
+    }
+    let result = match request.method.as_str() {
+        "initialize" => Ok(fleet_initialize_result()),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({"tools": fleet_tool_descriptors()})),
+        "resources/list" => Ok(json!({"resources": []})),
+        "prompts/list" => Ok(json!({"prompts": []})),
+        "notifications/initialized" => Ok(Value::Null),
+        "tools/call" => fleet_call_tool(&request.params, gateway).await,
+        method => Err(anyhow::anyhow!("method not found: {method}")),
+    };
+    Some(match result {
+        Ok(result) => success_response(id, result),
+        Err(error) => error_response(id, -32000, error.to_string()),
+    })
+}
+
+fn fleet_initialize_result() -> Value {
+    json!({
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+        "capabilities": {"tools": {"listChanged": false}},
+        "serverInfo": {"name": "Taskrail Fleet", "version": SERVER_VERSION},
+        "instructions": "Taskrail Fleet routes explicit host-targeted tools to user-configured Taskrail daemons. Call taskrail_fleet_overview first, then name a host_id for every host-specific operation. Host endpoints, policies, approvals, and execution remain authoritative on the target host. Never claim a remote run succeeded unless its tool result reports that status.",
+    })
+}
+
+fn fleet_tool_descriptors() -> Vec<Value> {
+    vec![
+        tool(
+            "taskrail_fleet_overview",
+            "Taskrail fleet overview",
+            "Use this first when the user wants a complete overview of every configured Taskrail host. It probes each enabled host and returns online/offline state plus safe host summaries without changing any host.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_host_overview",
+            "Taskrail host overview",
+            "Use this when the user names one configured Taskrail host and wants its identity, native discovery, automations, recent runs, and attention items.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_discover",
+            "Discover a remote host",
+            "Use this when the user wants a fresh read-only native scheduler scan on one configured host. It never mutates that host's scheduler definitions or Registry.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "source":{"type":"string","enum":["all","launchd","cron","systemd","homebrew"],"default":"all"}
+                }),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_automations",
+            "List remote automations",
+            "Use this when the user wants the managed, adopted, observed, paused, or scheduled automations on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_get_automation",
+            "Inspect remote automation",
+            "Use this when the user wants the definition, ownership, trigger, or next run of an automation on one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_runs",
+            "List remote runs",
+            "Use this when the user wants recent run status on one named host, optionally filtered by automation id.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "automation_id":{"type":"string","minLength":1},
+                    "limit":{"type":"integer","minimum":1,"maximum":500}
+                }),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_list_attention",
+            "List remote attention items",
+            "Use this when the user wants failures, drift, paused automations, or other attention items from one named host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":500}}),
+                &["host_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_create_automation",
+            "Create remote automation",
+            "Use this only when the user explicitly asks to create a direct-argv automation on a named private host. The fleet config must opt that host into writes; the remote host still validates and owns the operation. Never create shell pipelines.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "id":{"type":"string","minLength":1},
+                    "name":{"type":"string","minLength":1},
+                    "executable":{"type":"string","minLength":1},
+                    "args":{"type":"array","items":{"type":"string"}},
+                    "cwd":{"type":"string","minLength":1},
+                    "trigger":{"type":"string","enum":["manual","interval","cron"],"default":"manual"},
+                    "interval_seconds":{"type":"integer","minimum":1},
+                    "cron":{"type":"string","minLength":1},
+                    "timezone":{"type":"string","default":"local"},
+                    "timeout_seconds":{"type":"integer","minimum":1,"maximum":86400}
+                }),
+                &["host_id", "id", "executable"],
+            ),
+            false,
+            false,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_pause_automation",
+            "Pause remote automation",
+            "Use this only when the user explicitly asks to pause a named automation on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_resume_automation",
+            "Resume remote automation",
+            "Use this only when the user explicitly asks to resume a named automation on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1}}),
+                &["host_id", "id"],
+            ),
+            false,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_run_automation",
+            "Run remote automation now",
+            "Use this only when the user explicitly asks to run a named automation now on a configured private host. Do not report success until the remote result contains its run status.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"id":{"type":"string","minLength":1},"allow_observed":{"type":"boolean","default":false}}),
+                &["host_id", "id"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
+            "taskrail_fleet_get_run_logs",
+            "Get remote run logs",
+            "Use this when the user wants bounded stdout or stderr for a run on a named host, usually after a reported failure.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"run_id":{"type":"string","minLength":1}}),
+                &["host_id", "run_id"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_cancel_run",
+            "Cancel remote run",
+            "Use this only when the user explicitly asks to stop an active run on a configured private host.",
+            object_schema(
+                json!({"host_id":{"type":"string","minLength":1},"run_id":{"type":"string","minLength":1}}),
+                &["host_id", "run_id"],
+            ),
+            false,
+            true,
+            true,
+        ),
+    ]
+}
+
+async fn fleet_call_tool(params: &Value, gateway: &crate::fleet::FleetGateway) -> Result<Value> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .context("tools/call requires params.name")?;
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if name == "taskrail_fleet_overview" {
+        let result = gateway.fleet_overview().await;
+        return Ok(tool_result("taskrail_fleet_overview", result));
+    }
+    let host_id = arguments
+        .get("host_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .context("fleet tool requires a non-empty host_id")?
+        .to_owned();
+    let remote_tool = match name {
+        "taskrail_fleet_host_overview" => "taskrail_overview",
+        "taskrail_fleet_discover" => "taskrail_discover_local_automations",
+        "taskrail_fleet_list_automations" => "taskrail_list_automations",
+        "taskrail_fleet_get_automation" => "taskrail_get_automation",
+        "taskrail_fleet_list_runs" => "taskrail_list_runs",
+        "taskrail_fleet_list_attention" => "taskrail_list_attention",
+        "taskrail_fleet_create_automation" => "taskrail_create_automation",
+        "taskrail_fleet_pause_automation" => "taskrail_pause_automation",
+        "taskrail_fleet_resume_automation" => "taskrail_resume_automation",
+        "taskrail_fleet_run_automation" => "taskrail_run_automation",
+        "taskrail_fleet_get_run_logs" => "taskrail_get_run_logs",
+        "taskrail_fleet_cancel_run" => "taskrail_cancel_run",
+        _ => anyhow::bail!("unknown Taskrail fleet tool: {name}"),
+    };
+    let mut remote_arguments = arguments;
+    remote_arguments
+        .as_object_mut()
+        .expect("fleet tool arguments are an object")
+        .remove("host_id");
+    let result = gateway
+        .call_tool(&host_id, remote_tool, remote_arguments)
+        .await?;
+    Ok(tool_result(
+        name,
+        json!({"host_id": host_id, "result": result}),
+    ))
+}
+
+fn tool_result(name: &str, result: Value) -> Value {
+    let summary = match name {
+        "taskrail_fleet_overview" => format!(
+            "Taskrail fleet overview: {} configured host(s), {} online.",
+            result
+                .get("host_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            result
+                .get("online_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        ),
+        _ => format!("Taskrail fleet tool {name} completed for the requested host."),
+    };
+    json!({
+        "content": [{"type":"text","text":summary}],
+        "structuredContent": {"result": result},
+        "isError": false,
+    })
+}
+
+#[cfg(test)]
+mod fleet_contract_tests {
+    use super::*;
+
+    #[test]
+    fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
+        let tools = fleet_tool_descriptors();
+        assert_eq!(tools.len(), 13);
+        let overview = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_overview")
+            .unwrap();
+        assert_eq!(overview["annotations"]["readOnlyHint"], true);
+        assert_eq!(overview["annotations"]["openWorldHint"], true);
+        let host_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_run_automation")
+            .unwrap();
+        assert_eq!(host_tool["annotations"]["destructiveHint"], true);
+        assert!(
+            host_tool["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "host_id")
+        );
+    }
+}
+
 fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
     let protocol_version = params
         .get("protocolVersion")
@@ -565,7 +915,7 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_status",
             "Taskrail status",
-            "Use this first to verify that the Taskrail daemon is connected and identify the local macOS, Linux, or Windows host. This check only reads daemon status and a fresh native-scheduler summary.",
+            "Use this first to verify that the Taskrail daemon is connected and identify the local ARM64 macOS or Linux host. This check only reads daemon status and a fresh native-scheduler summary.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -592,10 +942,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_discover_local_automations",
             "Discover local automations",
-            "Use this when the user asks what automation tasks already exist on this macOS, Linux, or Windows host. It performs a fresh read-only scan of launchd, cron, systemd, Windows Task Scheduler, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user asks what automation tasks already exist on this ARM64 macOS or Linux host. It performs a fresh read-only scan of launchd, cron, systemd, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"], "default":"all"},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"], "default":"all"},
                 }),
                 &[],
             ),
@@ -606,10 +956,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_scan_native",
             "Scan native schedulers",
-            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, Windows Task Scheduler, or Homebrew services on this host. It does not modify native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, or Homebrew services on this ARM64 host. It does not modify native scheduler definitions or the Taskrail Registry.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","task-scheduler"]},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"]},
                 }),
                 &[],
             ),
@@ -1086,17 +1436,18 @@ fn tool(
     destructive: bool,
     idempotent: bool,
 ) -> Value {
-    let open_world = matches!(
-        name,
-        "taskrail_restic"
-            | "taskrail_rclone"
-            | "taskrail_github"
-            | "taskrail_mas"
-            | "taskrail_osv_scanner"
-            | "taskrail_trivy"
-            | "taskrail_run_automation"
-            | "taskrail_execute_approved"
-    );
+    let open_world = name.starts_with("taskrail_fleet_")
+        || matches!(
+            name,
+            "taskrail_restic"
+                | "taskrail_rclone"
+                | "taskrail_github"
+                | "taskrail_mas"
+                | "taskrail_osv_scanner"
+                | "taskrail_trivy"
+                | "taskrail_run_automation"
+                | "taskrail_execute_approved"
+        );
     json!({
         "name": name,
         "title": title,
@@ -1328,11 +1679,7 @@ async fn call_tool_with_profile(
             .map(sanitize_discovered_sources)?;
         json!({
             "daemon": value,
-            "host": {
-                "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
-                "platform": std::env::consts::OS,
-                "architecture": std::env::consts::ARCH,
-            },
+            "host": local_host_identity(&value),
             "local_discovery": discovery,
         })
     } else {
@@ -1363,11 +1710,7 @@ async fn call_overview_tool(socket_path: &PathBuf) -> Result<Value> {
         rpc::call(socket_path, "inbox.list", json!({"limit":100})).await?,
     );
     let value = json!({
-        "host": {
-            "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
-            "platform": std::env::consts::OS,
-            "architecture": std::env::consts::ARCH,
-        },
+        "host": local_host_identity(&daemon),
         "daemon": daemon,
         "native_discovery": native_discovery,
         "automations": automations,
@@ -1380,6 +1723,27 @@ async fn call_overview_tool(socket_path: &PathBuf) -> Result<Value> {
         "structuredContent": {"result": value},
         "isError": false,
     }))
+}
+
+fn local_host_identity(daemon: &Value) -> Value {
+    let mut host = daemon.get("host").cloned().unwrap_or_else(|| json!({}));
+    let Some(object) = host.as_object_mut() else {
+        return json!({
+            "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
+            "platform": std::env::consts::OS,
+            "architecture": std::env::consts::ARCH,
+        });
+    };
+    object
+        .entry("label")
+        .or_insert_with(|| json!(std::env::var("TASKRAIL_HOST_LABEL").ok()));
+    object
+        .entry("platform")
+        .or_insert_with(|| json!(std::env::consts::OS));
+    object
+        .entry("architecture")
+        .or_insert_with(|| json!(std::env::consts::ARCH));
+    host
 }
 
 async fn call_rpc_tool(

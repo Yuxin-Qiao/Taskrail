@@ -10,7 +10,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <p><a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a></p>
+  <p><a href="README.zh-CN.md">简体中文</a> · <a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a></p>
 </div>
 
 <p align="center">
@@ -20,6 +20,18 @@
 <p align="center">
   <img src="docs/assets/taskrail-topology.svg" alt="Scripts, schedules, native jobs, and AI integrations flow into the Taskrail daemon, which runs work and records history, logs, and events" width="960" />
 </p>
+
+## Supported targets
+
+Official binaries and CI cover only these ARM64 targets:
+
+- macOS Apple Silicon: `aarch64-apple-darwin`;
+- Linux ARM64: `aarch64-unknown-linux-gnu`.
+
+x86_64 and Windows are not supported release targets. The Rust crate fails
+closed when compiled for another target instead of producing an untested
+binary. The macOS SwiftUI view is also Apple Silicon-only. Source builds on
+other architectures are intentionally unsupported.
 
 ## Quick start
 
@@ -62,12 +74,9 @@ taskrail status
 ```
 
 On macOS this installs a LaunchAgent. On Linux this installs a systemd user
-unit under `~/.config/systemd/user/`. On Windows this installs the per-user
-`Taskrail\\Daemon` Task Scheduler task and uses a user-scoped named pipe. The
-Registry is stored under `$XDG_DATA_HOME/taskrail/` (or
-`~/.local/share/taskrail/`) on Linux and `%LOCALAPPDATA%\\taskrail\\` on
-Windows; the Unix daemon socket uses `$XDG_RUNTIME_DIR/taskrail/` when
-available. For a headless Linux host,
+unit under `~/.config/systemd/user/`. The Registry is stored under
+`$XDG_DATA_HOME/taskrail/` (or `~/.local/share/taskrail/`) on Linux; the Unix
+daemon socket uses `$XDG_RUNTIME_DIR/taskrail/` when available. For a headless Linux host,
 enable user lingering before installing:
 
 ```bash
@@ -80,13 +89,13 @@ taskrail daemon --install
 Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT Web, Desktop,
 and Mobile use the same MCP tool contract; ChatGPT's Scheduled
 page remains the natural-language scheduler and notification surface; Taskrail
-is the local execution backend that ChatGPT calls on the selected macOS, Linux,
-or Windows host.
+is the local execution backend that ChatGPT calls on the selected ARM64 macOS
+or Linux host.
 
 Start the local MCP adapter after the Taskrail daemon is running:
 
 ```bash
-taskrail daemon --install       # LaunchAgent/systemd/Task Scheduler by platform
+taskrail daemon --install       # LaunchAgent/systemd by platform
 taskrail mcp                    # MCP stdio adapter for the current host
 taskrail integration chatgpt-doctor
 ```
@@ -98,8 +107,21 @@ so an already-connected ChatGPT app with cached tool metadata can still answer
 what is present on the host. Commands remain direct argv; ChatGPT cannot turn a
 free-form string into a shell pipeline through this interface.
 
-For a private macOS, Linux, or Windows host, connect `taskrail mcp` through OpenAI Secure
-MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app. Once the app
+For one private ARM64 macOS or Linux host, connect `taskrail mcp` through
+OpenAI Secure MCP Tunnel, then add the tunnel as a ChatGPT developer-mode app.
+For several hosts, use `taskrail mcp-fleet` with the local `examples/fleet.yaml`
+shape and connect that one gateway. Copy the example outside the repository,
+replace its endpoints and token environment-variable names, and enable only
+the hosts you trust:
+
+```bash
+mkdir -p ~/.config/taskrail
+cp examples/fleet.yaml ~/.config/taskrail/fleet.yaml
+taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
+```
+
+The checked-in example keeps its hosts disabled and uses placeholder endpoints;
+it never makes an outbound request until you edit the local copy. Once the app
 is connected, a Scheduled task can use prompts such as:
 
 ```text
@@ -108,8 +130,8 @@ If it fails, inspect the run logs and tell me what needs attention.
 ```
 
 See [ChatGPT integration](docs/chatgpt.md) for the tunnel, permissions, and
-multi-host setup details. Set `TASKRAIL_HOST_LABEL` for a stable label when
-more than one host is connected.
+multi-host setup details. With the fleet gateway, always name the target
+`host_id` in a request; do not rely on a display label alone.
 
 For a public deployment, use the enforced read-only HTTP profile:
 
@@ -131,9 +153,7 @@ TASKRAIL_MCP_PROFILE=public taskrail mcp
 ```
 
 This profile omits creation, deletion, execution, adoption, and approval
-tools. For a public deployment, use `taskrail mcp-http` behind a production
-HTTPS endpoint with authentication and per-user host binding; a local tunnel
-is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
+tools.
 
 Open the live terminal dashboard:
 
@@ -158,7 +178,7 @@ Taskrail can manage commands and scripts you already use:
 
 - one-shot commands and recurring interval or cron jobs;
 - local run history, stdout, stderr, and operational events;
-- launchd, cron, systemd user services, Windows Task Scheduler, and Homebrew service discovery;
+- launchd, cron, systemd user services, and Homebrew service discovery;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;
@@ -274,7 +294,7 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## Current status
 
-The current package is `0.1.5` and is usable for local command automation and
+The current package is `0.1.6` and is usable for local command automation and
 private ChatGPT Scheduled-task control. The stable center is:
 
 ```text
@@ -292,15 +312,19 @@ The following are optional integrations or still future work:
 | Codex CLI and Responses executor | 🟣 Optional integration |
 | Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
 | Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟢 Verified |
+| Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
-| Packaged CLI and unsigned macOS app releases | 🟢 Tag-triggered workflow |
+| ARM64 CLI and unsigned Apple Silicon macOS app releases | 🟢 Tag-triggered workflow |
 | Homebrew formula | 🟡 Future |
 
 ## Documentation
 
+- [简体中文 README](README.zh-CN.md)
+- [中文文档索引](docs/README.zh-CN.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 - [ChatGPT integration](docs/chatgpt.md)
+- [中文 ChatGPT 集成指南](docs/chatgpt.zh-CN.md)
 - [Acceptance checklist](docs/ACCEPTANCE.md)
 - [Architecture decisions](docs/adr/)
 - [Research notes](deep-research-report.md)

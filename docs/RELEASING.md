@@ -8,11 +8,12 @@ private paths are present.
 
 ## GitHub release
 
-Pushing a tag such as `v0.1.3` runs `.github/workflows/release.yml`. The tag
+Pushing a tag such as `v0.1.6` runs `.github/workflows/release.yml`. The tag
 must match the `taskrail` Cargo package version and the macOS bundle version.
-The workflow builds the Rust CLI for Linux and macOS, packages an unsigned
-`Taskrail.app`, publishes SHA-256 checksums and SPDX SBOMs, and creates GitHub
-artifact attestations for the CLI archives.
+The workflow builds only ARM64 artifacts: an `aarch64-unknown-linux-gnu` Linux
+CLI, an `aarch64-apple-darwin` macOS CLI, and an Apple Silicon unsigned
+`Taskrail.app`. It publishes SHA-256 checksums and SPDX SBOMs, and creates
+GitHub artifact attestations for the CLI archives.
 
 The final publish job is attached to the `release` GitHub Environment. The
 repository currently restricts that environment to `v*` tags and applies a
@@ -24,8 +25,10 @@ Before tagging a release, update the crate and desktop bundle versions together,
 run the full Rust and Swift validation commands in `docs/ACCEPTANCE.md`, and
 verify that the generated app executable matches `Info.plist` (`taskrail`).
 
-The local daemon and MCP client also build for Windows; the public release
-workflow remains focused on the Linux CLI and macOS desktop bundle.
+The supported release contract is ARM64 macOS (Apple Silicon) and ARM64 Linux.
+x86_64 and Windows are not supported release targets. The Rust crate fails
+closed at compile time on other targets so an accidental unsupported build
+cannot be mistaken for a supported artifact.
 
 The desktop bundle is intentionally unsigned in the public workflow. Apple
 Developer signing identities, entitlements, provisioning, and notarization

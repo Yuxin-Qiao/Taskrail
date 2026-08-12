@@ -14,7 +14,7 @@ use taskrail::{
     core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
     discovery::{
         CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        TaskSchedulerProvider, merge_homebrew_sources, same_native_path,
+        merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
     integrations::{
@@ -33,7 +33,7 @@ use uuid::Uuid;
 #[command(
     name = "taskrail",
     version,
-    about = "A local-first, cross-platform automation control plane"
+    about = "A local-first ARM64 automation control plane for macOS and Linux"
 )]
 struct Cli {
     /// Override the local SQLite Registry path.
@@ -50,7 +50,6 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
-    TaskScheduler,
 }
 
 #[derive(Debug, Subcommand)]
@@ -319,6 +318,12 @@ enum Action {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+    /// Expose an explicit multi-host Taskrail fleet gateway over stdio.
+    McpFleet {
+        /// YAML config containing named MCP endpoints and token environment references.
+        #[arg(long, env = "TASKRAIL_FLEET_CONFIG")]
+        config: Option<PathBuf>,
+    },
     /// Expose the public read-only MCP profile over Streamable HTTP.
     McpHttp {
         /// Local address for a TLS-terminating reverse proxy to reach.
@@ -341,7 +346,7 @@ enum Action {
         /// Maximum accepted JSON request body size.
         #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
         max_body_bytes: usize,
-        /// Local endpoint served by `taskrail daemon` (Unix socket or Windows named pipe).
+        /// Local endpoint served by `taskrail daemon` (restricted Unix socket).
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -673,6 +678,9 @@ async fn main() -> Result<()> {
         Action::Mcp { socket } => {
             return mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await;
         }
+        Action::McpFleet { config } => {
+            return mcp::serve_fleet_stdio(config.unwrap_or_else(default_fleet_config_path)).await;
+        }
         Action::McpHttp {
             bind,
             bearer_token_env,
@@ -884,7 +892,7 @@ async fn main() -> Result<()> {
         }
         Action::Integrations => integrations(&registry),
         Action::Integration { action } => integration_doctor(&registry, action).await,
-        Action::Mcp { .. } | Action::McpHttp { .. } => {
+        Action::Mcp { .. } | Action::McpFleet { .. } | Action::McpHttp { .. } => {
             unreachable!("MCP transports return before opening the local Registry")
         }
     }
@@ -1675,7 +1683,7 @@ fn install_daemon(registry: &Registry) -> Result<()> {
     {
         let _ = registry;
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
+            "daemon installation currently supports ARM64 macOS LaunchAgents and ARM64 Linux user systemd"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1808,7 +1816,7 @@ fn uninstall_daemon() -> Result<()> {
     ))]
     {
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
+            "daemon installation currently supports ARM64 macOS LaunchAgents and ARM64 Linux user systemd"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1954,6 +1962,22 @@ fn default_registry_path() -> PathBuf {
     {
         user_home().join(".local/share/taskrail/registry.sqlite3")
     }
+}
+
+fn default_fleet_config_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| user_home().join("AppData/Roaming"));
+        return base.join("taskrail/fleet.yaml");
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(config_home) = absolute_env_path("XDG_CONFIG_HOME") {
+        return config_home.join("taskrail/fleet.yaml");
+    }
+    user_home().join(".config/taskrail/fleet.yaml")
 }
 
 fn default_socket_path() -> PathBuf {
@@ -2402,9 +2426,6 @@ fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
     }
     if matches!(source, SourceKind::All | SourceKind::Systemd) {
         discovered.extend(SystemdProvider::default().scan()?);
-    }
-    if matches!(source, SourceKind::All | SourceKind::TaskScheduler) {
-        discovered.extend(TaskSchedulerProvider::default().scan()?);
     }
     if matches!(source, SourceKind::All | SourceKind::Homebrew) {
         let homebrew = HomebrewProvider::default().scan()?;

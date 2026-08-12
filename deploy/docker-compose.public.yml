@@ -1,5 +1,6 @@
 services:
   taskrail-daemon:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -27,6 +28,7 @@ services:
       - ALL
 
   taskrail-http:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -56,6 +58,7 @@ services:
       - ALL
 
   taskrail-healthcheck:
+    platform: linux/arm64
     image: curlimages/curl:8.10.1
     profiles: [smoke]
     depends_on:

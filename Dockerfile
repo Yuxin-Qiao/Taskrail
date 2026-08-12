@@ -1,5 +1,7 @@
 FROM rust:1.88-bookworm AS build
 
+RUN dpkg --print-architecture | grep -Fx arm64
+
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY README.md ./README.md

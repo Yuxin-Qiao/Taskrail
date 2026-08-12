@@ -51,7 +51,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Scans native launchd, cron, systemd, Windows Task Scheduler, and Homebrew sources and returns sanitized observations without reconciling or writing the Registry.",
+        "read_only_justification": "Scans native launchd, cron, systemd, and Homebrew sources on the supported ARM64 host and returns sanitized observations without reconciling or writing the Registry.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -63,7 +63,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Performs a fresh native scheduler scan, including Windows Task Scheduler when present, and returns sanitized observations without changing native definitions or the Registry.",
+        "read_only_justification": "Performs a fresh native scheduler scan on the supported ARM64 host and returns sanitized observations without changing native definitions or the Registry.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -236,7 +236,7 @@
     },
     {
       "description": "Discover native scheduler jobs without changing them.",
-      "user_prompt": "What launchd, cron, systemd, Windows Task Scheduler, and Homebrew automation jobs are present on this computer? Do not modify anything.",
+      "user_prompt": "What launchd, cron, systemd, and Homebrew automation jobs are present on this ARM64 computer? Do not modify anything.",
       "file_attachment_urls": null,
       "tools_triggered": "taskrail_discover_local_automations",
       "expected_output": "Returns a sanitized provider-grouped inventory with safe command summaries and explicitly states that native definitions and the Registry were not changed.",

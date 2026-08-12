@@ -35,3 +35,7 @@
 *.pid
 *.sock
 .DS_Store
+
+# A root-level fleet inventory may contain private hostnames and must stay local.
+/fleet.yaml
+/fleet.yml

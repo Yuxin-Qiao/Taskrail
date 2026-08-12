@@ -3,7 +3,8 @@
 This directory provides a reproducible single-host deployment for the public
 read-only MCP profile. It runs the local daemon and the stateless HTTP adapter
 as separate, non-root containers sharing only the registry volume and Unix
-socket.
+socket. The container deployment is ARM64-only (`linux/arm64`), matching the
+official Taskrail release targets.
 
 ## Local deployment smoke test
 
