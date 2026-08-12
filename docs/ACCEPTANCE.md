@@ -39,6 +39,8 @@ Execution date: 2026-08-12
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Desktop runtime | Installed daemon is running, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; Tunnel ready; socket mode 0600 | PASS |
 | F2 | CI definition | GitHub Actions YAML parses and contains Ubuntu/macOS Rust plus macOS Swift jobs | YAML parse passed; workflow inspected | PASS |
+| F3 | Release packaging | A version tag has a reproducible Linux CLI, macOS CLI, and unsigned desktop bundle workflow | local unsigned app bundle build passed; release workflow inspected | PASS |
+| F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, and contribution checks are configured | `.github` governance files parse and are staged | PASS |
 
 ## Commands to execute
 

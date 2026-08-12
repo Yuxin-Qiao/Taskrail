@@ -207,7 +207,8 @@ The following are optional integrations or still future work:
 | Codex CLI and Responses executor | Optional integration |
 | GitHub read-only watcher | Optional integration |
 | ChatGPT MCP app and Scheduled-task control | Integration |
-| Packaged releases and Homebrew formula | Future |
+| Packaged CLI and unsigned macOS app releases | Tag-triggered workflow |
+| Homebrew formula | Future |
 
 ## Documentation
 
