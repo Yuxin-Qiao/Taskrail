@@ -13,8 +13,9 @@ add/register → schedule → run → history/logs → tui
 - The local Registry stores automations, runs, logs, events, and metrics.
 - The daemon evaluates interval and cron triggers.
 - The TUI is the primary visual view.
-- The Rust CLI, daemon, TUI, Unix socket, and systemd user service are supported
-  on Linux; the SwiftUI desktop view under `macos/DesktopApp` remains macOS-only.
+- The Rust CLI, daemon, TUI, and local MCP adapter are supported on macOS, Linux,
+  and Windows; macOS/Linux use a restricted Unix socket, Windows uses a named
+  pipe and Task Scheduler, and the SwiftUI desktop view remains macOS-only.
 - ChatGPT Scheduled tasks can call the local MCP adapter through a private
   OpenAI Secure MCP Tunnel.
 - The public read-only `taskrail mcp-http` adapter is available for deployment

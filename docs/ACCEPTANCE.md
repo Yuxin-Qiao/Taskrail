@@ -22,14 +22,14 @@ Execution date: 2026-08-12
 | A1 | Metadata | Rust workspace, package metadata, license, README, and OSS files are present | `Cargo.toml`, `crates/taskrail/Cargo.toml`, `LICENSE`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | PASS |
 | A2 | Repository hygiene | Formatting diff is clean and generated/runtime artifacts are ignored | `git diff --check`, `.gitignore`, tracked-artifact scan | PASS |
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
-| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo fmt --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo test --workspace --all-features`; 144 tests passed | PASS |
+| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo fmt --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo test --workspace --all-features`; 147 tests passed | PASS |
 | B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
 | B3 | Linux build | Linux target produces an ELF binary without macOS-only warnings/errors | `cargo zigbuild --release --workspace --target x86_64-unknown-linux-gnu`; ELF produced; Linux test binaries cross-built | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
-| C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation | local scan found 26 observations; discovery tests passed | PASS |
+| C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | fixture-backed Windows CSV parser and native discovery tests passed | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
-| C5 | Daemon/RPC | Unix socket daemon responds, enforces 0600 socket permissions, and exposes lifecycle/log/run APIs | temporary daemon/MCP smoke; socket mode 0600 | PASS |
+| C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke; Windows GNU cross-build passed | PASS |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 37 tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |

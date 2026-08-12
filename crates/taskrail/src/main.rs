@@ -341,7 +341,7 @@ enum Action {
         /// Maximum accepted JSON request body size.
         #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
         max_body_bytes: usize,
-        /// Unix socket served by `taskrail daemon`.
+        /// Local endpoint served by `taskrail daemon` (Unix socket or Windows named pipe).
         #[arg(long)]
         socket: Option<PathBuf>,
     },
