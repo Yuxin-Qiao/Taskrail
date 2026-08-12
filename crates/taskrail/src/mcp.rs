@@ -1581,19 +1581,19 @@ fn sanitize_private_value(value: &mut Value) {
 }
 
 fn sanitize_home_prefix(path: &str) -> String {
-    let Some(home) = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .and_then(|value| value.into_string().ok())
-    else {
-        return path.to_owned();
-    };
-    if path == home {
-        return "~".into();
-    }
-    for separator in ['/', '\\'] {
-        let prefix = format!("{home}{separator}");
-        if let Some(rest) = path.strip_prefix(&prefix) {
-            return format!("~/{}", rest.replace('\\', "/"));
+    for variable in ["USERPROFILE", "HOME"] {
+        let Some(home) = std::env::var_os(variable).and_then(|value| value.into_string().ok())
+        else {
+            continue;
+        };
+        if path == home {
+            return "~".into();
+        }
+        for separator in ['/', '\\'] {
+            let prefix = format!("{home}{separator}");
+            if let Some(rest) = path.strip_prefix(&prefix) {
+                return format!("~/{}", rest.replace('\\', "/"));
+            }
         }
     }
     path.to_owned()

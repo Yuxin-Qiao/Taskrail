@@ -1684,4 +1684,31 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
     }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_named_pipe_round_trip_uses_local_pipe() {
+        let pipe = PathBuf::from(format!(r"\\.\pipe\taskrail-test-{}", uuid::Uuid::new_v4()));
+        let dir = tempdir().unwrap();
+        let registry = dir.path().join("registry.sqlite3");
+        let server_pipe = pipe.clone();
+        let server_registry = registry.clone();
+        let server = tokio::spawn(async move {
+            serve_once(server_pipe, server_registry).await.unwrap();
+        });
+
+        let mut response = None;
+        for _ in 0..100 {
+            match call(&pipe, "daemon.ping", Value::Null).await {
+                Ok(value) => {
+                    response = Some(value);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+            }
+        }
+        let response = response.expect("Taskrail named pipe did not become ready");
+        assert_eq!(response["service"], "taskrail");
+        server.await.unwrap();
+    }
 }
