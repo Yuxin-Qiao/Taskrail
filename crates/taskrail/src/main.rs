@@ -1948,7 +1948,7 @@ fn default_registry_path() -> PathBuf {
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| user_home().join("AppData/Local"));
-        return base.join("taskrail/registry.sqlite3");
+        base.join("taskrail/registry.sqlite3")
     }
     #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
     {
@@ -1963,14 +1963,14 @@ fn default_socket_path() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        return PathBuf::from(format!(
+        PathBuf::from(format!(
             r"\\.\pipe\taskrail-{}",
             sanitize_pipe_component(
                 &std::env::var("USERNAME")
                     .or_else(|_| std::env::var("USER"))
                     .unwrap_or_else(|_| "default".into())
             )
-        ));
+        ))
     }
     #[cfg(not(target_os = "windows"))]
     {
