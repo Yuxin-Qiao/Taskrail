@@ -13,6 +13,8 @@ add/register → schedule → run → history/logs → tui
 - The local Registry stores automations, runs, logs, events, and metrics.
 - The daemon evaluates interval and cron triggers.
 - The TUI is the primary visual view.
+- ChatGPT Scheduled tasks can call the local MCP adapter through a private
+  OpenAI Secure MCP Tunnel.
 - Native scheduler discovery and optional Codex/GitHub integrations stay at the
   edge of the core manager.
 - Commands are direct argv and shell strings are rejected.
@@ -26,6 +28,11 @@ add/register → schedule → run → history/logs → tui
 - [Research report](../deep-research-report.md) — historical product and
   architecture research; it contains proposals that were intentionally removed
   from the current MVP.
+- [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to a Mac
+  or Linux Taskrail host.
+- [Acceptance checklist](ACCEPTANCE.md) — reproducible release-gate commands
+  and evidence requirements.
 
-The removed MCP, Codex App Server, approval, privileged-helper, and policy-engine
-documents are no longer part of the current product contract.
+The removed Codex App Server, approval, privileged-helper, and policy-engine
+documents are no longer part of the current product contract. The MCP adapter
+described in `chatgpt.md` is the supported ChatGPT integration boundary.

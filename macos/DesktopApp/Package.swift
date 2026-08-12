@@ -8,6 +8,10 @@ let package = Package(
         .executable(name: "AutomationDesktopApp", targets: ["AutomationDesktopApp"])
     ],
     targets: [
-        .executableTarget(name: "AutomationDesktopApp")
+        .executableTarget(name: "AutomationDesktopApp"),
+        .testTarget(
+            name: "AutomationDesktopAppTests",
+            dependencies: ["AutomationDesktopApp"]
+        )
     ]
 )

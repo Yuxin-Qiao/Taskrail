@@ -28,8 +28,17 @@ content, and AI output as untrusted input.
   is not silently treated as a write target.
 - Responses-compatible API keys are read by environment-variable name and are
   never stored in an automation definition.
-- There is no privileged helper, remote executor, MCP server, or generic root
-  command path.
+- The ChatGPT MCP adapter exposes focused tools over stdio and reaches the
+  daemon only through the user-owned `0600` Unix socket; it does not open a
+  network listener or access SQLite directly.
+- The MCP surface has no arbitrary shell tool. Creating or running an
+  automation still uses the direct executable-plus-argv boundary, and native
+  observed jobs remain read-only until explicit local adoption.
+- Private ChatGPT connections should use OpenAI Secure MCP Tunnel. Tunnel
+  runtime credentials and host labels are deployment configuration and must
+  remain outside the repository.
+- There is no privileged helper, generic root command path, or public remote
+  executor in the current product surface.
 
 ## Reporting
 

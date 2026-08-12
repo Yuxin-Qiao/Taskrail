@@ -1,0 +1,170 @@
+# ChatGPT integration
+
+Taskrail's ChatGPT integration is a tool-only MCP app. ChatGPT provides the
+natural-language conversation, the **Scheduled** page, and notifications.
+Taskrail provides the local daemon, scheduler, command execution, run history,
+logs, and host-local audit events.
+
+The connection is deliberately per host: run one Taskrail daemon and one MCP
+tunnel profile on each Mac or Linux machine. Set a stable label so ChatGPT can
+distinguish them:
+
+```bash
+export TASKRAIL_HOST_LABEL="macbook-pro"
+```
+
+## Start the local backend
+
+The daemon owns the SQLite Registry and listens on a user-only Unix socket.
+On macOS, install the LaunchAgent:
+
+```bash
+taskrail daemon --install
+taskrail status
+```
+
+On Linux, run the daemon as a user service or keep this process supervised by
+your existing service manager. Taskrail can install a user systemd unit for
+you:
+
+```bash
+taskrail daemon --install
+taskrail status
+```
+
+If you manage systemd units yourself, the explicit foreground form remains:
+
+```bash
+taskrail daemon --socket "$HOME/.local/share/taskrail/taskraild.sock"
+```
+
+The MCP process is intentionally short-lived and speaks stdio. The tunnel
+client starts it when ChatGPT needs a tool call:
+
+```bash
+taskrail mcp --socket "$HOME/.local/share/taskrail/taskraild.sock"
+```
+
+Do not run the MCP process with its stdout redirected to a human-readable log;
+stdout is the MCP protocol stream. Diagnostics belong on stderr.
+
+Before configuring the OpenAI side, check the local prerequisites without
+printing any credential:
+
+```bash
+taskrail integration chatgpt-doctor
+```
+
+This reports daemon/socket, MCP adapter, tunnel-client, Tunnel ID, and runtime
+key presence. It does not prove that ChatGPT can reach the Tunnel; that final
+check is `tunnel-client doctor` after the Platform configuration exists.
+
+After `CONTROL_PLANE_TUNNEL_ID` and `CONTROL_PLANE_API_KEY` are configured in
+the local environment, Taskrail can start the managed tunnel runtime for you:
+
+```bash
+taskrail integration chatgpt-connect
+tunnel-client runtimes status taskrail-local --json
+```
+
+The connect command passes only the reference `env:CONTROL_PLANE_API_KEY` to
+`tunnel-client`; it does not put the key in a profile argument, Registry row,
+log, or Git file.
+
+For unattended reconnects on macOS, keep the value in the user launchd
+environment instead of shell history or a repository file:
+
+```bash
+launchctl setenv CONTROL_PLANE_API_KEY '<runtime key>'
+taskrail integration chatgpt-connect
+```
+
+Taskrail reads that value only to start the short-lived tunnel child and never
+prints it. On Linux, use the environment mechanism of the user service
+manager, such as a protected systemd `EnvironmentFile`.
+
+## Private connection with Secure MCP Tunnel
+
+Secure MCP Tunnel keeps the MCP server private and uses an outbound connection
+from the host. Create a tunnel in OpenAI Platform and associate it with the
+ChatGPT workspace that will use the app. Then configure the latest
+`tunnel-client` release with a stdio profile:
+
+```bash
+export CONTROL_PLANE_API_KEY="<store this outside the repository>"
+
+tunnel-client init \
+  --sample sample_mcp_stdio_local \
+  --profile taskrail-local \
+  --tunnel-id "<tunnel_id>" \
+  --mcp-command "taskrail mcp --socket $HOME/.local/share/taskrail/taskraild.sock"
+
+tunnel-client doctor --profile taskrail-local --explain
+tunnel-client run --profile taskrail-local
+```
+
+Keep `tunnel-client run` healthy while the app is being used. The tunnel
+runtime key and tunnel id are deployment secrets; never commit them to this
+repository or put them in an automation definition.
+
+## Connect the app in ChatGPT
+
+In ChatGPT:
+
+1. Enable Developer mode in Settings → Security and login.
+2. Open the Plugins/Apps developer connection screen and create an app.
+3. Choose **Tunnel**, select the Taskrail tunnel, and review the discovered
+   tools.
+4. Refresh the app after changing tool descriptors or rebuilding Taskrail.
+
+The app should be connected before creating a Scheduled task. Scheduled tasks
+can then call the app at the requested time, for example:
+
+```text
+Every Sunday at 09:00, run the Taskrail automation "Mole cleanup" on the MacBook host.
+If the run fails, get its logs and notify me with the exit status and the next action.
+```
+
+For multiple hosts, use a separate tunnel/profile and host label for each
+machine. In the Scheduled task, name the target host explicitly. Always call
+`taskrail_status` first. That stable entry also includes a fresh safe local
+discovery summary for compatibility with cached ChatGPT tool metadata. When
+the user asks what automation tasks already exist on the host, prefer
+`taskrail_discover_local_automations` for a fresh native scan; a successful
+ChatGPT response is not proof that a different host's daemon ran the task.
+
+## Tool surface
+
+The adapter exposes focused tools rather than a generic shell endpoint:
+
+- `taskrail_status` — verify daemon connectivity and identify the host.
+- `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
+  inventory.
+- `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
+  and Homebrew services and return safe observed-task summaries.
+- `taskrail_scan_native` — reconcile launchd, cron, systemd, or Homebrew
+  observations without mutating native definitions.
+- `taskrail_create_automation` — create a direct-argv manual, interval, or cron
+  task.
+- `taskrail_pause_automation` / `taskrail_resume_automation` — change managed
+  runtime state.
+- `taskrail_run_automation` / `taskrail_cancel_run` — explicitly start or stop
+  a run.
+- `taskrail_list_runs` / `taskrail_get_run_logs` — inspect outcomes.
+- `taskrail_list_attention` / `taskrail_list_events` — review failures, drift,
+  and recent activity.
+
+The adapter does not accept arbitrary shell strings, expose the SQLite file, or
+change observed native jobs. Native adoption remains an explicit local
+operation.
+
+## What this integration does not claim
+
+ChatGPT's Scheduled page is the scheduler for the ChatGPT prompt. Taskrail's
+daemon is the scheduler for local automations. A Scheduled task that calls
+Taskrail at 09:00 is therefore a two-stage workflow: ChatGPT wakes up and calls
+the local app; Taskrail then runs the selected local automation according to
+its own definition and records the result.
+
+For unattended operation, keep the Taskrail daemon and tunnel client running,
+and verify failures through the returned run status and logs.

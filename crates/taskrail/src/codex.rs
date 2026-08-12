@@ -3,6 +3,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -10,6 +12,7 @@ use tokio::{
     process::Command,
     time::{Duration, timeout},
 };
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -33,6 +36,9 @@ pub struct CodexRequest {
     pub prompt: String,
     pub sandbox: CodexSandbox,
     pub model: Option<String>,
+    /// Optional Codex model catalog override for installations whose global
+    /// catalog contains fields unsupported by the installed Codex CLI.
+    pub model_catalog_json: Option<PathBuf>,
     pub output_schema: Option<PathBuf>,
     pub add_dirs: Vec<PathBuf>,
     pub timeout_seconds: u64,
@@ -40,7 +46,18 @@ pub struct CodexRequest {
 
 impl CodexRequest {
     pub fn command_spec(&self) -> CommandSpec {
-        let mut args = vec![
+        self.command_spec_with_catalog(self.model_catalog_json.as_deref())
+    }
+
+    fn command_spec_with_catalog(&self, model_catalog_json: Option<&Path>) -> CommandSpec {
+        let mut args = Vec::new();
+        if let Some(catalog) = model_catalog_json {
+            args.extend([
+                "-c".to_owned(),
+                format!("model_catalog_json={}", catalog.to_string_lossy()),
+            ]);
+        }
+        args.extend([
             "exec".to_owned(),
             "--json".to_owned(),
             "--ephemeral".to_owned(),
@@ -50,7 +67,7 @@ impl CodexRequest {
             self.sandbox.as_cli_arg().to_owned(),
             "--cd".to_owned(),
             self.cwd.to_string_lossy().into_owned(),
-        ];
+        ]);
         if let Some(model) = &self.model {
             args.extend(["--model".to_owned(), model.clone()]);
         }
@@ -106,7 +123,13 @@ pub struct CodexRunResult {
 
 pub async fn execute(request: &CodexRequest) -> Result<CodexRunResult> {
     request.validate()?;
-    let command = request.command_spec();
+    let temporary_catalog = temporary_compatible_catalog(request)?;
+    let model_catalog_json = request.model_catalog_json.as_deref().or_else(|| {
+        temporary_catalog
+            .as_ref()
+            .map(|catalog| catalog.path.as_path())
+    });
+    let command = request.command_spec_with_catalog(model_catalog_json);
     let start = Instant::now();
     let mut process = Command::new(&command.executable);
     process.kill_on_drop(true);
@@ -144,6 +167,81 @@ pub async fn execute(request: &CodexRequest) -> Result<CodexRunResult> {
         duration_ms: start.elapsed().as_millis(),
         summary,
     })
+}
+
+struct TemporaryCatalog {
+    path: PathBuf,
+}
+
+impl Drop for TemporaryCatalog {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Keep a known cc-switch catalog incompatibility local to one Codex run.
+/// The installed Codex CLI only accepts `text` and `image` input modalities,
+/// while older generated catalogs may also advertise `audio`.
+fn temporary_compatible_catalog(request: &CodexRequest) -> Result<Option<TemporaryCatalog>> {
+    if request.model_catalog_json.is_some() {
+        return Ok(None);
+    }
+    let Some(home) = std::env::var_os("HOME") else {
+        return Ok(None);
+    };
+    let source = PathBuf::from(home).join(".codex/cc-switch-model-catalog.json");
+    let raw = match fs::read_to_string(&source) {
+        Ok(raw) => raw,
+        Err(_) => return Ok(None),
+    };
+    let mut catalog: Value = match serde_json::from_str(&raw) {
+        Ok(catalog) => catalog,
+        Err(_) => return Ok(None),
+    };
+    if !strip_audio_modalities(&mut catalog) {
+        return Ok(None);
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "taskrail-codex-model-catalog-{}.json",
+        Uuid::new_v4()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options
+        .open(&path)
+        .with_context(|| format!("create temporary Codex model catalog {}", path.display()))?;
+    serde_json::to_writer_pretty(&mut file, &catalog)
+        .context("write temporary Codex model catalog")?;
+    file.write_all(b"\n")?;
+    Ok(Some(TemporaryCatalog { path }))
+}
+
+fn strip_audio_modalities(value: &mut Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            let mut changed = false;
+            if let Some(Value::Array(modalities)) = object.get_mut("input_modalities") {
+                let before = modalities.len();
+                modalities.retain(|modality| modality.as_str() != Some("audio"));
+                changed |= before != modalities.len();
+            }
+            for child in object.values_mut() {
+                changed |= strip_audio_modalities(child);
+            }
+            changed
+        }
+        Value::Array(values) => {
+            let mut changed = false;
+            for value in values {
+                changed |= strip_audio_modalities(value);
+            }
+            changed
+        }
+        _ => false,
+    }
 }
 
 pub fn parse_jsonl(stdout: &str) -> Result<CodexSummary> {
@@ -209,6 +307,7 @@ mod tests {
             prompt: "inspect the repository".into(),
             sandbox: CodexSandbox::ReadOnly,
             model: Some("gpt-5".into()),
+            model_catalog_json: Some(PathBuf::from("/tmp/catalog.json")),
             output_schema: Some(PathBuf::from("schema.json")),
             add_dirs: vec![PathBuf::from("/tmp/shared")],
             timeout_seconds: 60,
@@ -226,6 +325,16 @@ mod tests {
                 .any(|pair| pair == ["--json", "--ephemeral"])
         );
         assert!(command.args.contains(&"--output-schema".into()));
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|pair| pair == ["-c", "model_catalog_json=/tmp/catalog.json"])
+        );
+        assert!(
+            command.args.iter().position(|arg| arg == "-c").unwrap()
+                < command.args.iter().position(|arg| arg == "exec").unwrap()
+        );
         assert!(!command.shell);
     }
 
@@ -247,5 +356,25 @@ mod tests {
     #[test]
     fn rejects_malformed_jsonl_instead_of_claiming_success() {
         assert!(parse_jsonl("not-json\n").is_err());
+    }
+
+    #[test]
+    fn strips_only_unsupported_audio_modalities() {
+        let mut value = serde_json::json!({
+            "input_modalities": ["text", "image", "audio"],
+            "nested": {"input_modalities": ["text", "audio"]},
+            "other": ["audio"]
+        });
+        assert!(strip_audio_modalities(&mut value));
+        assert_eq!(
+            value["input_modalities"],
+            serde_json::json!(["text", "image"])
+        );
+        assert_eq!(
+            value["nested"]["input_modalities"],
+            serde_json::json!(["text"])
+        );
+        assert_eq!(value["other"], serde_json::json!(["audio"]));
+        assert!(!strip_audio_modalities(&mut value));
     }
 }

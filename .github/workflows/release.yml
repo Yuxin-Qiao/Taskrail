@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux release asset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and package
+        run: |
+          cargo build --release --package taskrail
+          tar -C target/release -czf "taskrail-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" taskrail
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: taskrail-*.tar.gz
+
+  macos:
+    name: macOS release assets
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Rust binary
+        run: |
+          cargo build --release --package taskrail
+          tar -C target/release -czf "taskrail-${GITHUB_REF_NAME}-macos.tar.gz" taskrail
+      - name: Build unsigned desktop app bundle
+        working-directory: macos/DesktopApp
+        run: |
+          swift build -c release
+          binary="$(find .build -type f -path '*/release/AutomationDesktopApp' -print -quit)"
+          test -n "$binary"
+          app="Taskrail.app"
+          mkdir -p "$app/Contents/MacOS"
+          cp "$binary" "$app/Contents/MacOS/Taskrail"
+          cp Info.plist "$app/Contents/Info.plist"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "../../taskrail-${GITHUB_REF_NAME}-macos-unsigned.app.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            taskrail-*.tar.gz
+            taskrail-*.app.zip
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes

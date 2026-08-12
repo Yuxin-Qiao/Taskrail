@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible problem in Taskrail
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, tunnel credentials, private automation definitions, or private logs.
+  - type: input
+    id: version
+    attributes:
+      label: Taskrail version
+      placeholder: taskrail 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 14 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest safe command or configuration that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true

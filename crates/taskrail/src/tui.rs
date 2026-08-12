@@ -128,7 +128,7 @@ fn run_loop(
                 observed,
                 inbox.len()
             ));
-            frame.render_widget(footer, chunks[1]);
+            frame.render_widget(footer, chunks[2]);
         })?;
         if event::poll(Duration::from_millis(500)).context("poll TUI input")?
             && let Event::Key(key) = event::read().context("read TUI input")?

@@ -1,8 +1,17 @@
-use crate::{core::RuntimeState, service, storage::Registry};
+use crate::{
+    core::{Automation, CommandSpec, Event, Ownership, RuntimeState, StepSpec, Trigger},
+    discovery::{
+        CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
+        merge_homebrew_sources, same_native_path,
+    },
+    service,
+    storage::Registry,
+};
 use anyhow::{Context, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
@@ -69,6 +78,44 @@ pub async fn serve_once(
     handle_stream(stream, &registry_path).await
 }
 
+/// Call the daemon's local JSON-RPC boundary from another Taskrail process,
+/// such as the MCP adapter.
+pub async fn call(
+    socket_path: impl AsRef<Path>,
+    method: impl Into<String>,
+    params: Value,
+) -> Result<Value> {
+    let socket_path = socket_path.as_ref();
+    let mut stream = UnixStream::connect(socket_path)
+        .await
+        .with_context(|| format!("connect Taskrail daemon socket {}", socket_path.display()))?;
+    let request = Request {
+        jsonrpc: "2.0".into(),
+        id: Value::from(1),
+        method: method.into(),
+        params,
+    };
+    let mut payload = serde_json::to_vec(&request)?;
+    payload.push(b'\n');
+    stream
+        .write_all(&payload)
+        .await
+        .context("write Taskrail daemon request")?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .await
+        .context("read Taskrail daemon response")?;
+    let response: Response = serde_json::from_str(&line).context("decode daemon response")?;
+    if let Some(error) = response.error {
+        anyhow::bail!("daemon RPC error {}: {}", error.code, error.message);
+    }
+    response
+        .result
+        .context("daemon response did not contain a result")
+}
+
 async fn handle_stream(stream: UnixStream, registry_path: &Path) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -99,6 +146,34 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             "protocol_version": PROTOCOL_VERSION,
             "service": "taskrail"
         })),
+        "daemon.status" => with_registry(registry_path, |registry| {
+            let automations = registry.list_automations()?;
+            let managed = automations
+                .iter()
+                .filter(|automation| automation.ownership == Ownership::Managed)
+                .count();
+            let adopted = automations
+                .iter()
+                .filter(|automation| automation.ownership == Ownership::Adopted)
+                .count();
+            let observed = automations
+                .iter()
+                .filter(|automation| automation.ownership == Ownership::Observed)
+                .count();
+            let paused = automations
+                .iter()
+                .filter(|automation| automation.runtime_state == RuntimeState::Paused)
+                .count();
+            Ok(serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "service": "taskrail",
+                "automation_count": automations.len(),
+                "managed_count": managed,
+                "adopted_count": adopted,
+                "observed_count": observed,
+                "paused_count": paused,
+            }))
+        }),
         "automation.list" => with_registry(registry_path, |registry| {
             Ok(serde_json::to_value(registry.list_automations()?)?)
         }),
@@ -112,6 +187,51 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     Some(value) => Ok(serde_json::to_value(value)?),
                     None => anyhow::bail!("automation not found: {id}"),
                 }
+            })
+        }
+        "automation.create" => {
+            let params = match CreateAutomationParams::parse(&request.params) {
+                Ok(params) => params,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(create_automation(registry, params)?)?)
+            })
+        }
+        "automation.scan" => {
+            let source = match request.params.get("source") {
+                None => "all".to_owned(),
+                Some(value) => match value.as_str() {
+                    Some(value) if !value.trim().is_empty() => value.to_owned(),
+                    _ => {
+                        return invalid_params(
+                            request.id,
+                            "params.source must be one of all, launchd, cron, systemd, homebrew"
+                                .into(),
+                        );
+                    }
+                },
+            };
+            let discovered = match scan_native_sources(&source) {
+                Ok(discovered) => discovered,
+                Err(error) => {
+                    return Response {
+                        jsonrpc: "2.0".into(),
+                        id: request.id,
+                        result: None,
+                        error: Some(ErrorObject {
+                            code: -32000,
+                            message: error.to_string(),
+                            data: None,
+                        }),
+                    };
+                }
+            };
+            with_registry(registry_path, move |registry| {
+                for item in &discovered {
+                    registry.reconcile_discovered_source(item)?;
+                }
+                Ok(serde_json::to_value(discovered)?)
             })
         }
         "automation.pause" | "automation.resume" => {
@@ -308,6 +428,210 @@ where
     operation(&registry)
 }
 
+#[derive(Debug, Clone)]
+struct CreateAutomationParams {
+    id: String,
+    name: String,
+    executable: PathBuf,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
+    trigger: Trigger,
+    timeout_seconds: u64,
+}
+
+impl CreateAutomationParams {
+    fn parse(params: &Value) -> Result<Self, String> {
+        let id = required_string(params, "id")?;
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&id)
+            .to_owned();
+        let executable = PathBuf::from(required_string(params, "executable")?);
+        let args = match params.get("args") {
+            None => Vec::new(),
+            Some(value) => value
+                .as_array()
+                .ok_or_else(|| "params.args must be an array of strings".to_owned())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "params.args must be an array of strings".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        let command = CommandSpec {
+            executable: executable.clone(),
+            args: args.clone(),
+            ..CommandSpec::default()
+        };
+        if command.invokes_shell() {
+            return Err(
+                "direct argv only: shell executables with -c/-e command strings are not accepted"
+                    .into(),
+            );
+        }
+        let cwd = params
+            .get("cwd")
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "params.cwd must be a non-empty string".to_owned())
+            })
+            .transpose()?;
+        let trigger_kind = params
+            .get("trigger")
+            .and_then(Value::as_str)
+            .unwrap_or("manual");
+        let trigger = match trigger_kind {
+            "manual" => Trigger::Manual,
+            "interval" => {
+                let seconds = params
+                    .get("interval_seconds")
+                    .and_then(Value::as_u64)
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| {
+                        "params.interval_seconds must be greater than zero for interval triggers"
+                            .to_owned()
+                    })?;
+                Trigger::Interval { seconds }
+            }
+            "cron" => {
+                let expression = required_string(params, "cron")?;
+                let timezone = params
+                    .get("timezone")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("local")
+                    .to_owned();
+                Trigger::Cron {
+                    expression,
+                    timezone,
+                }
+            }
+            _ => return Err("params.trigger must be one of manual, interval, or cron".to_owned()),
+        };
+        let timeout_seconds = params
+            .get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(30 * 60);
+        if timeout_seconds == 0 {
+            return Err("params.timeout_seconds must be greater than zero".into());
+        }
+        Ok(Self {
+            id,
+            name,
+            executable,
+            args,
+            cwd,
+            trigger,
+            timeout_seconds,
+        })
+    }
+}
+
+fn required_string(params: &Value, key: &str) -> Result<String, String> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("params.{key} must be a non-empty string"))
+}
+
+fn create_automation(registry: &Registry, params: CreateAutomationParams) -> Result<Automation> {
+    if registry.get_automation(&params.id)?.is_some()
+        || registry.get_automation(&params.name)?.is_some()
+    {
+        anyhow::bail!(
+            "automation id or name already exists: {}",
+            if registry.get_automation(&params.id)?.is_some() {
+                params.id
+            } else {
+                params.name
+            }
+        );
+    }
+    let next_run_at = crate::scheduler::next_run(&params.trigger, Utc::now())?;
+    let automation = Automation {
+        id: params.id,
+        name: params.name,
+        ownership: Ownership::Managed,
+        runtime_state: RuntimeState::Enabled,
+        trigger: params.trigger,
+        next_run_at,
+        timeout_seconds: params.timeout_seconds,
+        steps: vec![StepSpec {
+            id: "command".into(),
+            command: CommandSpec {
+                executable: params.executable,
+                args: params.args,
+                cwd: params.cwd,
+                ..CommandSpec::default()
+            },
+            responses: None,
+        }],
+        ..Automation::default()
+    };
+    registry.save_automation(&automation)?;
+    registry.append_event(&Event {
+        run_id: None,
+        occurred_at: Utc::now(),
+        event_type: "automation.created".into(),
+        payload: serde_json::json!({
+            "automation_id": automation.id,
+            "source": "mcp",
+        }),
+    })?;
+    Ok(automation)
+}
+
+fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource>> {
+    let mut discovered = Vec::new();
+    if matches!(source, "all" | "launchd") {
+        discovered.extend(LaunchdProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "cron") {
+        discovered.extend(CronProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "systemd") {
+        discovered.extend(SystemdProvider::default().scan()?);
+    }
+    if matches!(source, "all" | "homebrew") {
+        let homebrew = HomebrewProvider::default().scan()?;
+        if source == "all" {
+            let unmatched = merge_homebrew_sources(&mut discovered, homebrew);
+            discovered.extend(unmatched);
+        } else {
+            let mut launchd = LaunchdProvider::default().scan()?;
+            let unmatched = merge_homebrew_sources(&mut launchd, homebrew.clone());
+            let mut related = homebrew
+                .iter()
+                .filter_map(|homebrew| {
+                    launchd.iter().find(|native| {
+                        native.provider == "launchd"
+                            && same_native_path(native.path.as_deref(), homebrew.path.as_deref())
+                    })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            related.extend(unmatched);
+            discovered.extend(related);
+        }
+    }
+    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
+        anyhow::bail!(
+            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
+        );
+    }
+    Ok(discovered)
+}
+
 fn string_param(params: &Value, key: &str) -> Result<String, String> {
     params
         .get(key)
@@ -426,6 +750,103 @@ mod tests {
         )
         .await;
         assert_eq!(unknown.error.unwrap().code, -32601);
+    }
+
+    #[tokio::test]
+    async fn daemon_status_reports_registry_ownership_counts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let registry = Registry::open(&path).unwrap();
+        for (id, ownership, runtime_state) in [
+            ("managed", Ownership::Managed, RuntimeState::Enabled),
+            ("adopted", Ownership::Adopted, RuntimeState::Enabled),
+            ("observed", Ownership::Observed, RuntimeState::Paused),
+        ] {
+            registry
+                .save_automation(&crate::core::Automation {
+                    id: id.into(),
+                    name: id.into(),
+                    ownership,
+                    runtime_state,
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        let status = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "daemon.status".into(),
+                params: Value::Null,
+            },
+            &path,
+        )
+        .await;
+        let status = status.result.unwrap();
+        assert_eq!(status["automation_count"], 3);
+        assert_eq!(status["managed_count"], 1);
+        assert_eq!(status["adopted_count"], 1);
+        assert_eq!(status["observed_count"], 1);
+        assert_eq!(status["paused_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn create_rpc_registers_managed_direct_argv_automation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let created = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "automation.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-created",
+                    "name": "RPC created",
+                    "executable": "/bin/echo",
+                    "args": ["hello"],
+                    "trigger": "interval",
+                    "interval_seconds": 3600,
+                }),
+            },
+            &path,
+        )
+        .await;
+        let automation = created.result.unwrap();
+        assert_eq!(automation["ownership"], "managed");
+        assert_eq!(automation["steps"][0]["command"]["shell"], false);
+        assert_eq!(automation["trigger"]["kind"], "interval");
+        assert!(automation["next_run_at"].is_string());
+
+        let duplicate = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "automation.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-created",
+                    "executable": "/bin/echo",
+                }),
+            },
+            &path,
+        )
+        .await;
+        assert_eq!(duplicate.error.unwrap().code, -32000);
+
+        let shell = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "automation.create".into(),
+                params: serde_json::json!({
+                    "id": "shell-attempt",
+                    "executable": "/bin/sh",
+                    "args": ["-c", "echo unsafe"],
+                }),
+            },
+            &path,
+        )
+        .await;
+        assert_eq!(shell.error.unwrap().code, -32602);
     }
 
     #[tokio::test]

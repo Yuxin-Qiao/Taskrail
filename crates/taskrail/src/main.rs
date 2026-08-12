@@ -19,7 +19,7 @@ use taskrail::{
         merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
-    rpc, service,
+    mcp, rpc, service,
     storage::Registry,
     verification::{self, VerificationCommand},
     worktree,
@@ -104,6 +104,9 @@ enum Action {
         sandbox: CodexSandboxArg,
         #[arg(long)]
         model: Option<String>,
+        /// Optional Codex model catalog path passed through as a config override.
+        #[arg(long, env = "TASKRAIL_CODEX_MODEL_CATALOG")]
+        model_catalog_json: Option<PathBuf>,
         #[arg(long)]
         output_schema: Option<PathBuf>,
         #[arg(long)]
@@ -256,6 +259,12 @@ enum Action {
         #[command(subcommand)]
         action: IntegrationAction,
     },
+    /// Expose the local Taskrail daemon as an MCP server over stdio.
+    Mcp {
+        /// Unix socket served by `taskrail daemon`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -297,6 +306,8 @@ enum WorktreeAction {
 }
 
 #[derive(Debug, Subcommand)]
+// Keep the explicit `*-doctor` names stable and discoverable in the CLI.
+#[allow(clippy::enum_variant_names)]
 enum IntegrationAction {
     /// Check Codex CLI availability and Git-repository preconditions.
     CodexDoctor {
@@ -308,6 +319,24 @@ enum IntegrationAction {
         #[arg(long, default_value = "github.com")]
         hostname: String,
     },
+    /// Check the local Taskrail/MCP prerequisites for ChatGPT Scheduled tasks.
+    ChatgptDoctor {
+        /// Profile name used by `tunnel-client`; this check never prints credentials.
+        #[arg(long, default_value = "taskrail-local")]
+        profile: String,
+    },
+    /// Start a managed tunnel-client runtime for this Taskrail host.
+    ChatgptConnect {
+        /// Existing OpenAI Tunnel ID; defaults to CONTROL_PLANE_TUNNEL_ID.
+        #[arg(long, env = "CONTROL_PLANE_TUNNEL_ID")]
+        tunnel_id: Option<String>,
+        /// Alias used by tunnel-client runtime supervision.
+        #[arg(long, default_value = "taskrail-local")]
+        alias: String,
+        /// Profile written by tunnel-client.
+        #[arg(long, default_value = "taskrail-local")]
+        profile: String,
+    },
 }
 
 struct CodexCliOptions {
@@ -316,6 +345,7 @@ struct CodexCliOptions {
     prompt_file: Option<PathBuf>,
     sandbox: CodexSandboxArg,
     model: Option<String>,
+    model_catalog_json: Option<PathBuf>,
     output_schema: Option<PathBuf>,
     worktree_dir: Option<PathBuf>,
     timeout_seconds: u64,
@@ -380,6 +410,7 @@ async fn main() -> Result<()> {
             prompt_file,
             sandbox,
             model,
+            model_catalog_json,
             output_schema,
             worktree_dir,
             timeout_seconds,
@@ -392,6 +423,7 @@ async fn main() -> Result<()> {
                     prompt_file,
                     sandbox,
                     model,
+                    model_catalog_json,
                     output_schema,
                     worktree_dir,
                     timeout_seconds,
@@ -485,13 +517,26 @@ async fn main() -> Result<()> {
         }
         Action::Status => {
             println!("registry: {}", registry.path().display());
+            #[cfg(target_os = "macos")]
             match daemon_launch_agent_path() {
                 Ok(path) if path.exists() => println!("daemon: installed ({})", path.display()),
                 _ => println!("daemon: not installed; run `taskrail daemon --install` on macOS"),
             }
+            #[cfg(target_os = "linux")]
+            match systemd_user_unit_path() {
+                Ok(path) if path.exists() => println!("daemon: installed ({})", path.display()),
+                _ => println!("daemon: not installed; run `taskrail daemon --install` on Linux"),
+            }
+            #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+            println!(
+                "daemon: not installed; run `taskrail daemon --install` on a supported platform"
+            );
             Ok(())
         }
         Action::Integration { action } => integration_doctor(action),
+        Action::Mcp { socket } => {
+            mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await
+        }
     }
 }
 
@@ -513,6 +558,12 @@ fn integration_doctor(action: IntegrationAction) -> Result<()> {
     let report = match action {
         IntegrationAction::CodexDoctor { cwd } => codex_doctor(&cwd),
         IntegrationAction::GhDoctor { hostname } => gh_doctor(&hostname),
+        IntegrationAction::ChatgptDoctor { profile } => chatgpt_doctor(&profile),
+        IntegrationAction::ChatgptConnect {
+            tunnel_id,
+            alias,
+            profile,
+        } => return chatgpt_connect(tunnel_id, &alias, &profile),
     }?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
@@ -599,6 +650,224 @@ fn gh_doctor(hostname: &str) -> Result<IntegrationReport> {
     })
 }
 
+fn chatgpt_doctor(profile: &str) -> Result<IntegrationReport> {
+    let (tunnel_available, version, detail) = probe_version("tunnel-client");
+    let managed_runtime = tunnel_runtime_status(profile);
+    let daemon_socket = default_socket_path();
+    #[cfg(unix)]
+    let daemon_connected = std::os::unix::net::UnixStream::connect(&daemon_socket).is_ok();
+    #[cfg(not(unix))]
+    let daemon_connected = false;
+    let mcp_available = ProcessCommand::new("taskrail")
+        .args(["mcp", "--help"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    let tunnel_id_present =
+        std::env::var_os("CONTROL_PLANE_TUNNEL_ID").is_some() || managed_runtime.tunnel_id_present;
+    let runtime_key_present = configured_runtime_key().is_some() || managed_runtime.ready;
+    let all_local = daemon_connected && mcp_available && tunnel_available;
+    let fully_configured = all_local && tunnel_id_present && runtime_key_present;
+
+    let checks = vec![
+        IntegrationCheck {
+            name: "taskrail_daemon".into(),
+            ok: daemon_connected,
+            detail: if daemon_connected {
+                format!("connected at {}", daemon_socket.display())
+            } else {
+                format!(
+                    "not connected at {}; start `taskrail daemon`",
+                    daemon_socket.display()
+                )
+            },
+        },
+        IntegrationCheck {
+            name: "mcp_adapter".into(),
+            ok: mcp_available,
+            detail: if mcp_available {
+                "`taskrail mcp` is available".into()
+            } else {
+                "`taskrail mcp` is unavailable".into()
+            },
+        },
+        IntegrationCheck {
+            name: "tunnel_client".into(),
+            ok: tunnel_available,
+            detail: version.unwrap_or(detail),
+        },
+        IntegrationCheck {
+            name: "tunnel_id".into(),
+            ok: tunnel_id_present,
+            detail: if tunnel_id_present {
+                if managed_runtime.tunnel_id_present
+                    && std::env::var_os("CONTROL_PLANE_TUNNEL_ID").is_none()
+                {
+                    "present in the managed runtime (value hidden)".into()
+                } else {
+                    "present (value hidden)".into()
+                }
+            } else {
+                "absent; create or select a Tunnel in OpenAI Platform".into()
+            },
+        },
+        IntegrationCheck {
+            name: "runtime_key".into(),
+            ok: runtime_key_present,
+            detail: if runtime_key_present {
+                if managed_runtime.ready && configured_runtime_key().is_none() {
+                    "present in the ready managed runtime (value hidden)".into()
+                } else {
+                    "present (value hidden)".into()
+                }
+            } else {
+                "absent; create a runtime key and set CONTROL_PLANE_API_KEY".into()
+            },
+        },
+        IntegrationCheck {
+            name: "tunnel_inputs".into(),
+            ok: fully_configured,
+            detail: if fully_configured {
+                if managed_runtime.ready {
+                    format!("managed tunnel runtime {profile} is ready")
+                } else {
+                    format!(
+                        "Tunnel ID and runtime key are present; connect profile {profile} with `taskrail integration chatgpt-connect`"
+                    )
+                }
+            } else {
+                format!(
+                    "profile {profile} cannot be connected until the Tunnel ID and runtime key are configured"
+                )
+            },
+        },
+    ];
+    Ok(IntegrationReport {
+        integration: "chatgpt".into(),
+        status: if !tunnel_available {
+            "unavailable"
+        } else if !fully_configured {
+            "needs_configuration"
+        } else if !managed_runtime.ready {
+            "ready_for_tunnel_connect"
+        } else {
+            "ready"
+        }
+        .into(),
+        checks,
+    })
+}
+
+#[derive(Debug, Default)]
+struct TunnelRuntimeStatus {
+    ready: bool,
+    tunnel_id_present: bool,
+}
+
+fn tunnel_runtime_status(profile: &str) -> TunnelRuntimeStatus {
+    let output = match ProcessCommand::new("tunnel-client")
+        .args(["runtimes", "status", profile, "--json"])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return TunnelRuntimeStatus::default(),
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(value) => value,
+        Err(_) => return TunnelRuntimeStatus::default(),
+    };
+    TunnelRuntimeStatus {
+        ready: value["ready"].as_bool() == Some(true)
+            || value["runtime_state"].as_str() == Some("ready"),
+        tunnel_id_present: value["tunnel_id"].as_str().is_some_and(|id| !id.is_empty()),
+    }
+}
+
+fn chatgpt_connect(tunnel_id: Option<String>, alias: &str, profile: &str) -> Result<()> {
+    let tunnel_id = tunnel_id
+        .filter(|value| !value.trim().is_empty())
+        .context("provide --tunnel-id or set CONTROL_PLANE_TUNNEL_ID")?;
+    let (tunnel_available, _, tunnel_detail) = probe_version("tunnel-client");
+    if !tunnel_available {
+        anyhow::bail!("tunnel-client is unavailable: {tunnel_detail}");
+    }
+    #[cfg(unix)]
+    if std::os::unix::net::UnixStream::connect(default_socket_path()).is_err() {
+        anyhow::bail!(
+            "Taskrail daemon is not reachable at {}; start `taskrail daemon` first",
+            default_socket_path().display()
+        );
+    }
+    let runtime_key = configured_runtime_key().context(
+        "CONTROL_PLANE_API_KEY is absent; create a runtime key and set it only in the local environment or launchd user environment",
+    )?;
+    let socket = quote_command_argument(&default_socket_path().to_string_lossy());
+    let mcp_command = format!("taskrail mcp --socket {socket}");
+    let output = ProcessCommand::new("tunnel-client")
+        .args([
+            "runtimes",
+            "connect",
+            "--alias",
+            alias,
+            "--profile",
+            profile,
+            "--tunnel-id",
+            tunnel_id.trim(),
+            "--runtime-api-key",
+            "env:CONTROL_PLANE_API_KEY",
+            "--mcp-command",
+            &mcp_command,
+            "--json",
+        ])
+        // The profile stores only the env-var reference. Supplying the value
+        // to this short-lived child also lets a launchd user environment
+        // survive a shell restart without writing the secret to disk/output.
+        .env("CONTROL_PLANE_API_KEY", runtime_key)
+        .output()
+        .context("start tunnel-client runtime")?;
+    if !output.status.success() {
+        anyhow::bail!("tunnel-client runtime exited with {}", output.status);
+    }
+    println!("ChatGPT tunnel runtime {alias} started for Taskrail profile {profile}.");
+    println!("verify with: tunnel-client runtimes status {alias} --json");
+    Ok(())
+}
+
+fn configured_runtime_key() -> Option<String> {
+    if let Some(value) = std::env::var_os("CONTROL_PLANE_API_KEY") {
+        let value = value.to_string_lossy().into_owned();
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = ProcessCommand::new("launchctl")
+            .args(["getenv", "CONTROL_PLANE_API_KEY"])
+            .output()
+        {
+            if output.status.success() {
+                let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn quote_command_argument(value: &str) -> String {
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "_./:@%+=,-".contains(character))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn probe_version(executable: &str) -> (bool, Option<String>, String) {
     match ProcessCommand::new(executable).arg("--version").output() {
         Ok(output) if output.status.success() => {
@@ -668,6 +937,17 @@ fn add(registry: &Registry, options: AddOptions) -> Result<()> {
     if every_seconds.is_some_and(|seconds| seconds == 0) {
         anyhow::bail!("--every-seconds must be greater than zero");
     }
+    let command = CommandSpec {
+        executable,
+        args,
+        cwd,
+        ..CommandSpec::default()
+    };
+    if command.shell || command.invokes_shell() {
+        anyhow::bail!(
+            "direct argv only: shell executables with -c/-e command strings are not accepted"
+        );
+    }
     let trigger = match (every_seconds, cron) {
         (Some(seconds), None) => Trigger::Interval { seconds },
         (None, Some(expression)) => Trigger::Cron {
@@ -687,12 +967,7 @@ fn add(registry: &Registry, options: AddOptions) -> Result<()> {
         next_run_at,
         steps: vec![StepSpec {
             id: "command".into(),
-            command: CommandSpec {
-                executable,
-                args,
-                cwd,
-                ..CommandSpec::default()
-            },
+            command,
             responses: None,
         }],
         ..Automation::default()
@@ -702,11 +977,13 @@ fn add(registry: &Registry, options: AddOptions) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn daemon_launch_agent_path() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is required for the user daemon")?;
     Ok(PathBuf::from(home).join("Library/LaunchAgents/com.taskrail.daemon.plist"))
 }
 
+#[cfg(target_os = "macos")]
 fn launchctl_user_domain() -> Result<String> {
     let output = ProcessCommand::new("id")
         .arg("-u")
@@ -723,10 +1000,12 @@ fn launchctl_user_domain() -> Result<String> {
 }
 
 fn install_daemon(registry: &Registry) -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
         let _ = registry;
-        anyhow::bail!("daemon installation currently supports macOS user LaunchAgents only");
+        anyhow::bail!(
+            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+        );
     }
     #[cfg(target_os = "macos")]
     {
@@ -740,6 +1019,8 @@ fn install_daemon(registry: &Registry) -> Result<()> {
             plist::Value::String("--registry".into()),
             plist::Value::String(registry_path),
             plist::Value::String("daemon".into()),
+            plist::Value::String("--socket".into()),
+            plist::Value::String(default_socket_path().to_string_lossy().into_owned()),
         ];
         let mut plist = plist::Dictionary::new();
         plist.insert(
@@ -787,12 +1068,28 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         println!("daemon installed and loaded from {}", path.display());
         Ok(())
     }
+    #[cfg(target_os = "linux")]
+    {
+        let path = systemd_user_unit_path()?;
+        let parent = path.parent().context("resolve systemd user directory")?;
+        std::fs::create_dir_all(parent)?;
+        let executable = std::env::current_exe().context("resolve taskrail executable")?;
+        let unit = systemd_user_unit(&executable, registry.path(), &default_socket_path());
+        std::fs::write(&path, unit)
+            .with_context(|| format!("write systemd user unit {}", path.display()))?;
+        run_systemctl_user(["daemon-reload"])?;
+        run_systemctl_user(["enable", "--now", "taskrail.service"])?;
+        println!("daemon installed and started from {}", path.display());
+        Ok(())
+    }
 }
 
 fn uninstall_daemon() -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
-        anyhow::bail!("daemon installation currently supports macOS user LaunchAgents only");
+        anyhow::bail!(
+            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+        );
     }
     #[cfg(target_os = "macos")]
     {
@@ -818,6 +1115,70 @@ fn uninstall_daemon() -> Result<()> {
         println!("daemon uninstalled");
         Ok(())
     }
+    #[cfg(target_os = "linux")]
+    {
+        let path = systemd_user_unit_path()?;
+        if !path.exists() {
+            println!("daemon is not installed");
+            return Ok(());
+        }
+        let _ = run_systemctl_user(["disable", "--now", "taskrail.service"]);
+        std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        let _ = run_systemctl_user(["daemon-reload"]);
+        println!("daemon uninstalled");
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_unit_path() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is required for the user daemon")?;
+    Ok(PathBuf::from(home).join(".config/systemd/user/taskrail.service"))
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_unit(executable: &Path, registry: &Path, socket: &Path) -> String {
+    format!(
+        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(executable),
+        systemd_quote(registry),
+        systemd_quote(socket),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_quote(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "_./:@%+=,-".contains(character))
+    {
+        return value.replace('%', "%%");
+    }
+    format!(
+        "\"{}\"",
+        value
+            .replace('%', "%%")
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
+    let output = ProcessCommand::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .output()
+        .context("run systemctl --user")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "systemctl --user {} failed: {}",
+            args.join(" "),
+            first_non_empty_line(&output.stderr).unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 fn default_registry_path() -> PathBuf {
@@ -827,6 +1188,13 @@ fn default_registry_path() -> PathBuf {
         .join(".local/share/taskrail/registry.sqlite3")
 }
 
+fn default_socket_path() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".local/share/taskrail/taskraild.sock")
+}
+
 async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> {
     let CodexCliOptions {
         cwd,
@@ -834,6 +1202,7 @@ async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> 
         prompt_file,
         sandbox,
         model,
+        model_catalog_json,
         output_schema,
         worktree_dir,
         timeout_seconds,
@@ -862,6 +1231,7 @@ async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> 
         prompt,
         sandbox: codex_sandbox,
         model,
+        model_catalog_json,
         output_schema,
         add_dirs: Vec::new(),
         timeout_seconds,
@@ -1311,13 +1681,12 @@ async fn daemon(
     }
     let mut server = if once {
         None
-    } else if let Some(socket) = socket {
+    } else {
+        let socket = socket.unwrap_or_else(default_socket_path);
         let registry_path = registry.path().to_path_buf();
         Some(tokio::spawn(async move {
             rpc::serve(socket, registry_path).await
         }))
-    } else {
-        None
     };
     loop {
         if let Some(server) = server.as_mut() {
