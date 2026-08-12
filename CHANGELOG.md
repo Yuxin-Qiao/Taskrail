@@ -15,3 +15,8 @@ Initial open-source release.
 
 Patch release for the reproducible macOS release workflow, using a runner with
 Swift 6 support for the desktop bundle.
+
+## [0.1.2] - 2026-08-12
+
+Patch release for the GitHub Release publisher, which now passes the repository
+explicitly in the artifact-only publish job.
