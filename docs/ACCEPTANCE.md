@@ -123,7 +123,9 @@ unit tests cover health, authentication, origin, MCP headers, public-profile
 allowlisting, private profile authentication, and protocol version boundaries.
 GitHub Actions run `31609200189` passed the updated ARM64 matrix, MSRV,
 package, and Swift jobs; run `31609206606` passed audit and deny; run
-`31609216549` passed CodeQL on final branch head `e1ebcc6`. Docker Compose execution remains an external
+`31609216549` passed CodeQL on validated implementation head `e1ebcc6`.
+Follow-up commit `9b7f82a` contains documentation-only evidence alignment.
+Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
 ## Release decision
