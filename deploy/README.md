@@ -20,9 +20,8 @@ The compose file intentionally uses `expose`, not `ports`, so the HTTP
 adapter is not directly published to the host. The smoke profile runs a
 temporary in-network curl container. Attach a TLS reverse proxy to the
 compose network and use `deploy/Caddyfile.example` as a starting point.
-Docker is not required for the local Rust/Swift validation suite; this compose
-sample must be validated with Docker Compose on the deployment host before it
-is used.
+Docker is not required for the local Rust validation suite; this compose sample
+must be validated with Docker Compose on the deployment host before it is used.
 
 ## Production requirements
 
