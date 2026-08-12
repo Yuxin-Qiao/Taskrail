@@ -351,7 +351,7 @@ The current implementation and remaining release gates are:
 | Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
-| ARM64 CLI releases | 🟡 Tag-triggered workflow; release not yet run |
+| ARM64 CLI releases | 🟢 [v0.1.6 published](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.6) |
 | Homebrew formula | 🟡 Future |
 
 ## Documentation
