@@ -13,6 +13,8 @@ add/register → schedule → run → history/logs → tui
 - The local Registry stores automations, runs, logs, events, and metrics.
 - The daemon evaluates interval and cron triggers.
 - The TUI is the primary visual view.
+- The Rust CLI, daemon, TUI, Unix socket, and systemd user service are supported
+  on Linux; the SwiftUI desktop view under `macos/DesktopApp` remains macOS-only.
 - ChatGPT Scheduled tasks can call the local MCP adapter through a private
   OpenAI Secure MCP Tunnel.
 - Native scheduler discovery and typed semantic integrations stay at the edge of
@@ -33,6 +35,10 @@ add/register → schedule → run → history/logs → tui
   from the current MVP.
 - [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to a Mac
   or Linux Taskrail host.
+- [OpenAI submission checklist](OPENAI_SUBMISSION.md) — public review profile,
+  metadata, test cases, policy pages, and external launch gates.
+- [Privacy policy](PRIVACY.md), [Terms](TERMS.md), and [Support](SUPPORT.md) —
+  public app-review policy pages.
 - [Acceptance checklist](ACCEPTANCE.md) — reproducible release-gate commands
   and evidence requirements.
 - [Native integration architecture](adr/0031-native-integration-semantic-layer.md)

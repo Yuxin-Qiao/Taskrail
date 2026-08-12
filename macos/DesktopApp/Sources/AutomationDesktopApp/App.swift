@@ -21,6 +21,12 @@ struct ContentView: View {
             List(selection: $model.selectedSection) {
                 Label("Automations", systemImage: "bolt.circle")
                     .tag(ControlPlaneSection.automations)
+                Label("Discovery", systemImage: "dot.radiowaves.left.and.right")
+                    .tag(ControlPlaneSection.discovery)
+                Label("Integrations", systemImage: "puzzlepiece.extension")
+                    .tag(ControlPlaneSection.integrations)
+                Label("Approvals", systemImage: "checkmark.shield")
+                    .tag(ControlPlaneSection.approvals)
                 Label("Runs", systemImage: "clock.arrow.circlepath")
                     .tag(ControlPlaneSection.runs)
                 Label("Inbox", systemImage: "exclamationmark.bubble")
@@ -55,6 +61,12 @@ struct ContentView: View {
                     switch model.selectedSection {
                     case .automations:
                         AutomationsView(model: model)
+                    case .discovery:
+                        DiscoveryView(model: model)
+                    case .integrations:
+                        IntegrationsView(catalog: model.integrations)
+                    case .approvals:
+                        ApprovalsView(model: model)
                     case .runs:
                         RunsView(model: model, runs: model.runs)
                     case .inbox:
@@ -143,7 +155,7 @@ struct AutomationsView: View {
             }
             .padding(.horizontal)
             if model.automations.isEmpty {
-                ContentUnavailableView("No automations", systemImage: "bolt.slash", description: Text("Run taskrail scan or register a managed definition."))
+                ContentUnavailableView("No automations", systemImage: "bolt.slash", description: Text("Run Taskrail scan or register a managed definition."))
             } else {
                 List(model.automations) { automation in
                     HStack {
@@ -173,6 +185,150 @@ struct AutomationsView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(automation.ownership == "observed")
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset)
+            }
+        }
+        .padding(.top)
+    }
+}
+
+struct DiscoveryView: View {
+    @ObservedObject var model: ControlPlaneModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Native Discovery")
+                    .font(.headline)
+                Spacer()
+                Text(model.discoveryMessage)
+                    .foregroundStyle(.secondary)
+                Button("Scan") {
+                    model.discover()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal)
+            if model.discoveredSources.isEmpty {
+                ContentUnavailableView(
+                    "No native sources loaded",
+                    systemImage: "dot.radiowaves.left.and.right",
+                    description: Text("Scan launchd, cron, systemd, and Homebrew without changing their definitions.")
+                )
+            } else {
+                List(model.discoveredSources) { source in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(source.nativeID)
+                                .font(.body.weight(.medium))
+                            Spacer()
+                            Text(source.enabled ? "enabled" : "paused")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(source.enabled ? .green : .secondary)
+                        }
+                        Text("\(source.provider) · \(source.kind)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let path = source.path {
+                            Text(path)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Text(source.sourceID)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset)
+            }
+        }
+        .padding(.top)
+    }
+}
+
+struct IntegrationsView: View {
+    let catalog: IntegrationCatalogSummary?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Native Integrations")
+                .font(.headline)
+                .padding(.horizontal)
+            if let catalog {
+                List(catalog.descriptors) { descriptor in
+                    let detection = catalog.detection.first { $0.integration == descriptor.id }
+                    let doctor = catalog.doctor.first { $0.integration == descriptor.id }
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(descriptor.displayName)
+                                .font(.body.weight(.medium))
+                            Spacer()
+                            Text(doctor?.status.replacingOccurrences(of: "_", with: " ").uppercased() ?? "UNKNOWN")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(doctor?.status == "ready" ? .green : .orange)
+                        }
+                        Text("\(descriptor.id) · \(descriptor.level) · \(detection?.status ?? "unknown")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(descriptor.capabilities.map(\.action).joined(separator: ", "))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset)
+            } else {
+                ContentUnavailableView("Integration status unavailable", systemImage: "puzzlepiece.extension", description: Text("Start the taskrail daemon and refresh."))
+            }
+        }
+        .padding(.top)
+    }
+}
+
+struct ApprovalsView: View {
+    @ObservedObject var model: ControlPlaneModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Pending Approvals")
+                .font(.headline)
+                .padding(.horizontal)
+            if model.approvals.isEmpty {
+                ContentUnavailableView("Approval queue is clear", systemImage: "checkmark.shield", description: Text("Typed integration writes appear here before execution."))
+            } else {
+                List(model.approvals) { approval in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("\(approval.integration) · \(approval.action)")
+                                .font(.body.weight(.medium))
+                            Spacer()
+                            Text(approval.status.uppercased())
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(approval.status == "pending" ? .orange : .secondary)
+                        }
+                        Text("\(approval.risk) · expires \(approval.expiresAt)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(approval.reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if approval.status == "pending" {
+                            HStack {
+                                Button("Approve") {
+                                    model.decideApproval(approval, approved: true)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Button("Reject", role: .destructive) {
+                                    model.decideApproval(approval, approved: false)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
                     }
                     .padding(.vertical, 4)
                 }

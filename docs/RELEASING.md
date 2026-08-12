@@ -20,6 +20,11 @@ repository currently restricts that environment to `v*` tags and applies a
 workflow run and tag before that timer elapses; add an independent reviewer
 once the repository has more than one release maintainer.
 
+Before tagging a release, update the crate and desktop bundle versions together,
+run the full Rust and Swift validation commands in `docs/ACCEPTANCE.md`, and
+verify that the generated app executable matches `Info.plist` (`taskrail`). The
+Linux artifact is the complete headless CLI/daemon/TUI distribution.
+
 The desktop bundle is intentionally unsigned in the public workflow. Apple
 Developer signing identities, entitlements, provisioning, and notarization
 credentials are deployment secrets and must be added to a private release

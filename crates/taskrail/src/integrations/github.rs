@@ -193,6 +193,7 @@ impl Integration for GithubIntegration {
             requires_approval: false,
             supports_dry_run: false,
             dry_run: false,
+            plan_only: false,
             timeout_seconds: self.timeout_seconds,
             verification: None,
         };

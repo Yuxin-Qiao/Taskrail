@@ -521,6 +521,47 @@ impl Registry {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Delete only a control-plane-owned automation with no recorded runs.
+    /// Adopted automations must be rolled back first so deleting a Registry
+    /// row can never orphan a disabled native scheduler entry.
+    pub fn delete_automation(&self, id_or_name: &str) -> Result<Automation> {
+        let automation = self
+            .get_automation(id_or_name)?
+            .with_context(|| format!("automation not found: {id_or_name}"))?;
+        if automation.ownership == Ownership::Observed {
+            anyhow::bail!("{} is observed-only and cannot be deleted", automation.name);
+        }
+        if automation.ownership == Ownership::Adopted {
+            anyhow::bail!(
+                "{} is adopted; roll back its native source before deleting it",
+                automation.name
+            );
+        }
+        if self.count_runs_for_automation(&automation.id)? > 0 {
+            anyhow::bail!(
+                "{} has recorded runs and cannot be deleted; history is immutable",
+                automation.name
+            );
+        }
+        self.connection
+            .execute("DELETE FROM automations WHERE id = ?1", [&automation.id])?;
+        self.append_event(&Event {
+            run_id: None,
+            occurred_at: Utc::now(),
+            event_type: "automation.deleted".into(),
+            payload: serde_json::json!({"automation_id": automation.id, "name": automation.name}),
+        })?;
+        Ok(automation)
+    }
+
+    fn count_runs_for_automation(&self, automation_id: &str) -> Result<u32> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM runs WHERE automation_id = ?1",
+            [automation_id],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn count_owners_for_fingerprint(&self, fingerprint: &str) -> Result<u32> {
         Ok(self.connection.query_row(
             "SELECT COUNT(*) FROM automations WHERE fingerprint = ?1 AND ownership IN ('adopted', 'managed')",
@@ -1082,8 +1123,47 @@ fn redacted_automation_snapshot(automation: &Automation) -> Result<String> {
         for value in step.command.env.values_mut() {
             *value = "[REDACTED]".into();
         }
+        if let Some(integration) = &mut step.integration {
+            if integration.approval_id.is_some() {
+                integration.approval_id = Some("[REDACTED]".into());
+            }
+            redact_integration_value(&mut integration.parameters);
+        }
     }
     canonical_json(&snapshot)
+}
+
+fn redact_integration_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, item) in object.iter_mut() {
+                let normalized = key.to_ascii_lowercase();
+                let reference = normalized.ends_with("_env")
+                    || normalized.ends_with("_file")
+                    || normalized.ends_with("_ref");
+                if normalized == "env"
+                    || normalized == "headers"
+                    || normalized == "secrets"
+                    || (!reference
+                        && (normalized.contains("secret")
+                            || normalized.contains("token")
+                            || normalized.contains("password")
+                            || normalized.contains("api_key")
+                            || normalized.contains("private_key")))
+                {
+                    *item = serde_json::json!("[REDACTED]");
+                } else {
+                    redact_integration_value(item);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_integration_value(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn stored_adoption_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAdoption> {
@@ -1190,6 +1270,7 @@ mod tests {
                 id: "main".into(),
                 command: CommandSpec::argv("echo", ["ok"]),
                 responses: None,
+                integration: None,
             }],
             trigger: Trigger::Manual,
             ..Automation::default()
@@ -1430,6 +1511,32 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].event_type, "automation.resumed");
         assert_eq!(events[1].event_type, "automation.paused");
+    }
+
+    #[test]
+    fn deletion_is_limited_to_unused_managed_automations() {
+        let registry = Registry::in_memory().unwrap();
+        let managed = automation();
+        registry.save_automation(&managed).unwrap();
+        let deleted = registry.delete_automation("demo").unwrap();
+        assert_eq!(deleted.id, "a1");
+        assert!(registry.get_automation("a1").unwrap().is_none());
+
+        let mut observed = automation();
+        observed.id = "observed".into();
+        observed.name = "observed".into();
+        observed.ownership = Ownership::Observed;
+        registry.save_automation(&observed).unwrap();
+        assert!(registry.delete_automation("observed").is_err());
+
+        let mut with_history = automation();
+        with_history.id = "history".into();
+        with_history.name = "history".into();
+        registry.save_automation(&with_history).unwrap();
+        registry
+            .record_run_start("history-run", &with_history, None)
+            .unwrap();
+        assert!(registry.delete_automation("history").is_err());
     }
 
     #[test]

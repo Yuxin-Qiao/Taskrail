@@ -303,11 +303,21 @@ impl DiscoveryProvider for HomebrewProvider {
 
 fn homebrew_source(service: HomebrewService) -> Result<DiscoveredSource> {
     let raw = serde_json::to_string(&service)?;
-    if let Some(path) = service.file.as_deref()
-        && let Ok(Some(mut native)) = parse_launchd_plist(path)
+    if service
+        .file
+        .as_deref()
+        .and_then(|path| path.extension())
+        .and_then(|extension| extension.to_str())
+        == Some("plist")
     {
-        native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
-        return Ok(native);
+        let path = service
+            .file
+            .as_deref()
+            .expect("extension implies file path");
+        if let Ok(Some(mut native)) = parse_launchd_plist(path) {
+            native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
+            return Ok(native);
+        }
     }
     Ok(DiscoveredSource {
         source_id: format!("homebrew:{}", service.name),
@@ -384,10 +394,11 @@ impl DiscoveryProvider for SystemdProvider {
                     }
                 };
                 if !output.status.success() {
-                    anyhow::bail!(
-                        "systemctl --user list-unit-files failed: {}",
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    );
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if systemd_user_manager_unavailable(&stderr) {
+                        return Ok(Vec::new());
+                    }
+                    anyhow::bail!("systemctl --user list-unit-files failed: {}", stderr.trim());
                 }
                 String::from_utf8(output.stdout).context("systemctl unit listing is not UTF-8")?
             }
@@ -431,6 +442,13 @@ impl DiscoveryProvider for SystemdProvider {
         }
         Ok(discovered)
     }
+}
+
+fn systemd_user_manager_unavailable(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("failed to connect to bus")
+        || stderr.contains("failed to connect to user bus")
+        || stderr.contains("no medium found")
 }
 
 fn systemd_show(unit: &str) -> Result<String> {
@@ -506,10 +524,13 @@ impl DiscoveryProvider for CronProvider {
         let content = match &self.crontab {
             Some(content) => content.clone(),
             None => {
-                let output = Command::new("crontab")
-                    .arg("-l")
-                    .output()
-                    .context("run crontab -l")?;
+                let output = match Command::new("crontab").arg("-l").output() {
+                    Ok(output) => output,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Vec::new());
+                    }
+                    Err(error) => return Err(error).context("run crontab -l"),
+                };
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if stderr.contains("no crontab") {
@@ -635,6 +656,14 @@ mod tests {
             parse_systemd_duration(properties.get("OnUnitActiveSec").unwrap()),
             Some(300)
         );
+    }
+
+    #[test]
+    fn missing_systemd_user_manager_is_an_empty_observation() {
+        assert!(systemd_user_manager_unavailable(
+            "Failed to connect to bus: No medium found"
+        ));
+        assert!(!systemd_user_manager_unavailable("permission denied"));
     }
 
     #[test]

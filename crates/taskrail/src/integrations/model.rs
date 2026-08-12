@@ -230,6 +230,11 @@ pub struct ExecutionPlan {
     pub supports_dry_run: bool,
     #[serde(default)]
     pub dry_run: bool,
+    /// The action is a semantic plan/inspection only; no subprocess should be
+    /// started. This is used when an upstream CLI has no stable dry-run
+    /// contract.
+    #[serde(default)]
+    pub plan_only: bool,
     pub timeout_seconds: u64,
     pub verification: Option<VerificationPlan>,
 }
@@ -252,10 +257,10 @@ impl ExecutionPlan {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.command.executable.as_os_str().is_empty() {
+        if self.command.executable.as_os_str().is_empty() && !self.plan_only {
             anyhow::bail!("integration execution plan has no executable");
         }
-        if self.command.shell || self.command.invokes_shell() {
+        if !self.plan_only && (self.command.shell || self.command.invokes_shell()) {
             anyhow::bail!("integration plans must use direct argv commands");
         }
         if self.timeout_seconds == 0 {
@@ -418,6 +423,7 @@ mod tests {
             requires_approval: false,
             supports_dry_run: true,
             dry_run: false,
+            plan_only: false,
             timeout_seconds: 30,
             verification: None,
         };
