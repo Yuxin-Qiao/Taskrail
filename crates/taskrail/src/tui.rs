@@ -42,12 +42,21 @@ fn run_loop(
         let registry = Registry::open(registry_path)?;
         let automations = registry.list_automations()?;
         let inbox = registry.list_inbox(100)?;
+        let pending_approvals = registry
+            .list_approvals(100)?
+            .into_iter()
+            .filter(|approval| approval.status == "pending")
+            .count();
+        let integration_count = crate::integrations::built_in_registry()?
+            .descriptors()
+            .len();
         terminal.draw(|frame| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(5),
                     Constraint::Length(8),
+                    Constraint::Length(3),
                     Constraint::Length(1),
                 ])
                 .split(frame.area());
@@ -118,6 +127,15 @@ fn run_loop(
             )
             .column_spacing(1);
             frame.render_widget(inbox_table, chunks[1]);
+            let integration_summary = Paragraph::new(format!(
+                "{integration_count} typed integration(s) available · {pending_approvals} pending approval(s) · native discovery remains read-only"
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Integrations & approvals "),
+            );
+            frame.render_widget(integration_summary, chunks[2]);
             let observed = automations
                 .iter()
                 .filter(|automation| automation.ownership == Ownership::Observed)
@@ -128,7 +146,7 @@ fn run_loop(
                 observed,
                 inbox.len()
             ));
-            frame.render_widget(footer, chunks[2]);
+            frame.render_widget(footer, chunks[3]);
         })?;
         if event::poll(Duration::from_millis(500)).context("poll TUI input")?
             && let Event::Key(key) = event::read().context("read TUI input")?

@@ -1,0 +1,14 @@
+.git
+.github
+.codex-plugin
+.mcp.json
+target
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.env
+.env.*
+**/.DS_Store
+docs
+scripts
+tests

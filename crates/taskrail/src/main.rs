@@ -4,19 +4,17 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     collections::BTreeMap,
     io::{self, IsTerminal},
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
 use taskrail::{
-    adoption::{
-        AdoptionEngine, CronController, LaunchdController, LaunchdSnapshot, SystemdController,
-        SystemdSnapshot, rollback_adoption,
-    },
+    adoption::{adopt_source, rollback_source},
     codex::{self, CodexRequest, CodexSandbox},
     core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
     discovery::{
         CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
+        TaskSchedulerProvider, merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
     integrations::{
@@ -35,7 +33,7 @@ use uuid::Uuid;
 #[command(
     name = "taskrail",
     version,
-    about = "A local automation manager for developers"
+    about = "A local-first, cross-platform automation control plane"
 )]
 struct Cli {
     /// Override the local SQLite Registry path.
@@ -52,6 +50,7 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
+    TaskScheduler,
 }
 
 #[derive(Debug, Subcommand)]
@@ -70,6 +69,8 @@ enum Action {
     },
     /// Inspect one automation or source.
     Inspect { id: String },
+    /// Delete a managed automation that has no recorded run history.
+    Delete { id: String },
     /// Register a managed automation from a YAML definition.
     Register { file: PathBuf },
     /// Add a simple command automation without writing YAML first.
@@ -96,6 +97,30 @@ enum Action {
         /// Working directory for the command.
         #[arg(long)]
         cwd: Option<PathBuf>,
+    },
+    /// Schedule a typed read-only or dry-run native integration.
+    ScheduleIntegration {
+        /// Stable identifier used by `run`, `pause`, and `logs`.
+        id: String,
+        /// Built-in integration id, such as `homebrew` or `gitleaks`.
+        integration: String,
+        /// Typed action exposed by the selected integration.
+        action: String,
+        /// JSON object passed to the typed integration action.
+        #[arg(long, default_value = "{}")]
+        parameters: String,
+        /// Optional display name; defaults to integration and action.
+        #[arg(long)]
+        name: Option<String>,
+        /// Run every N seconds.
+        #[arg(long, conflicts_with = "cron")]
+        every_seconds: Option<u64>,
+        /// Run on a five-field cron expression.
+        #[arg(long, conflicts_with = "every_seconds")]
+        cron: Option<String>,
+        /// Timezone for a cron trigger.
+        #[arg(long, default_value = "local")]
+        timezone: String,
     },
     /// Run Codex non-interactively as an optional automation executor.
     CodexRun {
@@ -267,15 +292,15 @@ enum Action {
         /// Perform one scheduler pass and exit.
         #[arg(long)]
         once: bool,
-        /// Expose the local JSON-RPC control plane on this Unix socket.
+        /// Expose the local JSON-RPC control plane on the platform endpoint.
         #[arg(long)]
         socket: Option<PathBuf>,
         #[arg(long, default_value_t = 30)]
         interval_seconds: u64,
-        /// Install the user LaunchAgent that keeps the scheduler running.
+        /// Install the per-user service that keeps the scheduler running.
         #[arg(long, conflicts_with = "uninstall")]
         install: bool,
-        /// Remove the installed user LaunchAgent.
+        /// Remove the installed per-user service.
         #[arg(long, conflicts_with = "install")]
         uninstall: bool,
     },
@@ -290,7 +315,33 @@ enum Action {
     },
     /// Expose the local Taskrail daemon as an MCP server over stdio.
     Mcp {
-        /// Unix socket served by `taskrail daemon`.
+        /// Local endpoint served by `taskrail daemon`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Expose the public read-only MCP profile over Streamable HTTP.
+    McpHttp {
+        /// Local address for a TLS-terminating reverse proxy to reach.
+        #[arg(long, env = "TASKRAIL_MCP_HTTP_BIND", default_value = "127.0.0.1:8787")]
+        bind: SocketAddr,
+        /// Name of the environment variable containing the bearer token.
+        #[arg(
+            long,
+            env = "TASKRAIL_MCP_BEARER_TOKEN_ENV",
+            default_value = "TASKRAIL_MCP_BEARER_TOKEN"
+        )]
+        bearer_token_env: String,
+        /// Name of the environment variable containing comma-separated allowed Origin values.
+        #[arg(
+            long,
+            env = "TASKRAIL_MCP_ALLOWED_ORIGINS_ENV",
+            default_value = "TASKRAIL_MCP_ALLOWED_ORIGINS"
+        )]
+        allowed_origins_env: String,
+        /// Maximum accepted JSON request body size.
+        #[arg(long, env = "TASKRAIL_MCP_MAX_BODY_BYTES", default_value_t = 1024 * 1024)]
+        max_body_bytes: usize,
+        /// Local endpoint served by `taskrail daemon` (Unix socket or Windows named pipe).
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -603,14 +654,49 @@ struct AddOptions {
     cwd: Option<PathBuf>,
 }
 
+struct ScheduleIntegrationOptions {
+    id: String,
+    integration: String,
+    action: String,
+    parameters: String,
+    name: Option<String>,
+    every_seconds: Option<u64>,
+    cron: Option<String>,
+    timezone: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let registry = Registry::open(cli.registry.unwrap_or_else(default_registry_path))?;
-    match cli.command {
+    let registry_path = cli.registry.unwrap_or_else(default_registry_path);
+    let command = match cli.command {
+        Action::Mcp { socket } => {
+            return mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await;
+        }
+        Action::McpHttp {
+            bind,
+            bearer_token_env,
+            allowed_origins_env,
+            max_body_bytes,
+            socket,
+        } => {
+            return mcp::serve_http(
+                socket.unwrap_or_else(default_socket_path),
+                bind,
+                bearer_token_env,
+                allowed_origins_env,
+                max_body_bytes,
+            )
+            .await;
+        }
+        command => command,
+    };
+    let registry = Registry::open(registry_path)?;
+    match command {
         Action::Scan { source, json } => scan(&registry, source, json),
         Action::List { json } => list(&registry, json),
         Action::Inspect { id } => inspect(&registry, &id),
+        Action::Delete { id } => delete(&registry, &id),
         Action::Register { file } => register(&registry, &file),
         Action::Add {
             id,
@@ -632,6 +718,28 @@ async fn main() -> Result<()> {
                 cron,
                 timezone,
                 cwd,
+            },
+        ),
+        Action::ScheduleIntegration {
+            id,
+            integration,
+            action,
+            parameters,
+            name,
+            every_seconds,
+            cron,
+            timezone,
+        } => schedule_integration(
+            &registry,
+            ScheduleIntegrationOptions {
+                id,
+                integration,
+                action,
+                parameters,
+                name,
+                every_seconds,
+                cron,
+                timezone,
             },
         ),
         Action::CodexRun {
@@ -776,8 +884,8 @@ async fn main() -> Result<()> {
         }
         Action::Integrations => integrations(&registry),
         Action::Integration { action } => integration_doctor(&registry, action).await,
-        Action::Mcp { socket } => {
-            mcp::serve_stdio(socket.unwrap_or_else(default_socket_path)).await
+        Action::Mcp { .. } | Action::McpHttp { .. } => {
+            unreachable!("MCP transports return before opening the local Registry")
         }
     }
 }
@@ -1148,7 +1256,11 @@ fn chatgpt_doctor(profile: &str) -> Result<IntegrationReport> {
     #[cfg(unix)]
     let daemon_connected = std::os::unix::net::UnixStream::connect(&daemon_socket).is_ok();
     #[cfg(not(unix))]
-    let daemon_connected = false;
+    let daemon_connected = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&daemon_socket)
+        .is_ok();
     let mcp_available = ProcessCommand::new("taskrail")
         .args(["mcp", "--help"])
         .output()
@@ -1289,6 +1401,18 @@ fn chatgpt_connect(tunnel_id: Option<String>, alias: &str, profile: &str) -> Res
             default_socket_path().display()
         );
     }
+    #[cfg(windows)]
+    if std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(default_socket_path())
+        .is_err()
+    {
+        anyhow::bail!(
+            "Taskrail daemon is not reachable at {}; start `taskrail daemon` first",
+            default_socket_path().display()
+        );
+    }
     let runtime_key = configured_runtime_key().context(
         "CONTROL_PLANE_API_KEY is absent; create a runtime key and set it only in the local environment or launchd user environment",
     )?;
@@ -1400,6 +1524,14 @@ fn register(registry: &Registry, file: &PathBuf) -> Result<()> {
                 step.id
             );
         }
+        if let Some(integration) = &step.integration {
+            taskrail::core::IntegrationSpec::new(
+                integration.integration.clone(),
+                integration.action.clone(),
+                integration.parameters.clone(),
+            )
+            .with_context(|| format!("validate integration step {}", step.id))?;
+        }
     }
     automation.ownership = Ownership::Managed;
     automation.runtime_state = RuntimeState::Enabled;
@@ -1459,11 +1591,56 @@ fn add(registry: &Registry, options: AddOptions) -> Result<()> {
             id: "command".into(),
             command,
             responses: None,
+            integration: None,
         }],
         ..Automation::default()
     };
     registry.save_automation(&automation)?;
     println!("added automation {}", automation.name);
+    Ok(())
+}
+
+fn schedule_integration(registry: &Registry, options: ScheduleIntegrationOptions) -> Result<()> {
+    let ScheduleIntegrationOptions {
+        id,
+        integration: integration_name,
+        action: action_name,
+        parameters,
+        name,
+        every_seconds,
+        cron,
+        timezone,
+    } = options;
+    let parameters: serde_json::Value =
+        serde_json::from_str(&parameters).context("--parameters must be a JSON object")?;
+    if !parameters.is_object() {
+        anyhow::bail!("--parameters must be a JSON object");
+    }
+    let trigger = match (every_seconds, cron) {
+        (Some(seconds), None) if seconds > 0 => Trigger::Interval { seconds },
+        (Some(_), None) => anyhow::bail!("--every-seconds must be greater than zero"),
+        (None, Some(expression)) => Trigger::Cron {
+            expression,
+            timezone,
+        },
+        (None, None) => Trigger::Manual,
+        (Some(_), Some(_)) => unreachable!("clap enforces trigger conflicts"),
+    };
+    let integrations = taskrail::integrations::built_in_registry()?;
+    let integration_id = taskrail::integrations::IntegrationId::new(integration_name.clone())?;
+    let integration = integrations
+        .get(&integration_id)
+        .with_context(|| format!("integration not registered: {integration_name}"))?;
+    let action = SemanticIntegrationAction::with_parameters(action_name, parameters)?;
+    let automation = service::create_integration_automation(
+        registry.path(),
+        integration.as_ref(),
+        &action,
+        id,
+        name,
+        trigger,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&automation)?);
     Ok(())
 }
 
@@ -1490,11 +1667,15 @@ fn launchctl_user_domain() -> Result<String> {
 }
 
 fn install_daemon(registry: &Registry) -> Result<()> {
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows")
+    ))]
     {
         let _ = registry;
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1561,6 +1742,7 @@ fn install_daemon(registry: &Registry) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let path = systemd_user_unit_path()?;
+        ensure_systemd_user_manager()?;
         let parent = path.parent().context("resolve systemd user directory")?;
         std::fs::create_dir_all(parent)?;
         let executable = std::env::current_exe().context("resolve taskrail executable")?;
@@ -1572,13 +1754,61 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         println!("daemon installed and started from {}", path.display());
         Ok(())
     }
+    #[cfg(target_os = "windows")]
+    {
+        let executable = std::env::current_exe().context("resolve taskrail executable")?;
+        let task_name = "Taskrail\\Daemon";
+        let task_command = format!(
+            "{} --registry {} daemon --socket {}",
+            windows_quote_argument(&executable.to_string_lossy()),
+            windows_quote_argument(&registry.path().to_string_lossy()),
+            windows_quote_argument(&default_socket_path().to_string_lossy()),
+        );
+        let output = ProcessCommand::new("schtasks.exe")
+            .args([
+                "/Create",
+                "/TN",
+                task_name,
+                "/TR",
+                &task_command,
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "LIMITED",
+                "/F",
+            ])
+            .output()
+            .context("create Taskrail Windows Task Scheduler task")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "schtasks.exe /Create failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
+        let run = ProcessCommand::new("schtasks.exe")
+            .args(["/Run", "/TN", task_name])
+            .output()
+            .context("start Taskrail Windows Task Scheduler task")?;
+        if !run.status.success() {
+            anyhow::bail!(
+                "schtasks.exe /Run failed: {}",
+                first_non_empty_line(&run.stderr).unwrap_or_default()
+            );
+        }
+        println!("daemon installed and started as Windows task {task_name}");
+        Ok(())
+    }
 }
 
 fn uninstall_daemon() -> Result<()> {
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows")
+    ))]
     {
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1612,9 +1842,26 @@ fn uninstall_daemon() -> Result<()> {
             println!("daemon is not installed");
             return Ok(());
         }
-        let _ = run_systemctl_user(["disable", "--now", "taskrail.service"]);
+        run_systemctl_user(["disable", "--now", "taskrail.service"])?;
         std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-        let _ = run_systemctl_user(["daemon-reload"]);
+        run_systemctl_user(["daemon-reload"])?;
+        println!("daemon uninstalled");
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = "Taskrail\\Daemon";
+        let output = ProcessCommand::new("schtasks.exe")
+            .args(["/Delete", "/TN", task_name, "/F"])
+            .output()
+            .context("remove Taskrail Windows Task Scheduler task")?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() && !stderr.to_ascii_lowercase().contains("cannot find") {
+            anyhow::bail!(
+                "schtasks.exe /Delete failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
         println!("daemon uninstalled");
         Ok(())
     }
@@ -1622,14 +1869,13 @@ fn uninstall_daemon() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn systemd_user_unit_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is required for the user daemon")?;
-    Ok(PathBuf::from(home).join(".config/systemd/user/taskrail.service"))
+    Ok(xdg_home("XDG_CONFIG_HOME", ".config").join("systemd/user/taskrail.service"))
 }
 
 #[cfg(target_os = "linux")]
 fn systemd_user_unit(executable: &Path, registry: &Path, socket: &Path) -> String {
     format!(
-        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Taskrail local automation daemon\nAfter=default.target\n\n[Service]\nExecStart={} --registry {} daemon --socket {}\nRuntimeDirectory=taskrail\nRuntimeDirectoryMode=0700\nUMask=0077\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(executable),
         systemd_quote(registry),
         systemd_quote(socket),
@@ -1671,18 +1917,108 @@ fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn ensure_systemd_user_manager() -> Result<()> {
+    let output = ProcessCommand::new("systemctl")
+        .args(["--user", "show-environment"])
+        .output()
+        .context("check systemd user manager")?;
+    if !output.status.success() {
+        let detail = first_non_empty_line(&output.stderr).unwrap_or_default();
+        anyhow::bail!(
+            "systemd user services are unavailable{}; start a user session or enable lingering with `loginctl enable-linger $USER`",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        );
+    }
+    Ok(())
+}
+
 fn default_registry_path() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/share/taskrail/registry.sqlite3")
+    #[cfg(target_os = "linux")]
+    {
+        xdg_home("XDG_DATA_HOME", ".local/share").join("taskrail/registry.sqlite3")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| user_home().join("AppData/Local"));
+        base.join("taskrail/registry.sqlite3")
+    }
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+    {
+        user_home().join(".local/share/taskrail/registry.sqlite3")
+    }
 }
 
 fn default_socket_path() -> PathBuf {
-    std::env::var_os("HOME")
+    #[cfg(target_os = "linux")]
+    if let Some(runtime_dir) = absolute_env_path("XDG_RUNTIME_DIR") {
+        return runtime_dir.join("taskrail/taskraild.sock");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(format!(
+            r"\\.\pipe\taskrail-{}",
+            sanitize_pipe_component(
+                &std::env::var("USERNAME")
+                    .or_else(|_| std::env::var("USER"))
+                    .unwrap_or_else(|_| "default".into())
+            )
+        ))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        user_home().join(".local/share/taskrail/taskraild.sock")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_home(variable: &str, fallback_suffix: &str) -> PathBuf {
+    absolute_env_path(variable).unwrap_or_else(|| user_home().join(fallback_suffix))
+}
+
+#[cfg(target_os = "linux")]
+fn absolute_env_path(variable: &str) -> Option<PathBuf> {
+    let path = std::env::var_os(variable).map(PathBuf::from)?;
+    (!path.as_os_str().is_empty() && path.is_absolute()).then_some(path)
+}
+
+fn user_home() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/share/taskrail/taskraild.sock")
+}
+
+#[cfg(target_os = "windows")]
+fn sanitize_pipe_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "default".into()
+    } else {
+        sanitized
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_quote_argument(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\\\""))
 }
 
 async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> {
@@ -2067,6 +2403,9 @@ fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
     if matches!(source, SourceKind::All | SourceKind::Systemd) {
         discovered.extend(SystemdProvider::default().scan()?);
     }
+    if matches!(source, SourceKind::All | SourceKind::TaskScheduler) {
+        discovered.extend(TaskSchedulerProvider::default().scan()?);
+    }
     if matches!(source, SourceKind::All | SourceKind::Homebrew) {
         let homebrew = HomebrewProvider::default().scan()?;
         if matches!(source, SourceKind::All) {
@@ -2145,6 +2484,12 @@ fn inspect(registry: &Registry, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn delete(registry: &Registry, id: &str) -> Result<()> {
+    let automation = registry.delete_automation(id)?;
+    println!("deleted managed automation {}", automation.name);
+    Ok(())
+}
+
 async fn run(registry: &Registry, id: &str, allow_observed: bool) -> Result<()> {
     let result = service::run_named(registry.path(), id, allow_observed).await?;
     print!("{}", result.stdout);
@@ -2201,82 +2546,14 @@ fn adopt(registry: &Registry, id: &str, dry_run: bool, apply: bool) -> Result<()
     if dry_run == apply {
         anyhow::bail!("choose exactly one of --dry-run or --apply");
     }
-    let source = registry
-        .list_sources()?
-        .into_iter()
-        .find(|source| source.source_id == id || source.native_id == id)
-        .with_context(|| format!("source not found: {id}; run `taskrail scan` first"))?;
-    let automation = registry
-        .get_automation(&source.source_id)?
-        .with_context(|| "discovered source has no Registry automation")?;
-    let report = match source.provider.as_str() {
-        "cron" => AdoptionEngine::new(registry, CronController::default())
-            .adopt(&source, automation, apply)?,
-        "launchd" => AdoptionEngine::new(registry, LaunchdController::default())
-            .adopt(&source, automation, apply)?,
-        "systemd" => AdoptionEngine::new(registry, SystemdController::default())
-            .adopt(&source, automation, apply)?,
-        provider => anyhow::bail!(
-            "native adoption for {provider} is not implemented; source remains observe-only"
-        ),
-    };
+    let report = adopt_source(registry, id, apply)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 
 fn rollback(registry: &Registry, tx_id: &str) -> Result<()> {
-    let (source_id, state, snapshot_json, _, _) = registry
-        .adoption(tx_id)?
-        .with_context(|| format!("adoption transaction not found: {tx_id}"))?;
-    let source = registry
-        .list_sources()?
-        .into_iter()
-        .find(|source| source.source_id == source_id)
-        .with_context(|| format!("source not found for adoption transaction {tx_id}"))?;
-    let automation = registry
-        .list_automations()?
-        .into_iter()
-        .find(|automation| automation.source_id.as_deref() == Some(source_id.as_str()));
-    match source.provider.as_str() {
-        "cron" => {
-            let snapshot: taskrail::adoption::CronSnapshot =
-                serde_json::from_str(&snapshot_json).context("decode cron adoption snapshot")?;
-            rollback_adoption(
-                registry,
-                tx_id,
-                &source_id,
-                &snapshot,
-                automation,
-                &CronController::default(),
-            )?;
-        }
-        "launchd" => {
-            let snapshot: LaunchdSnapshot =
-                serde_json::from_str(&snapshot_json).context("decode launchd adoption snapshot")?;
-            rollback_adoption(
-                registry,
-                tx_id,
-                &source_id,
-                &snapshot,
-                automation,
-                &LaunchdController::default(),
-            )?;
-        }
-        "systemd" => {
-            let snapshot: SystemdSnapshot =
-                serde_json::from_str(&snapshot_json).context("decode systemd adoption snapshot")?;
-            rollback_adoption(
-                registry,
-                tx_id,
-                &source_id,
-                &snapshot,
-                automation,
-                &SystemdController::default(),
-            )?;
-        }
-        provider => anyhow::bail!("cannot rollback unsupported provider {provider}"),
-    }
-    println!("rolled back {tx_id} from {state:?}");
+    rollback_source(registry, tx_id)?;
+    println!("rolled back {tx_id}");
     Ok(())
 }
 
@@ -2303,17 +2580,7 @@ fn approvals(registry: &Registry, limit: usize) -> Result<()> {
 }
 
 fn integrations(_registry: &Registry) -> Result<()> {
-    let mut registry = taskrail::integrations::IntegrationRegistry::default();
-    registry.register(MoleIntegration::default())?;
-    registry.register(ResticIntegration::default())?;
-    registry.register(RcloneIntegration::default())?;
-    registry.register(GithubIntegration::default())?;
-    registry.register(HomebrewIntegration::default())?;
-    registry.register(MasIntegration::default())?;
-    registry.register(SecurityIntegration::osv())?;
-    registry.register(SecurityIntegration::gitleaks())?;
-    registry.register(SecurityIntegration::trivy())?;
-    registry.register(TopgradeIntegration::default())?;
+    let registry = taskrail::integrations::built_in_registry()?;
     println!("{}", serde_json::to_string_pretty(&registry.descriptors())?);
     Ok(())
 }
@@ -2594,4 +2861,41 @@ fn text_dashboard(registry: &Registry) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod platform_tests {
+    #[cfg(target_os = "linux")]
+    use std::path::Path;
+
+    #[cfg(target_os = "linux")]
+    use super::{systemd_quote, systemd_user_unit};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn systemd_user_unit_is_private_and_uses_direct_argv() {
+        let unit = systemd_user_unit(
+            Path::new("/home/me/bin/taskrail"),
+            Path::new("/home/me/.local/share/taskrail/registry.sqlite3"),
+            Path::new("/run/user/1000/taskrail/taskraild.sock"),
+        );
+        assert!(unit.contains("ExecStart=/home/me/bin/taskrail --registry"));
+        assert!(unit.contains("RuntimeDirectory=taskrail"));
+        assert!(unit.contains("RuntimeDirectoryMode=0700"));
+        assert!(unit.contains("UMask=0077"));
+        assert!(unit.contains("Restart=on-failure"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn systemd_quote_escapes_percent_and_spaces() {
+        assert_eq!(
+            systemd_quote(Path::new("/home/me/100% complete/taskrail")),
+            "\"/home/me/100%% complete/taskrail\""
+        );
+        assert_eq!(
+            systemd_quote(Path::new("/home/me/taskrail")),
+            "/home/me/taskrail"
+        );
+    }
 }

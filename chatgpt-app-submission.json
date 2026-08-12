@@ -1,0 +1,296 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Taskrail",
+    "subtitle": "Inspect local automations",
+    "description": "Taskrail gives ChatGPT a safe, read-only view of a user's local automation control plane: host overview, native scheduler discovery, automation inventory, run history and logs, attention items, audit events, and normalized local integration findings.",
+    "category": "DEVELOPER_TOOLS"
+  },
+  "tools": {
+    "taskrail_status": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reads daemon status and a fresh native-scheduler summary without changing the host or Registry.",
+        "open_world_justification": "Only observes the private, user-owned Taskrail host and does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_overview": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only combines daemon status, local discovery, automation inventory, recent runs, and attention items for the user-owned host.",
+        "open_world_justification": "Only observes the private local Taskrail host and does not write to scheduler definitions, the Registry, or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_list_automations": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves the host's automation inventory and does not modify definitions or scheduler state.",
+        "open_world_justification": "Only reads the private local Registry and cannot publish or change external systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_discover_local_automations": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Scans native launchd, cron, systemd, Windows Task Scheduler, and Homebrew sources and returns sanitized observations without reconciling or writing the Registry.",
+        "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_scan_native": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Performs a fresh native scheduler scan, including Windows Task Scheduler when present, and returns sanitized observations without changing native definitions or the Registry.",
+        "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_list_integrations": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reports the typed integration catalog, executable availability, and doctor status without running a write action.",
+        "open_world_justification": "Only inspects private local capabilities and does not change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute a requested action, or perform an irreversible change."
+      }
+    },
+    "taskrail_list_adoptions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves sanitized native-adoption journal records and does not apply or roll back an adoption.",
+        "open_world_justification": "Only reads the private local recovery journal and cannot change a scheduler or external service.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_get_adoption": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves one sanitized adoption journal record for inspection before any separate local recovery decision.",
+        "open_world_justification": "Only reads private local recovery state and cannot change a scheduler or external service.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_github": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Uses fixed read-only GitHub CLI queries for issues, pull requests, failed runs, or checks and returns normalized observations.",
+        "open_world_justification": "The integration reaches the external GitHub service to observe repositories selected by the user, but never creates, edits, comments on, or publishes GitHub state.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute a GitHub write, or perform an irreversible action."
+      }
+    },
+    "taskrail_mas": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only inspects Mac App Store availability, installed apps, or outdated apps and never installs or updates an app.",
+        "open_world_justification": "The integration may query the external Mac App Store service, but it never installs, updates, or changes a third-party system.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, install software, or perform an irreversible action."
+      }
+    },
+    "taskrail_osv_scanner": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Runs a typed dependency scan and returns normalized findings without modifying the project or exposing raw secret values.",
+        "open_world_justification": "The scanner may query the external OSV vulnerability service while analyzing local project files, but it does not publish findings or alter a third-party system.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute a remediation, or perform an irreversible action."
+      }
+    },
+    "taskrail_gitleaks": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Runs a typed secret-detection scan and exposes only rule, location, severity, and derived fingerprints rather than match values.",
+        "open_world_justification": "Only analyzes private local files and does not transmit or publish secret findings through a write operation.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute a remediation, or perform an irreversible action."
+      }
+    },
+    "taskrail_trivy": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Runs a typed filesystem or repository scan and returns normalized vulnerability, misconfiguration, secret, and license findings without modifying files.",
+        "open_world_justification": "The scanner may query external vulnerability data while analyzing private local project state, but it does not publish results or change a third-party system.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute a remediation, or perform an irreversible action."
+      }
+    },
+    "taskrail_get_automation": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves one automation's sanitized definition, trigger, ownership, and next-run information.",
+        "open_world_justification": "Only reads the private local Registry and cannot execute or change the selected automation.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_list_runs": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves bounded run status, timing, exit-code, and sanitized automation snapshot information.",
+        "open_world_justification": "Only reads the private local run history and cannot start or change a run.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_get_run_logs": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves the selected bounded run logs for diagnosis and does not restart, cancel, or mutate the run.",
+        "open_world_justification": "Only reads private local log data and cannot publish or change an external system.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_list_attention": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves bounded failed-run, drift, paused-state, and integration-attention items.",
+        "open_world_justification": "Only reads the private local attention model and cannot change a scheduler or third-party service.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_list_events": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves bounded sanitized Taskrail audit events for recent activity and troubleshooting.",
+        "open_world_justification": "Only reads the private local audit trail and cannot publish or alter external state.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Verify the connection and summarize the complete host state.",
+      "user_prompt": "Give me a complete Taskrail overview of this host: what automations exist, what native jobs were discovered, what ran recently, and what needs attention.",
+      "file_attachment_urls": null,
+      "tools_triggered": "taskrail_overview",
+      "expected_output": "Reports the connected host, Taskrail automations, fresh local discovery, recent runs, and bounded attention items without changing the host.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Discover native scheduler jobs without changing them.",
+      "user_prompt": "What launchd, cron, systemd, Windows Task Scheduler, and Homebrew automation jobs are present on this computer? Do not modify anything.",
+      "file_attachment_urls": null,
+      "tools_triggered": "taskrail_discover_local_automations",
+      "expected_output": "Returns a sanitized provider-grouped inventory with safe command summaries and explicitly states that native definitions and the Registry were not changed.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Inspect an automation selected from the local inventory.",
+      "user_prompt": "List my Taskrail automations and show the definition and next run for the one I choose, without running it.",
+      "file_attachment_urls": null,
+      "tools_triggered": "taskrail_list_automations; taskrail_get_automation",
+      "expected_output": "Shows sanitized automation metadata, trigger, ownership, and next-run information without executing or editing the automation.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Diagnose a failed local run from bounded history and logs.",
+      "user_prompt": "Find the latest failed Taskrail run and explain the failure using its logs; do not rerun it.",
+      "file_attachment_urls": null,
+      "tools_triggered": "taskrail_list_runs; taskrail_get_run_logs",
+      "expected_output": "Identifies the relevant run status and summarizes its bounded stdout/stderr without restarting the run or exposing configured environment values.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Run a read-only local security scan.",
+      "user_prompt": "Run a read-only Trivy scan of the current project and summarize vulnerabilities or misconfigurations without revealing secret values.",
+      "file_attachment_urls": null,
+      "tools_triggered": "taskrail_trivy",
+      "expected_output": "Returns normalized findings and severity counts, omits raw secret matches, and makes clear that no project files were changed.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not invoke the public profile for automation creation or scheduling.",
+      "user_prompt": "Create a new command that runs every hour and save it in Taskrail.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "Explains that the public review profile is read-only and does not create or schedule automations; it does not attempt a hidden write tool call.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not invoke the public profile for destructive cleanup or execution.",
+      "user_prompt": "Clean up my machine now and delete anything that looks unnecessary.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "Declines to perform cleanup because the public profile cannot execute destructive actions and offers read-only status or inventory instead.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for an unrelated request.",
+      "user_prompt": "What restaurants are open near me tonight?",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app is not invoked because restaurant discovery is outside Taskrail's supported local automation and audit workflows.",
+      "expected_output_url": null
+    }
+  ]
+}

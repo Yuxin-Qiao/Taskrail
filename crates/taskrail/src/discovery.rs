@@ -301,13 +301,203 @@ impl DiscoveryProvider for HomebrewProvider {
     }
 }
 
+/// Read-only discovery for Windows Task Scheduler.
+///
+/// The provider consumes `schtasks.exe /Query /FO CSV /V` output on Windows.
+/// A fixture can be supplied in tests and in deterministic review runs. Task
+/// Scheduler definitions are observations only; adoption is intentionally not
+/// implemented for this provider.
+#[derive(Debug, Clone)]
+pub struct TaskSchedulerProvider {
+    /// Fixture-friendly CSV output from `schtasks.exe /Query /FO CSV /V`.
+    pub listing: Option<String>,
+    pub executable: PathBuf,
+}
+
+impl Default for TaskSchedulerProvider {
+    fn default() -> Self {
+        Self {
+            listing: None,
+            executable: if cfg!(windows) {
+                PathBuf::from("schtasks.exe")
+            } else {
+                PathBuf::from("schtasks")
+            },
+        }
+    }
+}
+
+impl DiscoveryProvider for TaskSchedulerProvider {
+    fn name(&self) -> &'static str {
+        "task-scheduler"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let listing = match &self.listing {
+            Some(listing) => listing.clone(),
+            None => {
+                #[cfg(not(windows))]
+                {
+                    return Ok(Vec::new());
+                }
+                #[cfg(windows)]
+                {
+                    let output = match Command::new(&self.executable)
+                        .args(["/Query", "/FO", "CSV", "/V"])
+                        .output()
+                    {
+                        Ok(output) => output,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            return Ok(Vec::new());
+                        }
+                        Err(error) => return Err(error).context("run schtasks.exe query"),
+                    };
+                    if !output.status.success() {
+                        anyhow::bail!(
+                            "schtasks.exe query failed: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        );
+                    }
+                    String::from_utf8_lossy(&output.stdout).into_owned()
+                }
+            }
+        };
+        parse_task_scheduler_csv(&listing)
+    }
+}
+
+pub fn parse_task_scheduler_csv(content: &str) -> Result<Vec<DiscoveredSource>> {
+    let mut lines = content.lines().filter(|line| !line.trim().is_empty());
+    let Some(header_line) = lines.next() else {
+        return Ok(Vec::new());
+    };
+    let headers = parse_csv_record(header_line)
+        .into_iter()
+        .map(|header| header.trim_start_matches('\u{feff}').to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let task_name_index = find_csv_column(&headers, &["taskname", "task name"]).unwrap_or(0);
+    let status_index = find_csv_column(&headers, &["status", "scheduled task state"]);
+    let state_index = find_csv_column(&headers, &["scheduled task state", "state"]);
+    let command_index = find_csv_column(&headers, &["tasktorun", "task to run", "command"]);
+    let mut result = Vec::new();
+    for line in lines {
+        let fields = parse_csv_record(line);
+        let Some(task_name) = fields.get(task_name_index).map(|value| value.trim()) else {
+            continue;
+        };
+        if task_name.is_empty() || task_name.eq_ignore_ascii_case("taskname") {
+            continue;
+        }
+        let native_id = task_name.trim_start_matches('\\').to_owned();
+        let status = status_index
+            .and_then(|index| fields.get(index))
+            .map(String::as_str)
+            .unwrap_or_default();
+        let state = state_index
+            .and_then(|index| fields.get(index))
+            .map(String::as_str)
+            .unwrap_or_default();
+        let enabled = ![status, state]
+            .iter()
+            .any(|value| value.trim().eq_ignore_ascii_case("disabled"));
+        let command = command_index
+            .and_then(|index| fields.get(index))
+            .and_then(|value| parse_windows_command(value));
+        result.push(DiscoveredSource {
+            source_id: format!("task-scheduler:{native_id}"),
+            provider: "task-scheduler".into(),
+            native_id,
+            path: None,
+            enabled,
+            kind: "task".into(),
+            fingerprint: fingerprint_bytes(line.as_bytes()),
+            command,
+            trigger: Trigger::Manual,
+            raw: line.to_owned(),
+        });
+    }
+    Ok(result)
+}
+
+fn find_csv_column(headers: &[String], names: &[&str]) -> Option<usize> {
+    headers.iter().position(|header| {
+        names.iter().any(|name| {
+            let name = name.to_ascii_lowercase();
+            header == &name || header.replace([' ', '_'], "") == name.replace([' ', '_'], "")
+        })
+    })
+}
+
+fn parse_csv_record(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                fields.push(std::mem::take(&mut field));
+            }
+            _ => field.push(character),
+        }
+    }
+    fields.push(field);
+    fields
+}
+
+fn parse_windows_command(value: &str) -> Option<CommandSpec> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    for character in value.trim().chars() {
+        match character {
+            '"' => quoted = !quoted,
+            character if character.is_whitespace() && !quoted => {
+                if !field.is_empty() {
+                    fields.push(std::mem::take(&mut field));
+                }
+            }
+            _ => field.push(character),
+        }
+    }
+    if !field.is_empty() {
+        fields.push(field);
+    }
+    let (executable, args) = fields.split_first()?;
+    if executable.eq_ignore_ascii_case("n/a") {
+        return None;
+    }
+    Some(CommandSpec {
+        executable: PathBuf::from(executable),
+        args: args.to_vec(),
+        cwd: None,
+        env: Default::default(),
+        shell: false,
+    })
+}
+
 fn homebrew_source(service: HomebrewService) -> Result<DiscoveredSource> {
     let raw = serde_json::to_string(&service)?;
-    if let Some(path) = service.file.as_deref()
-        && let Ok(Some(mut native)) = parse_launchd_plist(path)
+    if service
+        .file
+        .as_deref()
+        .and_then(|path| path.extension())
+        .and_then(|extension| extension.to_str())
+        == Some("plist")
     {
-        native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
-        return Ok(native);
+        let path = service
+            .file
+            .as_deref()
+            .expect("extension implies file path");
+        if let Ok(Some(mut native)) = parse_launchd_plist(path) {
+            native.raw = format!("{}\n# homebrew-service: {}", native.raw, raw);
+            return Ok(native);
+        }
     }
     Ok(DiscoveredSource {
         source_id: format!("homebrew:{}", service.name),
@@ -384,10 +574,11 @@ impl DiscoveryProvider for SystemdProvider {
                     }
                 };
                 if !output.status.success() {
-                    anyhow::bail!(
-                        "systemctl --user list-unit-files failed: {}",
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    );
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if systemd_user_manager_unavailable(&stderr) {
+                        return Ok(Vec::new());
+                    }
+                    anyhow::bail!("systemctl --user list-unit-files failed: {}", stderr.trim());
                 }
                 String::from_utf8(output.stdout).context("systemctl unit listing is not UTF-8")?
             }
@@ -431,6 +622,13 @@ impl DiscoveryProvider for SystemdProvider {
         }
         Ok(discovered)
     }
+}
+
+fn systemd_user_manager_unavailable(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("failed to connect to bus")
+        || stderr.contains("failed to connect to user bus")
+        || stderr.contains("no medium found")
 }
 
 fn systemd_show(unit: &str) -> Result<String> {
@@ -506,10 +704,13 @@ impl DiscoveryProvider for CronProvider {
         let content = match &self.crontab {
             Some(content) => content.clone(),
             None => {
-                let output = Command::new("crontab")
-                    .arg("-l")
-                    .output()
-                    .context("run crontab -l")?;
+                let output = match Command::new("crontab").arg("-l").output() {
+                    Ok(output) => output,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Vec::new());
+                    }
+                    Err(error) => return Err(error).context("run crontab -l"),
+                };
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if stderr.contains("no crontab") {
@@ -635,6 +836,31 @@ mod tests {
             parse_systemd_duration(properties.get("OnUnitActiveSec").unwrap()),
             Some(300)
         );
+    }
+
+    #[test]
+    fn parses_windows_task_scheduler_csv_as_read_only_observations() {
+        let csv = r#""TaskName","Status","Task To Run","Scheduled Task State"
+"\Taskrail\Daily","Ready","""C:\Program Files\Taskrail\taskrail.exe"" scan --source task-scheduler","Enabled"
+"\Taskrail\Disabled","Disabled","C:\disabled.exe","Disabled"
+"#;
+        let sources = parse_task_scheduler_csv(csv).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].source_id, r"task-scheduler:Taskrail\Daily");
+        assert!(sources[0].enabled);
+        assert_eq!(
+            sources[0].command.as_ref().unwrap().executable,
+            PathBuf::from(r"C:\Program Files\Taskrail\taskrail.exe")
+        );
+        assert!(!sources[1].enabled);
+    }
+
+    #[test]
+    fn missing_systemd_user_manager_is_an_empty_observation() {
+        assert!(systemd_user_manager_unavailable(
+            "Failed to connect to bus: No medium found"
+        ));
+        assert!(!systemd_user_manager_unavailable("permission denied"));
     }
 
     #[test]

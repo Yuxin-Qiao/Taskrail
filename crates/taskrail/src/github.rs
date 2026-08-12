@@ -198,7 +198,9 @@ fn validate_repo(repo: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::{fs, os::unix::fs::PermissionsExt};
+    #[cfg(unix)]
     use tempfile::tempdir;
 
     #[test]
@@ -294,6 +296,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn executes_structured_output_through_a_fake_gh_binary() {
         let directory = tempdir().unwrap();

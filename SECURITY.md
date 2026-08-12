@@ -10,13 +10,17 @@ content, and AI output as untrusted input.
 - Explicit shell invocations such as `sh -c` are rejected by the executor.
 - Discovered sources that invoke a shell are not promoted to runnable observed
   automations.
-- `taskrail scan` is read-only.
+- `taskrail scan` never mutates native scheduler definitions; it refreshes the
+  local observation records. The MCP `automation.discover` path is fully
+  non-reconciling when a caller needs a no-write Registry scan.
 - Existing native jobs remain observation-only until an explicit adoption command.
 - Native adoption requires a matching fingerprint, a persisted snapshot, disable
   verification, and a rollback record.
 - System `/Library/LaunchDaemons` remain observation-only. User launchd adoption
   is limited to `~/Library/LaunchAgents`.
-- `taskrail daemon --install` writes only the current user's Taskrail LaunchAgent.
+- `taskrail daemon --install` writes only the current user's Taskrail LaunchAgent
+  on macOS or systemd user unit on Linux; the generated Linux service uses a
+  private runtime directory and `UMask=0077`.
 - Secrets must not be placed in YAML, SQLite event payloads, logs, or fixtures.
 - Captured command output and immutable run snapshots redact configured environment
   values.
@@ -32,6 +36,9 @@ content, and AI output as untrusted input.
 - The ChatGPT MCP adapter exposes focused tools over stdio and reaches the
   daemon only through the user-owned `0600` Unix socket; it does not open a
   network listener or access SQLite directly.
+- `TASKRAIL_MCP_PROFILE=public` exposes only the read-only review subset. A
+  future hosted endpoint must add authentication and per-user host binding;
+  the repository does not provide a public unauthenticated executor.
 - The MCP surface has no arbitrary shell tool. Creating or running an
   automation still uses the direct executable-plus-argv boundary, and native
   observed jobs remain read-only until explicit local adoption.
@@ -57,8 +64,8 @@ content, and AI output as untrusted input.
 Do not disclose vulnerabilities in public issues. Use GitHub's private
 vulnerability reporting form:
 
-<https://github.com/Yuxin-Qiao/taskrail/security/advisories/new>
+<https://github.com/Yuxin-Qiao/Taskrail/security/advisories/new>
 
-If the form is unavailable, contact the project maintainer directly with a
-minimal reproduction. Do not include credentials or private automation
-definitions in public communication.
+If the form is unavailable, use the [support page](docs/SUPPORT.md) and its
+private security-advisory link with a minimal reproduction. Do not include
+credentials or private automation definitions in public communication.

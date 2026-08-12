@@ -152,6 +152,7 @@ impl Integration for HomebrewIntegration {
             requires_approval: risk.requires_approval(),
             supports_dry_run: matches!(action.action.as_str(), "upgrade" | "cleanup"),
             dry_run,
+            plan_only: false,
             timeout_seconds: self.timeout_seconds,
             verification: None,
         };

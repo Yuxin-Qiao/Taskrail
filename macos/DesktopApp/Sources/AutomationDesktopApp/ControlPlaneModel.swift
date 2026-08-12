@@ -3,6 +3,9 @@ import SwiftUI
 
 enum ControlPlaneSection: Hashable {
     case automations
+    case discovery
+    case integrations
+    case approvals
     case runs
     case inbox
     case metrics
@@ -14,10 +17,105 @@ struct AutomationSummary: Codable, Identifiable {
     let name: String
     let ownership: String
     let runtimeState: String
+    let nextRunAt: String?
+    let steps: [[String: AnyCodable]]?
 
     enum CodingKeys: String, CodingKey {
         case id, name, ownership
         case runtimeState = "runtime_state"
+        case nextRunAt = "next_run_at"
+        case steps
+    }
+}
+
+struct DiscoverySourceSummary: Codable, Identifiable {
+    let sourceID: String
+    let nativeID: String
+    let provider: String
+    let kind: String
+    let enabled: Bool
+    let path: String?
+    let trigger: [String: AnyCodable]?
+
+    var id: String { sourceID }
+
+    enum CodingKeys: String, CodingKey {
+        case sourceID = "source_id"
+        case nativeID = "native_id"
+        case provider, kind, enabled, path, trigger
+    }
+}
+
+struct IntegrationCapabilitySummary: Codable, Identifiable {
+    let action: String
+    let risk: String
+    let supportsDryRun: Bool
+
+    var id: String { "\(action)-\(risk)" }
+
+    enum CodingKeys: String, CodingKey {
+        case action, risk
+        case supportsDryRun = "supports_dry_run"
+    }
+}
+
+struct IntegrationDescriptorSummary: Codable, Identifiable {
+    let id: String
+    let displayName: String
+    let level: String
+    let capabilities: [IntegrationCapabilitySummary]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case level, capabilities
+    }
+}
+
+struct IntegrationDetectionSummary: Codable, Identifiable {
+    let integration: String
+    let status: String
+    let executable: String?
+    let version: String?
+    let detail: String?
+
+    var id: String { integration }
+}
+
+struct IntegrationDoctorCheckSummary: Codable, Identifiable {
+    let name: String
+    let ok: Bool
+    let detail: String
+
+    var id: String { name }
+}
+
+struct IntegrationDoctorSummary: Codable, Identifiable {
+    let integration: String
+    let status: String
+    let checks: [IntegrationDoctorCheckSummary]
+
+    var id: String { integration }
+}
+
+struct IntegrationCatalogSummary: Codable {
+    let descriptors: [IntegrationDescriptorSummary]
+    let detection: [IntegrationDetectionSummary]
+    let doctor: [IntegrationDoctorSummary]
+}
+
+struct ApprovalSummary: Codable, Identifiable {
+    let id: String
+    let integration: String
+    let action: String
+    let risk: String
+    let status: String
+    let reason: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, integration, action, risk, status, reason
+        case expiresAt = "expires_at"
     }
 }
 
@@ -128,6 +226,9 @@ struct AnyCodable: Codable {
 final class ControlPlaneModel: ObservableObject {
     @Published var selectedSection: ControlPlaneSection = .automations
     @Published private(set) var automations: [AutomationSummary] = []
+    @Published private(set) var discoveredSources: [DiscoverySourceSummary] = []
+    @Published private(set) var integrations: IntegrationCatalogSummary?
+    @Published private(set) var approvals: [ApprovalSummary] = []
     @Published private(set) var runs: [RunRecord] = []
     @Published var selectedRunLogs: RunLogsSummary?
     @Published private(set) var inbox: [InboxItemSummary] = []
@@ -136,12 +237,15 @@ final class ControlPlaneModel: ObservableObject {
     @Published private(set) var connectionMessage = "Not connected"
     @Published var showingError = false
     @Published private(set) var lastError: String?
+    @Published private(set) var discoveryMessage = "No native scan has run yet"
 
     private let client = LocalJSONRPCClient(socketPath: ControlPlaneModel.defaultSocketPath)
 
     func refresh() {
         do {
             automations = try client.request(method: "automation.list", params: [:], decode: [AutomationSummary].self)
+            integrations = try client.request(method: "integration.list", params: [:], decode: IntegrationCatalogSummary.self)
+            approvals = try client.request(method: "approvals.list", params: ["limit": 100], decode: [ApprovalSummary].self)
             runs = try client.request(method: "runs.list", params: ["limit": 100], decode: [RunRecord].self)
             inbox = try client.request(method: "inbox.list", params: ["limit": 100], decode: [InboxItemSummary].self)
             metrics = try client.request(method: "metrics.list", params: [:], decode: [MetricSummary].self)
@@ -151,6 +255,35 @@ final class ControlPlaneModel: ObservableObject {
         } catch {
             connectionMessage = "Daemon unavailable · start taskrail daemon --socket \(client.socketPath.path)"
             lastError = error.localizedDescription
+        }
+    }
+
+    func discover() {
+        do {
+            discoveredSources = try client.request(
+                method: "automation.scan",
+                params: ["source": "all"],
+                decode: [DiscoverySourceSummary].self
+            )
+            discoveryMessage = "Fresh scan · \(discoveredSources.count) native source(s)"
+            refresh()
+        } catch {
+            lastError = error.localizedDescription
+            showingError = true
+        }
+    }
+
+    func decideApproval(_ approval: ApprovalSummary, approved: Bool) {
+        do {
+            _ = try client.request(
+                method: approved ? "approval.approve" : "approval.reject",
+                params: ["approval_id": approval.id],
+                decode: ApprovalSummary.self
+            )
+            refresh()
+        } catch {
+            lastError = error.localizedDescription
+            showingError = true
         }
     }
 

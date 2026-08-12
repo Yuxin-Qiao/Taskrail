@@ -1,0 +1,72 @@
+services:
+  taskrail-daemon:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - --registry
+      - /data/registry.sqlite3
+      - daemon
+      - --socket
+      - /run/taskrail/taskraild.sock
+      - --interval-seconds
+      - "30"
+    user: "10001:10001"
+    volumes:
+      - taskrail-data:/data
+      - taskrail-run:/run/taskrail
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/taskrail/taskraild.sock"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  taskrail-http:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - mcp-http
+      - --bind
+      - 0.0.0.0:8787
+      - --socket
+      - /run/taskrail/taskraild.sock
+    environment:
+      TASKRAIL_MCP_BEARER_TOKEN: "${TASKRAIL_MCP_BEARER_TOKEN:?Set TASKRAIL_MCP_BEARER_TOKEN in the deployment environment}"
+      TASKRAIL_MCP_ALLOWED_ORIGINS: "${TASKRAIL_MCP_ALLOWED_ORIGINS:-}"
+    user: "10001:10001"
+    depends_on:
+      taskrail-daemon:
+        condition: service_healthy
+    expose:
+      - "8787"
+    volumes:
+      - taskrail-run:/run/taskrail:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  taskrail-healthcheck:
+    image: curlimages/curl:8.10.1
+    profiles: [smoke]
+    depends_on:
+      taskrail-http:
+        condition: service_started
+    command:
+      - --fail-with-body
+      - --silent
+      - --show-error
+      - http://taskrail-http:8787/healthz
+
+volumes:
+  taskrail-data:
+  taskrail-run:

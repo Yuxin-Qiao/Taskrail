@@ -54,19 +54,13 @@ impl TopgradeIntegration {
         let args: Vec<String> = match action.action.as_str() {
             "doctor" => vec!["--version".into()],
             // Topgrade does not promise a stable machine-readable dry-run
-            // contract across releases. The shared service still records a
-            // Run for these semantic plan views, but executes only a bounded
-            // no-op and never starts Topgrade itself.
+            // contract across releases. The service marks these actions as
+            // plan-only and never starts the executable.
             "inspect" | "plan" => Vec::new(),
             "run" => Vec::new(),
             unsupported => anyhow::bail!("unsupported Topgrade action: {unsupported}"),
         };
-        let executable = if matches!(action.action.as_str(), "inspect" | "plan") {
-            PathBuf::from("/usr/bin/true")
-        } else {
-            self.executable.clone()
-        };
-        Ok(CommandSpec::argv(executable, args))
+        Ok(CommandSpec::argv(self.executable.clone(), args))
     }
 }
 
@@ -143,6 +137,7 @@ impl Integration for TopgradeIntegration {
             requires_approval: risk.requires_approval(),
             supports_dry_run: false,
             dry_run: false,
+            plan_only: matches!(action.action.as_str(), "inspect" | "plan"),
             timeout_seconds: self.timeout_seconds,
             verification: None,
         };
@@ -160,7 +155,7 @@ impl Integration for TopgradeIntegration {
                 self.id(),
                 &action.action,
                 IntegrationStatus::Succeeded,
-                "Topgrade plan is available; no system update command was started.",
+                "Topgrade plan recorded; no Topgrade process was started because upstream has no stable plan-only CLI contract.",
                 BTreeMap::new(),
                 Vec::new(),
                 Vec::new(),
@@ -254,7 +249,8 @@ mod tests {
                 .unwrap();
             assert_eq!(plan.risk, RiskClass::Read);
             assert!(plan.command.args.is_empty());
-            assert_eq!(plan.command.executable, PathBuf::from("/usr/bin/true"));
+            assert_eq!(plan.command.executable, PathBuf::from("topgrade"));
+            assert!(plan.plan_only);
         }
         let run = integration
             .plan(&IntegrationAction::new("run").unwrap())

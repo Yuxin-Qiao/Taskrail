@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf};
 use uuid::Uuid;
 
@@ -165,6 +166,102 @@ pub struct StepSpec {
     pub command: CommandSpec,
     #[serde(default)]
     pub responses: Option<ResponsesSpec>,
+    /// A typed native integration action. The service resolves the adapter,
+    /// applies policy, and records normalized results when the step runs.
+    #[serde(default)]
+    pub integration: Option<IntegrationSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrationSpec {
+    pub integration: String,
+    pub action: String,
+    #[serde(default = "empty_object")]
+    pub parameters: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+}
+
+fn empty_object() -> Value {
+    Value::Object(serde_json::Map::new())
+}
+
+impl IntegrationSpec {
+    pub fn new(
+        integration: impl Into<String>,
+        action: impl Into<String>,
+        parameters: Value,
+    ) -> anyhow::Result<Self> {
+        let integration = integration.into();
+        let action = action.into();
+        if integration.trim().is_empty() || action.trim().is_empty() {
+            anyhow::bail!("integration and action must not be empty");
+        }
+        if !parameters.is_object() {
+            anyhow::bail!("integration parameters must be a JSON object");
+        }
+        validate_integration_parameters(&parameters)?;
+        Ok(Self {
+            integration,
+            action,
+            parameters,
+            approval_id: None,
+        })
+    }
+
+    pub fn with_approval(mut self, approval_id: impl Into<String>) -> Self {
+        self.approval_id = Some(approval_id.into());
+        self
+    }
+}
+
+fn validate_integration_parameters(parameters: &Value) -> anyhow::Result<()> {
+    let Some(object) = parameters.as_object() else {
+        anyhow::bail!("integration parameters must be a JSON object");
+    };
+    for (key, value) in object {
+        let normalized = key.to_ascii_lowercase();
+        let sensitive = [
+            "api_key",
+            "apikey",
+            "authorization",
+            "credential",
+            "password",
+            "private_key",
+            "secret",
+            "token",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker));
+        let reference = normalized.ends_with("_env")
+            || normalized.ends_with("_file")
+            || normalized.ends_with("_ref");
+        if matches!(normalized.as_str(), "env" | "headers" | "secrets") {
+            anyhow::bail!(
+                "integration parameter {key} must use typed environment or reference fields; direct credential maps are never persisted"
+            );
+        }
+        if sensitive && !reference {
+            anyhow::bail!(
+                "integration parameter {key} must use an environment, file, or reference name; secret values are never persisted"
+            );
+        }
+        validate_integration_value(value)?;
+    }
+    Ok(())
+}
+
+fn validate_integration_value(value: &Value) -> anyhow::Result<()> {
+    match value {
+        Value::Object(object) => validate_integration_parameters(&Value::Object(object.clone())),
+        Value::Array(items) => {
+            for item in items {
+                validate_integration_value(item)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +375,7 @@ impl DiscoveredSource {
                 id: "main".to_owned(),
                 command,
                 responses: None,
+                integration: None,
             }],
             source_id: Some(self.source_id.clone()),
             fingerprint: Some(self.fingerprint.clone()),
@@ -438,6 +536,34 @@ steps:
         assert_eq!(
             automation.steps[0].responses.as_ref().unwrap().api_key_env,
             "TEST_API_KEY"
+        );
+    }
+
+    #[test]
+    fn integration_specs_reject_secret_values_but_allow_references() {
+        assert!(
+            IntegrationSpec::new(
+                "restic",
+                "snapshots",
+                serde_json::json!({"password": "secret"}),
+            )
+            .is_err()
+        );
+        assert!(
+            IntegrationSpec::new(
+                "restic",
+                "snapshots",
+                serde_json::json!({"password_env": "RESTIC_PASSWORD"}),
+            )
+            .is_ok()
+        );
+        assert!(
+            IntegrationSpec::new(
+                "rclone",
+                "copy",
+                serde_json::json!({"env": {"RCLONE_CONFIG": "plaintext"}}),
+            )
+            .is_err()
         );
     }
 }

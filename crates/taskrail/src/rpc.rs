@@ -5,8 +5,8 @@ use crate::{
         merge_homebrew_sources, same_native_path,
     },
     integrations::{
-        GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, MasIntegration,
-        MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
+        GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
+        MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
         TopgradeIntegration,
     },
     service,
@@ -17,10 +17,11 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
-};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -54,16 +55,54 @@ pub struct ErrorObject {
 pub async fn serve(socket_path: impl AsRef<Path>, registry_path: impl AsRef<Path>) -> Result<()> {
     let socket_path = socket_path.as_ref().to_path_buf();
     let registry_path = registry_path.as_ref().to_path_buf();
-    prepare_socket(&socket_path)?;
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
-    set_socket_permissions(&socket_path)?;
+    #[cfg(unix)]
+    {
+        prepare_socket(&socket_path)?;
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
+        set_socket_permissions(&socket_path)?;
+        loop {
+            let (stream, _) = listener.accept().await.context("accept RPC client")?;
+            let registry_path = registry_path.clone();
+            tokio::spawn(async move {
+                if let Err(error) = handle_stream(stream, &registry_path).await {
+                    eprintln!("RPC client error: {error:#}");
+                }
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        serve_named_pipe(socket_path, registry_path).await
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (socket_path, registry_path);
+        anyhow::bail!("Taskrail local RPC is unsupported on this platform")
+    }
+}
+
+#[cfg(windows)]
+async fn serve_named_pipe(socket_path: PathBuf, registry_path: PathBuf) -> Result<()> {
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .reject_remote_clients(true)
+        .create(&socket_path)
+        .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
     loop {
-        let (stream, _) = listener.accept().await.context("accept RPC client")?;
+        server
+            .connect()
+            .await
+            .context("accept Taskrail named-pipe client")?;
+        let connected = server;
+        server = ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&socket_path)
+            .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
         let registry_path = registry_path.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_stream(stream, &registry_path).await {
-                eprintln!("RPC client error: {error:#}");
+            if let Err(error) = handle_stream(connected, &registry_path).await {
+                eprintln!("RPC named-pipe client error: {error:#}");
             }
         });
     }
@@ -75,12 +114,33 @@ pub async fn serve_once(
 ) -> Result<()> {
     let socket_path = socket_path.as_ref().to_path_buf();
     let registry_path = registry_path.as_ref().to_path_buf();
-    prepare_socket(&socket_path)?;
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
-    set_socket_permissions(&socket_path)?;
-    let (stream, _) = listener.accept().await.context("accept RPC client")?;
-    handle_stream(stream, &registry_path).await
+    #[cfg(unix)]
+    {
+        prepare_socket(&socket_path)?;
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
+        set_socket_permissions(&socket_path)?;
+        let (stream, _) = listener.accept().await.context("accept RPC client")?;
+        handle_stream(stream, &registry_path).await
+    }
+    #[cfg(windows)]
+    {
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .reject_remote_clients(true)
+            .create(&socket_path)
+            .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
+        server
+            .connect()
+            .await
+            .context("accept Taskrail named-pipe client")?;
+        handle_stream(server, &registry_path).await
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (socket_path, registry_path);
+        anyhow::bail!("Taskrail local RPC is unsupported on this platform")
+    }
 }
 
 /// Call the daemon's local JSON-RPC boundary from another Taskrail process,
@@ -91,9 +151,19 @@ pub async fn call(
     params: Value,
 ) -> Result<Value> {
     let socket_path = socket_path.as_ref();
+    #[cfg(unix)]
     let mut stream = UnixStream::connect(socket_path)
         .await
         .with_context(|| format!("connect Taskrail daemon socket {}", socket_path.display()))?;
+    #[cfg(windows)]
+    let mut stream = ClientOptions::new().open(socket_path).with_context(|| {
+        format!(
+            "connect Taskrail daemon named pipe {}",
+            socket_path.display()
+        )
+    })?;
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("Taskrail local RPC is unsupported on this platform");
     let request = Request {
         jsonrpc: "2.0".into(),
         id: Value::from(1),
@@ -121,8 +191,11 @@ pub async fn call(
         .context("daemon response did not contain a result")
 }
 
-async fn handle_stream(stream: UnixStream, registry_path: &Path) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
+async fn handle_stream<S>(stream: S, registry_path: &Path) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     reader
@@ -182,6 +255,15 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
         "automation.list" => with_registry(registry_path, |registry| {
             Ok(serde_json::to_value(registry.list_automations()?)?)
         }),
+        "automation.delete" => {
+            let id = match string_param(&request.params, "id") {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(registry.delete_automation(&id)?)?)
+            })
+        }
         "automation.inspect" => {
             let id = match string_param(&request.params, "id") {
                 Ok(id) => id,
@@ -203,7 +285,43 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(create_automation(registry, params)?)?)
             })
         }
-        "automation.scan" => {
+        "integration.create" => {
+            let params = match CreateIntegrationAutomationParams::parse(&request.params) {
+                Ok(params) => params,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let id = match IntegrationId::new(params.integration.clone()) {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error.to_string()),
+            };
+            let integrations = match crate::integrations::built_in_registry() {
+                Ok(registry) => registry,
+                Err(error) => return internal_error(request.id, error),
+            };
+            let Some(integration) = integrations.get(&id) else {
+                return invalid_params(
+                    request.id,
+                    format!("integration not registered: {}", params.integration),
+                );
+            };
+            let action = match IntegrationAction::with_parameters(params.action, params.parameters)
+            {
+                Ok(action) => action,
+                Err(error) => return invalid_params(request.id, error.to_string()),
+            };
+            match service::create_integration_automation(
+                registry_path,
+                integration.as_ref(),
+                &action,
+                params.id,
+                params.name,
+                params.trigger,
+            ) {
+                Ok(automation) => serde_json::to_value(automation).map_err(Into::into),
+                Err(error) => Err(error),
+            }
+        }
+        "automation.discover" | "automation.scan" => {
             let source = match request.params.get("source") {
                 None => "all".to_owned(),
                 Some(value) => match value.as_str() {
@@ -211,7 +329,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     _ => {
                         return invalid_params(
                             request.id,
-                            "params.source must be one of all, launchd, cron, systemd, homebrew"
+                            "params.source must be one of all, launchd, cron, systemd, homebrew, task-scheduler"
                                 .into(),
                         );
                     }
@@ -232,6 +350,18 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     };
                 }
             };
+            if request.method == "automation.discover" {
+                let result = match serde_json::to_value(discovered) {
+                    Ok(result) => result,
+                    Err(error) => return internal_error(request.id, error.into()),
+                };
+                return Response {
+                    jsonrpc: "2.0".into(),
+                    id: request.id,
+                    result: Some(result),
+                    error: None,
+                };
+            }
             with_registry(registry_path, move |registry| {
                 for item in &discovered {
                     registry.reconcile_discovered_source(item)?;
@@ -283,6 +413,32 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(registry.list_adoptions(limit)?)?)
             })
         }
+        "adoption.apply" => {
+            let id = match string_param(&request.params, "id") {
+                Ok(id) => id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let apply = request
+                .params
+                .get("apply")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            with_registry(registry_path, move |registry| {
+                Ok(serde_json::to_value(crate::adoption::adopt_source(
+                    registry, &id, apply,
+                )?)?)
+            })
+        }
+        "adoption.rollback" => {
+            let tx_id = match string_param(&request.params, "tx_id") {
+                Ok(tx_id) => tx_id,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            with_registry(registry_path, move |registry| {
+                crate::adoption::rollback_source(registry, &tx_id)?;
+                Ok(serde_json::json!({"tx_id": tx_id, "status": "rolled_back"}))
+            })
+        }
         "approval.request" => request_approval(registry_path, &request.params),
         "approval.execute" => execute_approved(registry_path, &request.params).await,
         "approvals.list" => {
@@ -302,6 +458,14 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                 Ok(serde_json::to_value(registry.list_approvals(limit)?)?)
             })
         }
+        "integration.list" => match crate::integrations::built_in_registry() {
+            Ok(integrations) => Ok(serde_json::json!({
+                "descriptors": integrations.descriptors(),
+                "detection": integrations.detect(),
+                "doctor": integrations.doctor(),
+            })),
+            Err(error) => Err(error),
+        },
         "approval.approve" | "approval.reject" => {
             let id = match string_param(&request.params, "approval_id") {
                 Ok(id) => id,
@@ -635,6 +799,70 @@ struct CreateAutomationParams {
     timeout_seconds: u64,
 }
 
+#[derive(Debug, Clone)]
+struct CreateIntegrationAutomationParams {
+    id: String,
+    name: Option<String>,
+    integration: String,
+    action: String,
+    parameters: Value,
+    trigger: Trigger,
+}
+
+impl CreateIntegrationAutomationParams {
+    fn parse(params: &Value) -> Result<Self, String> {
+        let id = required_string(params, "id")?;
+        let integration = required_string(params, "integration")?;
+        let action = required_string(params, "action")?;
+        let parameters = params
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if !parameters.is_object() {
+            return Err("params.parameters must be an object".into());
+        }
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned);
+        let trigger_kind = params
+            .get("trigger")
+            .and_then(Value::as_str)
+            .unwrap_or("manual");
+        let trigger = match trigger_kind {
+            "manual" => Trigger::Manual,
+            "interval" => Trigger::Interval {
+                seconds: params
+                    .get("interval_seconds")
+                    .and_then(Value::as_u64)
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| {
+                        "params.interval_seconds must be greater than zero".to_owned()
+                    })?,
+            },
+            "cron" => Trigger::Cron {
+                expression: required_string(params, "cron")?,
+                timezone: params
+                    .get("timezone")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("local")
+                    .to_owned(),
+            },
+            _ => return Err("params.trigger must be one of manual, interval, or cron".into()),
+        };
+        Ok(Self {
+            id,
+            name,
+            integration,
+            action,
+            parameters,
+            trigger,
+        })
+    }
+}
+
 impl CreateAutomationParams {
     fn parse(params: &Value) -> Result<Self, String> {
         let id = required_string(params, "id")?;
@@ -771,6 +999,7 @@ fn create_automation(registry: &Registry, params: CreateAutomationParams) -> Res
                 ..CommandSpec::default()
             },
             responses: None,
+            integration: None,
         }],
         ..Automation::default()
     };
@@ -798,6 +1027,10 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
     if matches!(source, "all" | "systemd") {
         discovered.extend(SystemdProvider::default().scan()?);
     }
+    #[cfg(windows)]
+    if matches!(source, "all" | "task-scheduler") {
+        discovered.extend(crate::discovery::TaskSchedulerProvider::default().scan()?);
+    }
     if matches!(source, "all" | "homebrew") {
         let homebrew = HomebrewProvider::default().scan()?;
         if source == "all" {
@@ -820,9 +1053,12 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
             discovered.extend(related);
         }
     }
-    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
+    if !matches!(
+        source,
+        "all" | "launchd" | "cron" | "systemd" | "homebrew" | "task-scheduler"
+    ) {
         anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
+            "unknown native source {source}; expected all, launchd, cron, systemd, homebrew, or task-scheduler"
         );
     }
     Ok(discovered)
@@ -862,6 +1098,19 @@ fn invalid_params(id: Value, message: String) -> Response {
     }
 }
 
+fn internal_error(id: Value, error: anyhow::Error) -> Response {
+    Response {
+        jsonrpc: "2.0".into(),
+        id,
+        result: None,
+        error: Some(ErrorObject {
+            code: -32000,
+            message: error.to_string(),
+            data: None,
+        }),
+    }
+}
+
 fn method_not_found(id: Value, method: String) -> Response {
     Response {
         jsonrpc: "2.0".into(),
@@ -875,6 +1124,7 @@ fn method_not_found(id: Value, method: String) -> Response {
     }
 }
 
+#[cfg(unix)]
 fn prepare_socket(path: &Path) -> Result<()> {
     if path.exists() {
         if std::os::unix::net::UnixStream::connect(path).is_ok() {
@@ -897,20 +1147,10 @@ fn set_socket_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn set_socket_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
 #[cfg(unix)]
 fn set_directory_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_directory_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -919,6 +1159,19 @@ mod tests {
     use super::*;
     use crate::core::{CommandSpec, DiscoveredSource, Ownership, StepSpec, Trigger};
     use tempfile::tempdir;
+    #[cfg(unix)]
+    use tokio::net::UnixStream;
+
+    fn successful_test_command() -> CommandSpec {
+        CommandSpec::argv(std::env::current_exe().unwrap(), ["--help"])
+    }
+
+    fn successful_test_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
 
     #[tokio::test]
     async fn ping_and_unknown_method_follow_json_rpc_errors() {
@@ -987,6 +1240,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discover_rpc_is_read_only_and_does_not_reconcile_registry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let response = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "automation.discover".into(),
+                params: serde_json::json!({"source":"all"}),
+            },
+            &path,
+        )
+        .await;
+        assert!(response.error.is_none());
+        assert!(response.result.unwrap().is_array());
+
+        let registry = Registry::open(&path).unwrap();
+        assert!(registry.list_sources().unwrap().is_empty());
+        assert!(registry.list_automations().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn create_rpc_registers_managed_direct_argv_automation() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
@@ -998,8 +1273,8 @@ mod tests {
                 params: serde_json::json!({
                     "id": "rpc-created",
                     "name": "RPC created",
-                    "executable": "/bin/echo",
-                    "args": ["hello"],
+                    "executable": successful_test_executable(),
+                    "args": ["--help"],
                     "trigger": "interval",
                     "interval_seconds": 3600,
                 }),
@@ -1020,7 +1295,7 @@ mod tests {
                 method: "automation.create".into(),
                 params: serde_json::json!({
                     "id": "rpc-created",
-                    "executable": "/bin/echo",
+                    "executable": successful_test_executable(),
                 }),
             },
             &path,
@@ -1046,9 +1321,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_rpc_persists_typed_read_only_schedule_and_rejects_writes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let created = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(20),
+                method: "integration.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-mole-version",
+                    "integration": "mole",
+                    "action": "version",
+                    "trigger": "interval",
+                    "interval_seconds": 3600
+                }),
+            },
+            &path,
+        )
+        .await;
+        let automation = created.result.unwrap();
+        assert_eq!(automation["ownership"], "managed");
+        assert_eq!(automation["steps"][0]["integration"]["integration"], "mole");
+        assert!(
+            automation["steps"][0]["command"]["executable"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+
+        let rejected = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(21),
+                method: "integration.create".into(),
+                params: serde_json::json!({
+                    "id": "rpc-mole-clean",
+                    "integration": "mole",
+                    "action": "clean",
+                    "parameters": {"dry_run": false},
+                    "trigger": "interval",
+                    "interval_seconds": 3600
+                }),
+            },
+            &path,
+        )
+        .await;
+        assert_eq!(rejected.error.unwrap().code, -32000);
+        assert!(
+            Registry::open(&path)
+                .unwrap()
+                .get_automation("rpc-mole-clean")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_catalog_rpc_exposes_descriptors_detection_and_doctor() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let response = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(22),
+                method: "integration.list".into(),
+                params: Value::Null,
+            },
+            &path,
+        )
+        .await;
+        let value = response.result.unwrap();
+        assert!(value["descriptors"].as_array().unwrap().len() >= 10);
+        assert_eq!(
+            value["descriptors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["id"] == "mole")
+                .count(),
+            1
+        );
+        assert!(value["detection"].is_array());
+        assert!(value["doctor"].is_array());
+    }
+
+    #[tokio::test]
     async fn list_and_run_use_the_same_registry_service() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
+        let portable_success_command =
+            CommandSpec::argv(std::env::current_exe().unwrap(), ["--help"]);
         let registry = Registry::open(&path).unwrap();
         registry
             .save_automation(&crate::core::Automation {
@@ -1057,8 +1420,9 @@ mod tests {
                 ownership: Ownership::Managed,
                 steps: vec![StepSpec {
                     id: "echo".into(),
-                    command: CommandSpec::argv("/bin/echo", ["rpc"]),
+                    command: portable_success_command,
                     responses: None,
+                    integration: None,
                 }],
                 ..Default::default()
             })
@@ -1137,7 +1501,7 @@ mod tests {
             enabled: true,
             kind: "task".into(),
             fingerprint: "sha256:old".into(),
-            command: Some(CommandSpec::argv("/bin/echo", ["old"])),
+            command: Some(successful_test_command()),
             trigger: Trigger::Manual,
             raw: "old".into(),
         };
@@ -1252,8 +1616,9 @@ mod tests {
                 ownership: Ownership::Managed,
                 steps: vec![StepSpec {
                     id: "echo".into(),
-                    command: CommandSpec::argv("/bin/echo", ["snapshot"]),
+                    command: successful_test_command(),
                     responses: None,
+                    integration: None,
                 }],
                 ..Default::default()
             })
@@ -1280,6 +1645,7 @@ mod tests {
         assert_eq!(runs[0]["automation_snapshot"]["name"], "run-rpc");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unix_socket_round_trip_uses_restricted_socket_file() {
         let dir = tempdir().unwrap();
@@ -1317,5 +1683,32 @@ mod tests {
             let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_named_pipe_round_trip_uses_local_pipe() {
+        let pipe = PathBuf::from(format!(r"\\.\pipe\taskrail-test-{}", uuid::Uuid::new_v4()));
+        let dir = tempdir().unwrap();
+        let registry = dir.path().join("registry.sqlite3");
+        let server_pipe = pipe.clone();
+        let server_registry = registry.clone();
+        let server = tokio::spawn(async move {
+            serve_once(server_pipe, server_registry).await.unwrap();
+        });
+
+        let mut response = None;
+        for _ in 0..100 {
+            match call(&pipe, "daemon.ping", Value::Null).await {
+                Ok(value) => {
+                    response = Some(value);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+            }
+        }
+        let response = response.expect("Taskrail named pipe did not become ready");
+        assert_eq!(response["service"], "taskrail");
+        server.await.unwrap();
     }
 }

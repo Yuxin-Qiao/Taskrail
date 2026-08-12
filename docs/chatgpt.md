@@ -6,7 +6,7 @@ Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
 
 The connection is deliberately per host: run one Taskrail daemon and one MCP
-tunnel profile on each Mac or Linux machine. Set a stable label so ChatGPT can
+tunnel profile on each macOS, Linux, or Windows machine. Set a stable label so ChatGPT can
 distinguish them:
 
 ```bash
@@ -15,7 +15,9 @@ export TASKRAIL_HOST_LABEL="macbook-pro"
 
 ## Start the local backend
 
-The daemon owns the SQLite Registry and listens on a user-only Unix socket.
+The daemon owns the SQLite Registry and listens on a user-scoped local endpoint:
+a restricted Unix socket on macOS/Linux or a named pipe that rejects remote
+clients on Windows.
 On macOS, install the LaunchAgent:
 
 ```bash
@@ -23,30 +25,47 @@ taskrail daemon --install
 taskrail status
 ```
 
-On Linux, run the daemon as a user service or keep this process supervised by
-your existing service manager. Taskrail can install a user systemd unit for
-you:
+On Linux, install a systemd user unit. For a headless host, enable lingering
+first so the user manager survives logout:
 
 ```bash
+loginctl enable-linger "$USER"
 taskrail daemon --install
 taskrail status
 ```
 
+The unit is written to `~/.config/systemd/user/taskrail.service` (or the
+directory selected by `XDG_CONFIG_HOME`). The Registry uses `XDG_DATA_HOME`
+and the socket uses `XDG_RUNTIME_DIR` when those variables are absolute;
+otherwise taskrail falls back to `~/.local/share/taskrail/`. The install command
+fails closed if a systemd user manager is not available.
+
+On Windows, `taskrail daemon --install` creates and starts the current-user
+`Taskrail\\Daemon` Task Scheduler task. The Registry defaults to
+`%LOCALAPPDATA%\\taskrail\\registry.sqlite3`; the local RPC endpoint is a
+per-user named pipe. Windows Task Scheduler is discovery-only for now, so
+`taskrail scan --source task-scheduler` never changes a native task.
+
 If you manage systemd units yourself, the explicit foreground form remains:
 
 ```bash
-taskrail daemon --socket "$HOME/.local/share/taskrail/taskraild.sock"
+taskrail daemon --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
 The MCP process is intentionally short-lived and speaks stdio. The tunnel
 client starts it when ChatGPT needs a tool call:
 
 ```bash
-taskrail mcp --socket "$HOME/.local/share/taskrail/taskraild.sock"
+taskrail mcp --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
 ```
 
 Do not run the MCP process with its stdout redirected to a human-readable log;
 stdout is the MCP protocol stream. Diagnostics belong on stderr.
+
+The default `taskrail mcp` profile is the full local profile for a private
+developer connection. It includes write and execution tools, but those tools
+remain typed, direct-argv, and policy/approval controlled. Never expose that
+profile through a public HTTP endpoint.
 
 Before configuring the OpenAI side, check the local prerequisites without
 printing any credential:
@@ -107,6 +126,37 @@ Keep `tunnel-client run` healthy while the app is being used. The tunnel
 runtime key and tunnel id are deployment secrets; never commit them to this
 repository or put them in an automation definition.
 
+## Public review profile
+
+OpenAI public app review requires a stable, production-hosted HTTPS MCP
+endpoint. A local Secure MCP Tunnel is suitable for development connections,
+not as the public submission endpoint. Use the built-in HTTP adapter behind a
+TLS-terminating reverse proxy:
+
+```bash
+export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
+taskrail mcp-http \
+  --bind 127.0.0.1:8787 \
+  --socket "${XDG_RUNTIME_DIR:-$HOME/.local/share}/taskrail/taskraild.sock"
+```
+
+`taskrail mcp-http` always launches the public read-only profile. It exposes
+`POST /mcp` and `GET /healthz`, requires Bearer authentication, bounds request
+bodies, and refuses chunked requests. The proxy/hosting layer must still add
+end-user authentication and per-user host binding. The public profile exposes
+only status, native discovery, inventory, adoption
+journal inspection, read-only GitHub observations, local package/security
+inspection, run history/logs, attention items, and audit events. It does not
+expose automation creation, deletion, pause/resume, execution, cancellation,
+native adoption, integration writes, or approval operations. The local default
+profile remains available for a private, user-owned host connection.
+
+The public endpoint must add its own user authentication and host binding
+before proxying to a user's daemon. Do not turn the read-only profile into a
+shared unauthenticated relay, and do not submit a `localhost`, private-network,
+or tunnel-only URL. See the [OpenAI submission checklist](OPENAI_SUBMISSION.md)
+for the remaining portal steps and the exact test pack.
+
 ## Connect the app in ChatGPT
 
 In ChatGPT:
@@ -127,8 +177,10 @@ If the run fails, get its logs and notify me with the exit status and the next a
 
 For multiple hosts, use a separate tunnel/profile and host label for each
 machine. In the Scheduled task, name the target host explicitly. Always call
-`taskrail_status` first. That stable entry also includes a fresh safe local
-discovery summary for compatibility with cached ChatGPT tool metadata. When
+`taskrail_overview` first when the user wants a complete host summary. It
+returns the host identity, daemon state, fresh discovery, Taskrail inventory,
+recent runs, and attention items in one read-only result. Use
+`taskrail_status` for a lightweight connectivity check. When
 the user asks what automation tasks already exist on the host, prefer
 `taskrail_discover_local_automations` for a fresh native scan; a successful
 ChatGPT response is not proof that a different host's daemon ran the task.
@@ -138,14 +190,29 @@ ChatGPT response is not proof that a different host's daemon ran the task.
 The adapter exposes focused tools rather than a generic shell endpoint:
 
 - `taskrail_status` — verify daemon connectivity and identify the host.
+- `taskrail_overview` — return one safe host summary combining identity,
+  discovery, Taskrail automations, recent runs, and attention items.
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
-  and Homebrew services and return safe observed-task summaries.
-- `taskrail_scan_native` — reconcile launchd, cron, systemd, or Homebrew
-  observations without mutating native definitions.
+  Windows Task Scheduler, and Homebrew services and return safe observed-task summaries.
+- `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd,
+  Windows Task Scheduler, or Homebrew scan without mutating native definitions
+  or the Registry.
+- `taskrail_list_integrations` — inspect the built-in integration catalog,
+  executable detection, and doctor status on this host.
+- `taskrail_schedule_integration` — persist a typed read-only or dry-run
+  integration as a local Automation; recurring writes are refused.
+- `taskrail_list_adoptions` / `taskrail_get_adoption` — inspect native adoption
+  journal state.
+- `taskrail_adopt_automation` / `taskrail_rollback_adoption` — preflight/apply
+  or explicitly restore a native scheduler adoption transaction.
+- `taskrail_acknowledge_drift` — accept a fresh external baseline while leaving
+  the owned Automation paused.
 - `taskrail_create_automation` — create a direct-argv manual, interval, or cron
   task.
+- `taskrail_delete_automation` — delete only a managed Automation without run
+  history; observed/adopted definitions remain protected.
 - `taskrail_pause_automation` / `taskrail_resume_automation` — change managed
   runtime state.
 - `taskrail_run_automation` / `taskrail_cancel_run` — explicitly start or stop
@@ -173,13 +240,20 @@ The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local
 operation.
 
+For public review, only the read-only subset is advertised and enforced by
+`TASKRAIL_MCP_PROFILE=public`. The full tool surface above is for a private,
+user-owned connection; keeping those surfaces separate prevents a public
+endpoint from becoming a general-purpose local command runner.
+
 ## What this integration does not claim
 
 ChatGPT's Scheduled page is the scheduler for the ChatGPT prompt. Taskrail's
-daemon is the scheduler for local automations. A Scheduled task that calls
+daemon is the scheduler for local Automations. A Scheduled task that calls
 Taskrail at 09:00 is therefore a two-stage workflow: ChatGPT wakes up and calls
-the local app; Taskrail then runs the selected local automation according to
-its own definition and records the result.
+the local app; Taskrail then runs the selected local Automation according to
+its persisted typed definition and records the result. The connected app does
+not automatically import or control ChatGPT's own Scheduled-task list; that
+list remains managed by ChatGPT's Scheduled page.
 
 For unattended operation, keep the Taskrail daemon and tunnel client running,
 and verify failures through the returned run status and logs.

@@ -1,15 +1,15 @@
 [package]
 name = "taskrail"
 version = "0.1.5"
-description = "A local automation manager for developers"
+description = "A local-first, cross-platform automation control plane"
+repository = "https://github.com/Yuxin-Qiao/Taskrail"
+homepage = "https://github.com/Yuxin-Qiao/Taskrail"
+readme = "../../README.md"
+keywords = ["automation", "scheduler", "mcp", "macos", "linux", "windows"]
+categories = ["command-line-utilities", "development-tools"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-repository = "https://github.com/Yuxin-Qiao/taskrail"
-homepage = "https://github.com/Yuxin-Qiao/taskrail"
-readme = "../../README.md"
-keywords = ["automation", "scheduler", "cli", "macos", "linux"]
-categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow.workspace = true

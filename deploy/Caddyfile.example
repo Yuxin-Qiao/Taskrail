@@ -1,0 +1,24 @@
+# Example TLS edge for a single isolated Taskrail host.
+#
+# This file only supplies TLS termination and the internal process bearer.
+# Put an OAuth 2.1/OIDC authenticator or an OpenAI-supported MCP auth layer in
+# front of /mcp before deploying this configuration. The bearer below is not
+# an end-user identity or authorization system.
+
+taskrail.example.com {
+    encode gzip
+
+    @health path /healthz
+    handle @health {
+        reverse_proxy taskrail-http:8787
+    }
+
+    @mcp path /mcp
+    handle @mcp {
+        reverse_proxy taskrail-http:8787 {
+            header_up Authorization "Bearer {$TASKRAIL_MCP_BEARER_TOKEN}"
+        }
+    }
+
+    respond 404
+}

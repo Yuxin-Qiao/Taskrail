@@ -118,7 +118,7 @@ jobs:
           test -n "$binary"
           app="Taskrail.app"
           mkdir -p "$app/Contents/MacOS"
-          cp "$binary" "$app/Contents/MacOS/Taskrail"
+          cp "$binary" "$app/Contents/MacOS/taskrail"
           cp Info.plist "$app/Contents/Info.plist"
           archive="taskrail-${RELEASE_VERSION}-macos-unsigned.app.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app" "../../$archive"

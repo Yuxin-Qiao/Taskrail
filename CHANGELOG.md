@@ -19,7 +19,13 @@
 
 ## [Unreleased]
 
-Planned changes for the next release.
+- Add a read-only MCP host overview that combines local identity, native
+  discovery, Taskrail automations, recent runs, and attention items.
+- Persist typed native integration steps as managed, schedulable Automations.
+- Add integration catalog/doctor status, adoption lifecycle, drift, deletion,
+  and approval controls to JSON-RPC and MCP.
+- Add macOS desktop discovery, integration health, and approval views.
+- Keep plan-only Topgrade actions semantic and never spawn a placeholder command.
 
 ## [0.1.0] - 2026-08-12
 

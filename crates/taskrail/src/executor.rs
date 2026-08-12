@@ -109,8 +109,10 @@ fn redacted_output<'a>(bytes: &[u8], secrets: impl IntoIterator<Item = &'a Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::core::CommandSpec;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn executes_argv_without_shell_expansion() {
         let command = CommandSpec::argv("/bin/echo", ["$(printf injected)"]);
@@ -119,6 +121,7 @@ mod tests {
         assert_eq!(result.stdout.trim(), "$(printf injected)");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rejects_explicit_shell_mode() {
         let mut command = CommandSpec::argv("echo", ["x"]);
@@ -127,6 +130,7 @@ mod tests {
         assert!(error.contains("shell execution is disabled"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rejects_shell_invocation_hidden_in_argv() {
         let command = CommandSpec::argv("/bin/sh", ["-c", "echo unsafe"]);
@@ -141,6 +145,7 @@ mod tests {
         assert!(output.contains("output truncated"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn redacts_environment_values_from_captured_output() {
         let mut command = CommandSpec::argv("/bin/echo", ["secret-value"]);
@@ -153,6 +158,7 @@ mod tests {
         assert!(result.stdout.contains("[REDACTED]"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn cancellation_kills_a_running_process_and_reports_cancelled() {
         let (sender, receiver) = watch::channel(false);
