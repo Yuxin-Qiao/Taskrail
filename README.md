@@ -1,8 +1,5 @@
 <div align="center">
-  <img src="docs/assets/taskrail-mark.svg" alt="Taskrail" width="56" />
-  <h1>Taskrail</h1>
-  <p><strong>The automation control plane for your computer.</strong><br />
-  Discover native jobs, schedule commands, run them locally, and inspect every result.</p>
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
 
   <p>
     <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
@@ -10,15 +7,13 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <p><a href="README.zh-CN.md">简体中文</a> · <a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a></p>
+  <p><a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
+  <p><sub>Works with</sub> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
 </div>
 
 <p align="center">
   <sub>discover</sub> &nbsp;→&nbsp; <sub>schedule</sub> &nbsp;→&nbsp; <sub>execute</sub> &nbsp;→&nbsp; <sub>inspect</sub>
-</p>
-
-<p align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="Scripts, schedules, native jobs, and AI integrations flow into the Taskrail daemon, which runs work and records history, logs, and events" width="960" />
 </p>
 
 ## Supported targets
@@ -30,8 +25,7 @@ Official binaries and CI cover only these ARM64 targets:
 
 x86_64 and Windows are not supported release targets. The Rust crate fails
 closed when compiled for another target instead of producing an untested
-binary. The macOS SwiftUI view is also Apple Silicon-only. Source builds on
-other architectures are intentionally unsupported.
+binary. Source builds on other architectures are intentionally unsupported.
 
 ## Quick start
 
@@ -172,6 +166,27 @@ Open the live terminal dashboard:
 ```bash
 taskrail tui
 ```
+
+The daemon is also the local web server for the primary browser dashboard. It
+listens on `127.0.0.1:10100` by default; open it with:
+
+```bash
+taskrail gui
+```
+
+The dashboard shows discovery, automations, runs, logs, integrations, inbox,
+approvals, metrics, and audit events. Its write actions call the same local RPC
+and policy boundary as the CLI/TUI. It is loopback-only, requires a same-origin
+browser request for writes, and is never exposed through the ChatGPT MCP or
+Tunnel endpoint. Use `taskrail daemon --http-bind 127.0.0.1:10100` to choose a
+different local port. If another local service owns `10100`, Taskrail falls
+back to the next loopback ports and `taskrail gui` discovers the active
+Taskrail endpoint instead of opening the other service.
+
+The browser dashboard supports English, Simplified Chinese, Japanese, and
+Korean. It selects a supported browser language on first load; use the language
+selector in the top-right corner to change it. The selection is stored only in
+the browser's local storage.
 
 For definitions that need more fields, use YAML:
 

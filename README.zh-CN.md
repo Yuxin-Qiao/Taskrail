@@ -1,8 +1,5 @@
 <div align="center">
-  <img src="docs/assets/taskrail-mark.svg" alt="Taskrail" width="56" />
-  <h1>Taskrail</h1>
-  <p><strong>面向计算机的自动化控制平面。</strong><br />
-  发现本机原生任务、调度命令、本地执行，并检查每次执行结果。</p>
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail 将 Mole、Homebrew、restic、rclone、本地任务和 ChatGPT 接入统一的自动化控制平面，负责调度、安全执行和审计历史" width="960" />
 
   <p>
     <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI 状态" /></a>
@@ -10,15 +7,13 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 许可证" /></a>
   </p>
 
-  <p><a href="README.md">English</a> · <a href="#快速开始">快速开始</a> · <a href="docs/chatgpt.zh-CN.md">ChatGPT 集成</a></p>
+  <p><a href="#快速开始">快速开始</a> · <a href="docs/chatgpt.zh-CN.md">ChatGPT 集成</a> · <a href="README.md">English</a></p>
+
+  <p><sub>可接入</sub> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
 </div>
 
 <p align="center">
   <sub>发现</sub> &nbsp;→&nbsp; <sub>调度</sub> &nbsp;→&nbsp; <sub>执行</sub> &nbsp;→&nbsp; <sub>检查</sub>
-</p>
-
-<p align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="脚本、计划、原生任务和 AI 集成进入 Taskrail 守护进程，由其执行任务并记录历史、日志和事件" width="960" />
 </p>
 
 ## 支持的目标平台
@@ -29,8 +24,7 @@
 - ARM64 Linux：`aarch64-unknown-linux-gnu`。
 
 x86_64 和 Windows 不属于支持的发布目标。Rust crate 在其他目标上会直接失败，
-不会生成未经验证的二进制文件；SwiftUI macOS 视图同样只支持 Apple Silicon。
-其他架构可以自行尝试源码，但不属于项目支持范围。
+不会生成未经验证的二进制文件。其他架构可以自行尝试源码，但不属于项目支持范围。
 
 ## 快速开始
 
@@ -158,6 +152,22 @@ TASKRAIL_MCP_PROFILE=public taskrail mcp
 ~~~
 taskrail tui
 ~~~
+
+守护进程本身也会在 loopback 上提供主浏览器控制台，默认监听
+`127.0.0.1:10100`，可以这样打开：
+
+~~~bash
+taskrail gui
+~~~
+
+控制台展示原生发现、自动化、运行、日志、集成、待处理事项、审批、指标和审计事件。
+写操作仍然复用 CLI/TUI 的本地 RPC 与策略边界；它只绑定本机 loopback，写请求必须来自
+同源浏览器，并且不会通过 ChatGPT MCP 或 Tunnel 暴露。需要更换端口时使用
+`taskrail daemon --http-bind 127.0.0.1:10100` 指定本地地址。如果 `10100` 已被其他本地服务占用，
+Taskrail 会自动回退到后续 loopback 端口，`taskrail gui` 会发现真正的 Taskrail 地址，不会打开其他服务。
+
+浏览器控制台支持 English、简体中文、日本語和한국어。首次打开时会根据浏览器语言自动选择；
+也可以使用右上角的语言选择器切换。选择只保存在浏览器本地存储中。
 
 需要更多字段的定义可以使用 YAML：
 

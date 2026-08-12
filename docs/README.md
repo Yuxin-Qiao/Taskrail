@@ -23,6 +23,9 @@ add/register → schedule → run → history/logs → browser dashboard
 - The browser dashboard is a thin client over the daemon's local RPC handlers;
   it is a local convenience surface, not a public or Tunnel-exposed web
   service.
+- The browser dashboard supports English, Simplified Chinese, Japanese, and
+  Korean. It detects the browser language on first load and stores manual
+  language changes only in browser local storage.
 - The Rust CLI, daemon, TUI, browser dashboard, and local MCP adapter are
   supported only on ARM64 macOS and ARM64 Linux. The daemon uses a restricted
   Unix socket for the control plane and loopback-only HTTP for the dashboard.

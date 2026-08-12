@@ -18,6 +18,8 @@ add/register → schedule → run → history/logs → 浏览器控制台
 - 如果 `10100` 已被占用，守护进程会在有限的 loopback 端口范围内尝试到 `10110`，`taskrail gui` 会发现真正的
   Taskrail 地址，不会误打开其他本地服务；
 - 浏览器控制台只是守护进程本地 RPC handler 的薄客户端，不是公开服务，也不会通过 Tunnel 暴露；
+- 浏览器控制台支持 English、简体中文、日本語和한국어，首次打开会自动识别浏览器语言，手动切换只保存
+  在浏览器本地存储中；
 - Rust CLI、守护进程、TUI、浏览器控制台和本地 MCP 适配器只支持 ARM64 macOS 和 ARM64 Linux；
   控制平面使用受限 Unix socket，浏览器控制台只使用 loopback HTTP；
 - 私有 ChatGPT Scheduled 任务可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；

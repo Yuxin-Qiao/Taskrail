@@ -40,6 +40,10 @@ button { cursor: pointer; }
 .topbar h1 { margin: 0; font-size: clamp(24px, 3vw, 34px); letter-spacing: -.03em; }
 .topbar p { margin: 6px 0 0; color: var(--muted); }
 .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
+.locale-control { display: inline-flex; align-items: center; }
+.locale-control select { min-width: 116px; border: 1px solid var(--border); border-radius: 8px; padding: 9px 30px 9px 10px; background: var(--surface-2); color: var(--text); }
+.locale-control select:focus, .button:focus, .nav button:focus, .mini:focus { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .button { border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; background: var(--surface-2); color: var(--text); }
 .button:hover { background: var(--surface-3); }
 .button.primary { border-color: #5a8dd7; background: #315b9d; }
