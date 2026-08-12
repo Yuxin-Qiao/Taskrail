@@ -17,10 +17,11 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
-};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -54,16 +55,54 @@ pub struct ErrorObject {
 pub async fn serve(socket_path: impl AsRef<Path>, registry_path: impl AsRef<Path>) -> Result<()> {
     let socket_path = socket_path.as_ref().to_path_buf();
     let registry_path = registry_path.as_ref().to_path_buf();
-    prepare_socket(&socket_path)?;
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
-    set_socket_permissions(&socket_path)?;
+    #[cfg(unix)]
+    {
+        prepare_socket(&socket_path)?;
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
+        set_socket_permissions(&socket_path)?;
+        loop {
+            let (stream, _) = listener.accept().await.context("accept RPC client")?;
+            let registry_path = registry_path.clone();
+            tokio::spawn(async move {
+                if let Err(error) = handle_stream(stream, &registry_path).await {
+                    eprintln!("RPC client error: {error:#}");
+                }
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        serve_named_pipe(socket_path, registry_path).await
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (socket_path, registry_path);
+        anyhow::bail!("Taskrail local RPC is unsupported on this platform")
+    }
+}
+
+#[cfg(windows)]
+async fn serve_named_pipe(socket_path: PathBuf, registry_path: PathBuf) -> Result<()> {
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .reject_remote_clients(true)
+        .create(&socket_path)
+        .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
     loop {
-        let (stream, _) = listener.accept().await.context("accept RPC client")?;
+        server
+            .connect()
+            .await
+            .context("accept Taskrail named-pipe client")?;
+        let connected = server;
+        server = ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&socket_path)
+            .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
         let registry_path = registry_path.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_stream(stream, &registry_path).await {
-                eprintln!("RPC client error: {error:#}");
+            if let Err(error) = handle_stream(connected, &registry_path).await {
+                eprintln!("RPC named-pipe client error: {error:#}");
             }
         });
     }
@@ -75,12 +114,33 @@ pub async fn serve_once(
 ) -> Result<()> {
     let socket_path = socket_path.as_ref().to_path_buf();
     let registry_path = registry_path.as_ref().to_path_buf();
-    prepare_socket(&socket_path)?;
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
-    set_socket_permissions(&socket_path)?;
-    let (stream, _) = listener.accept().await.context("accept RPC client")?;
-    handle_stream(stream, &registry_path).await
+    #[cfg(unix)]
+    {
+        prepare_socket(&socket_path)?;
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("bind RPC socket {}", socket_path.display()))?;
+        set_socket_permissions(&socket_path)?;
+        let (stream, _) = listener.accept().await.context("accept RPC client")?;
+        handle_stream(stream, &registry_path).await
+    }
+    #[cfg(windows)]
+    {
+        let mut server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .reject_remote_clients(true)
+            .create(&socket_path)
+            .with_context(|| format!("create Taskrail named pipe {}", socket_path.display()))?;
+        server
+            .connect()
+            .await
+            .context("accept Taskrail named-pipe client")?;
+        handle_stream(server, &registry_path).await
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (socket_path, registry_path);
+        anyhow::bail!("Taskrail local RPC is unsupported on this platform")
+    }
 }
 
 /// Call the daemon's local JSON-RPC boundary from another Taskrail process,
@@ -91,9 +151,19 @@ pub async fn call(
     params: Value,
 ) -> Result<Value> {
     let socket_path = socket_path.as_ref();
+    #[cfg(unix)]
     let mut stream = UnixStream::connect(socket_path)
         .await
         .with_context(|| format!("connect Taskrail daemon socket {}", socket_path.display()))?;
+    #[cfg(windows)]
+    let mut stream = ClientOptions::new().open(socket_path).with_context(|| {
+        format!(
+            "connect Taskrail daemon named pipe {}",
+            socket_path.display()
+        )
+    })?;
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("Taskrail local RPC is unsupported on this platform");
     let request = Request {
         jsonrpc: "2.0".into(),
         id: Value::from(1),
@@ -121,8 +191,11 @@ pub async fn call(
         .context("daemon response did not contain a result")
 }
 
-async fn handle_stream(stream: UnixStream, registry_path: &Path) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
+async fn handle_stream<S>(stream: S, registry_path: &Path) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     reader
@@ -256,7 +329,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     _ => {
                         return invalid_params(
                             request.id,
-                            "params.source must be one of all, launchd, cron, systemd, homebrew"
+                            "params.source must be one of all, launchd, cron, systemd, homebrew, task-scheduler"
                                 .into(),
                         );
                     }
@@ -954,6 +1027,10 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
     if matches!(source, "all" | "systemd") {
         discovered.extend(SystemdProvider::default().scan()?);
     }
+    #[cfg(windows)]
+    if matches!(source, "all" | "task-scheduler") {
+        discovered.extend(crate::discovery::TaskSchedulerProvider::default().scan()?);
+    }
     if matches!(source, "all" | "homebrew") {
         let homebrew = HomebrewProvider::default().scan()?;
         if source == "all" {
@@ -976,9 +1053,12 @@ fn scan_native_sources(source: &str) -> Result<Vec<crate::core::DiscoveredSource
             discovered.extend(related);
         }
     }
-    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
+    if !matches!(
+        source,
+        "all" | "launchd" | "cron" | "systemd" | "homebrew" | "task-scheduler"
+    ) {
         anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
+            "unknown native source {source}; expected all, launchd, cron, systemd, homebrew, or task-scheduler"
         );
     }
     Ok(discovered)
@@ -1044,6 +1124,7 @@ fn method_not_found(id: Value, method: String) -> Response {
     }
 }
 
+#[cfg(unix)]
 fn prepare_socket(path: &Path) -> Result<()> {
     if path.exists() {
         if std::os::unix::net::UnixStream::connect(path).is_ok() {
@@ -1056,6 +1137,11 @@ fn prepare_socket(path: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
         set_directory_permissions(parent)?;
     }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn prepare_socket(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -1088,6 +1174,8 @@ mod tests {
     use super::*;
     use crate::core::{CommandSpec, DiscoveredSource, Ownership, StepSpec, Trigger};
     use tempfile::tempdir;
+    #[cfg(unix)]
+    use tokio::net::UnixStream;
 
     #[tokio::test]
     async fn ping_and_unknown_method_follow_json_rpc_errors() {
@@ -1559,6 +1647,7 @@ mod tests {
         assert_eq!(runs[0]["automation_snapshot"]["name"], "run-rpc");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unix_socket_round_trip_uses_restricted_socket_file() {
         let dir = tempdir().unwrap();

@@ -128,8 +128,7 @@ fn run_loop(
             .column_spacing(1);
             frame.render_widget(inbox_table, chunks[1]);
             let integration_summary = Paragraph::new(format!(
-                "{} typed integration(s) available · {} pending approval(s) · native discovery remains read-only",
-                integration_count, pending_approvals
+                "{integration_count} typed integration(s) available · {pending_approvals} pending approval(s) · native discovery remains read-only"
             ))
             .block(
                 Block::default()

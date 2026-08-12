@@ -5,8 +5,12 @@
 ## Validation
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-features`
+- [ ] `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
+- [ ] `cargo test --locked --workspace --all-features`
+- [ ] `cargo test --locked --workspace --doc`
+- [ ] `cargo package --locked --package taskrail`
+- [ ] `cargo audit -D warnings`
+- [ ] `cargo deny check advisories bans licenses sources`
 - [ ] Relevant macOS/Linux or integration checks
 
 ## Safety

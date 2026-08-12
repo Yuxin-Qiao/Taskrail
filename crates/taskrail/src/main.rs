@@ -14,7 +14,7 @@ use taskrail::{
     core::{Automation, CommandSpec, Event, Metric, Ownership, RuntimeState, StepSpec, Trigger},
     discovery::{
         CronProvider, DiscoveryProvider, HomebrewProvider, LaunchdProvider, SystemdProvider,
-        merge_homebrew_sources, same_native_path,
+        TaskSchedulerProvider, merge_homebrew_sources, same_native_path,
     },
     github::{self, GhQuery, QueryKind},
     integrations::{
@@ -33,7 +33,7 @@ use uuid::Uuid;
 #[command(
     name = "taskrail",
     version,
-    about = "A local automation manager for developers"
+    about = "A local-first, cross-platform automation control plane"
 )]
 struct Cli {
     /// Override the local SQLite Registry path.
@@ -50,6 +50,7 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
+    TaskScheduler,
 }
 
 #[derive(Debug, Subcommand)]
@@ -291,7 +292,7 @@ enum Action {
         /// Perform one scheduler pass and exit.
         #[arg(long)]
         once: bool,
-        /// Expose the local JSON-RPC control plane on this Unix socket.
+        /// Expose the local JSON-RPC control plane on the platform endpoint.
         #[arg(long)]
         socket: Option<PathBuf>,
         #[arg(long, default_value_t = 30)]
@@ -314,7 +315,7 @@ enum Action {
     },
     /// Expose the local Taskrail daemon as an MCP server over stdio.
     Mcp {
-        /// Unix socket served by `taskrail daemon`.
+        /// Local endpoint served by `taskrail daemon`.
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -1255,7 +1256,11 @@ fn chatgpt_doctor(profile: &str) -> Result<IntegrationReport> {
     #[cfg(unix)]
     let daemon_connected = std::os::unix::net::UnixStream::connect(&daemon_socket).is_ok();
     #[cfg(not(unix))]
-    let daemon_connected = false;
+    let daemon_connected = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&daemon_socket)
+        .is_ok();
     let mcp_available = ProcessCommand::new("taskrail")
         .args(["mcp", "--help"])
         .output()
@@ -1396,6 +1401,18 @@ fn chatgpt_connect(tunnel_id: Option<String>, alias: &str, profile: &str) -> Res
             default_socket_path().display()
         );
     }
+    #[cfg(windows)]
+    if std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(default_socket_path())
+        .is_err()
+    {
+        anyhow::bail!(
+            "Taskrail daemon is not reachable at {}; start `taskrail daemon` first",
+            default_socket_path().display()
+        );
+    }
     let runtime_key = configured_runtime_key().context(
         "CONTROL_PLANE_API_KEY is absent; create a runtime key and set it only in the local environment or launchd user environment",
     )?;
@@ -1443,12 +1460,11 @@ fn configured_runtime_key() -> Option<String> {
         if let Ok(output) = ProcessCommand::new("launchctl")
             .args(["getenv", "CONTROL_PLANE_API_KEY"])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if !value.is_empty() {
-                    return Some(value);
-                }
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !value.is_empty() {
+                return Some(value);
             }
         }
     }
@@ -1651,11 +1667,15 @@ fn launchctl_user_domain() -> Result<String> {
 }
 
 fn install_daemon(registry: &Registry) -> Result<()> {
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows")
+    ))]
     {
         let _ = registry;
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1734,13 +1754,61 @@ fn install_daemon(registry: &Registry) -> Result<()> {
         println!("daemon installed and started from {}", path.display());
         Ok(())
     }
+    #[cfg(target_os = "windows")]
+    {
+        let executable = std::env::current_exe().context("resolve taskrail executable")?;
+        let task_name = "Taskrail\\Daemon";
+        let task_command = format!(
+            "{} --registry {} daemon --socket {}",
+            windows_quote_argument(&executable.to_string_lossy()),
+            windows_quote_argument(&registry.path().to_string_lossy()),
+            windows_quote_argument(&default_socket_path().to_string_lossy()),
+        );
+        let output = ProcessCommand::new("schtasks.exe")
+            .args([
+                "/Create",
+                "/TN",
+                task_name,
+                "/TR",
+                &task_command,
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "LIMITED",
+                "/F",
+            ])
+            .output()
+            .context("create Taskrail Windows Task Scheduler task")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "schtasks.exe /Create failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
+        let run = ProcessCommand::new("schtasks.exe")
+            .args(["/Run", "/TN", task_name])
+            .output()
+            .context("start Taskrail Windows Task Scheduler task")?;
+        if !run.status.success() {
+            anyhow::bail!(
+                "schtasks.exe /Run failed: {}",
+                first_non_empty_line(&run.stderr).unwrap_or_default()
+            );
+        }
+        println!("daemon installed and started as Windows task {task_name}");
+        Ok(())
+    }
 }
 
 fn uninstall_daemon() -> Result<()> {
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows")
+    ))]
     {
         anyhow::bail!(
-            "daemon installation currently supports macOS LaunchAgents and Linux user systemd"
+            "daemon installation currently supports macOS LaunchAgents, Linux user systemd, and Windows Task Scheduler"
         );
     }
     #[cfg(target_os = "macos")]
@@ -1777,6 +1845,23 @@ fn uninstall_daemon() -> Result<()> {
         run_systemctl_user(["disable", "--now", "taskrail.service"])?;
         std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
         run_systemctl_user(["daemon-reload"])?;
+        println!("daemon uninstalled");
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = "Taskrail\\Daemon";
+        let output = ProcessCommand::new("schtasks.exe")
+            .args(["/Delete", "/TN", task_name, "/F"])
+            .output()
+            .context("remove Taskrail Windows Task Scheduler task")?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() && !stderr.to_ascii_lowercase().contains("cannot find") {
+            anyhow::bail!(
+                "schtasks.exe /Delete failed: {}",
+                first_non_empty_line(&output.stderr).unwrap_or_default()
+            );
+        }
         println!("daemon uninstalled");
         Ok(())
     }
@@ -1857,7 +1942,15 @@ fn default_registry_path() -> PathBuf {
     {
         xdg_home("XDG_DATA_HOME", ".local/share").join("taskrail/registry.sqlite3")
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| user_home().join("AppData/Local"));
+        return base.join("taskrail/registry.sqlite3");
+    }
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
     {
         user_home().join(".local/share/taskrail/registry.sqlite3")
     }
@@ -1868,7 +1961,21 @@ fn default_socket_path() -> PathBuf {
     if let Some(runtime_dir) = absolute_env_path("XDG_RUNTIME_DIR") {
         return runtime_dir.join("taskrail/taskraild.sock");
     }
-    user_home().join(".local/share/taskrail/taskraild.sock")
+    #[cfg(target_os = "windows")]
+    {
+        return PathBuf::from(format!(
+            r"\\.\pipe\taskrail-{}",
+            sanitize_pipe_component(
+                &std::env::var("USERNAME")
+                    .or_else(|_| std::env::var("USER"))
+                    .unwrap_or_else(|_| "default".into())
+            )
+        ));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        user_home().join(".local/share/taskrail/taskraild.sock")
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1883,10 +1990,35 @@ fn absolute_env_path(variable: &str) -> Option<PathBuf> {
 }
 
 fn user_home() -> PathBuf {
-    std::env::var_os("HOME")
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(target_os = "windows")]
+fn sanitize_pipe_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "default".into()
+    } else {
+        sanitized
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_quote_argument(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\\\""))
 }
 
 async fn codex_run(registry: &Registry, options: CodexCliOptions) -> Result<()> {
@@ -2271,6 +2403,9 @@ fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
     if matches!(source, SourceKind::All | SourceKind::Systemd) {
         discovered.extend(SystemdProvider::default().scan()?);
     }
+    if matches!(source, SourceKind::All | SourceKind::TaskScheduler) {
+        discovered.extend(TaskSchedulerProvider::default().scan()?);
+    }
     if matches!(source, SourceKind::All | SourceKind::Homebrew) {
         let homebrew = HomebrewProvider::default().scan()?;
         if matches!(source, SourceKind::All) {
@@ -2389,11 +2524,11 @@ async fn daemon(
         }))
     };
     loop {
-        if let Some(server) = server.as_mut() {
-            if server.is_finished() {
-                server.await??;
-                anyhow::bail!("RPC server stopped unexpectedly");
-            }
+        if let Some(server) = server.as_mut()
+            && server.is_finished()
+        {
+            server.await??;
+            anyhow::bail!("RPC server stopped unexpectedly");
         }
         let pass = service::scheduled_pass(registry.path()).await?;
         println!(

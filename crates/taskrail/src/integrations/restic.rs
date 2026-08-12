@@ -364,17 +364,17 @@ fn parse_operation(
             "data_added_packed",
             "total_duration",
         ] {
-            if let Some(raw) = object.get(key) {
-                if let Some(value) = string_number(raw) {
-                    let unit = if key.contains("bytes") || key.contains("data_") {
-                        "bytes"
-                    } else if key == "total_duration" {
-                        "seconds"
-                    } else {
-                        "count"
-                    };
-                    metrics.insert(key.into(), metric(value, unit));
-                }
+            if let Some(raw) = object.get(key)
+                && let Some(value) = string_number(raw)
+            {
+                let unit = if key.contains("bytes") || key.contains("data_") {
+                    "bytes"
+                } else if key == "total_duration" {
+                    "seconds"
+                } else {
+                    "count"
+                };
+                metrics.insert(key.into(), metric(value, unit));
             }
         }
         if let Some(id) = object
@@ -406,16 +406,15 @@ fn parse_operation(
             .and_then(Value::as_str)
             .is_some_and(|kind| kind.eq_ignore_ascii_case("error"))
             && object.get("error").is_none()
+            && let Some(message) = object.get("message").and_then(Value::as_str)
         {
-            if let Some(message) = object.get("message").and_then(Value::as_str) {
-                findings.push(Finding {
-                    kind: "error".into(),
-                    title: format!("restic: {}", safe_text(message)),
-                    severity: Some("high".into()),
-                    location: None,
-                    fingerprint: None,
-                });
-            }
+            findings.push(Finding {
+                kind: "error".into(),
+                title: format!("restic: {}", safe_text(message)),
+                severity: Some("high".into()),
+                location: None,
+                fingerprint: None,
+            });
         }
     }
     findings.truncate(100);

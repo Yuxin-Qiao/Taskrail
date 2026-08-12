@@ -1,11 +1,11 @@
 [package]
 name = "taskrail"
-version = "0.1.0"
-description = "A local-first automation control plane for macOS and Linux"
+version = "0.1.3"
+description = "A local-first, cross-platform automation control plane"
 repository = "https://github.com/Yuxin-Qiao/Taskrail"
 homepage = "https://github.com/Yuxin-Qiao/Taskrail"
 readme = "../../README.md"
-keywords = ["automation", "scheduler", "mcp", "macos", "linux"]
+keywords = ["automation", "scheduler", "mcp", "macos", "linux", "windows"]
 categories = ["command-line-utilities", "development-tools"]
 edition.workspace = true
 license.workspace = true

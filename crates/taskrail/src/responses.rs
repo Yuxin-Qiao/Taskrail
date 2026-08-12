@@ -233,10 +233,10 @@ fn extract_output_text(output: &Option<Vec<OutputItem>>) -> Option<String> {
             continue;
         }
         for part in item.content.as_deref().unwrap_or_default() {
-            if part.part_type.as_deref() == Some("output_text") {
-                if let Some(value) = &part.text {
-                    text.push_str(value);
-                }
+            if part.part_type.as_deref() == Some("output_text")
+                && let Some(value) = &part.text
+            {
+                text.push_str(value);
             }
         }
     }
