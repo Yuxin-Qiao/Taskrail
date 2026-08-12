@@ -440,8 +440,14 @@ pub fn canonical_json<T: Serialize>(value: &T) -> anyhow::Result<String> {
 
 pub fn fingerprint_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
     let digest = Sha256::digest(bytes);
-    format!("sha256:{digest:x}")
+    let mut fingerprint = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut fingerprint, "{byte:02x}").expect("writing a digest to String cannot fail");
+    }
+    format!("sha256:{fingerprint}")
 }
 
 #[cfg(test)]
@@ -456,6 +462,14 @@ mod tests {
             "echo 'hello world' '$(touch /tmp/pwned)'"
         );
         assert!(!command.shell);
+    }
+
+    #[test]
+    fn fingerprint_bytes_uses_stable_sha256_hex() {
+        assert_eq!(
+            fingerprint_bytes(b""),
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
