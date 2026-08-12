@@ -1581,13 +1581,22 @@ fn sanitize_private_value(value: &mut Value) {
 }
 
 fn sanitize_home_prefix(path: &str) -> String {
-    let Some(home) = std::env::var_os("HOME").and_then(|value| value.into_string().ok()) else {
+    let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .and_then(|value| value.into_string().ok())
+    else {
         return path.to_owned();
     };
     if path == home {
         return "~".into();
     }
-    path.replace(&format!("{home}/"), "~/")
+    for separator in ['/', '\\'] {
+        let prefix = format!("{home}{separator}");
+        if let Some(relative) = path.strip_prefix(&prefix) {
+            return format!("~/{}", relative.replace('\\', "/"));
+        }
+    }
+    path.to_owned()
 }
 
 fn sanitize_adoption_value(mut value: Value) -> Value {
@@ -1994,7 +2003,11 @@ mod tests {
 
     #[test]
     fn automation_definitions_redact_integration_paths() {
-        let home = std::env::var("HOME").unwrap();
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let value = sanitize_automation_value(json!({
             "steps": [{
                 "integration": {
@@ -2024,7 +2037,11 @@ mod tests {
 
     #[test]
     fn local_paths_redact_the_current_home_prefix() {
-        let home = std::env::var("HOME").unwrap();
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             sanitize_local_path(Some(&json!(format!("{home}/work")))),
             "~/work"

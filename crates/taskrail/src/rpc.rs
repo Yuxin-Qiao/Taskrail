@@ -1399,6 +1399,8 @@ mod tests {
     async fn list_and_run_use_the_same_registry_service() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("registry.sqlite3");
+        let portable_success_command =
+            CommandSpec::argv(std::env::current_exe().unwrap(), ["--help"]);
         let registry = Registry::open(&path).unwrap();
         registry
             .save_automation(&crate::core::Automation {
@@ -1407,7 +1409,7 @@ mod tests {
                 ownership: Ownership::Managed,
                 steps: vec![StepSpec {
                     id: "echo".into(),
-                    command: CommandSpec::argv("/bin/echo", ["rpc"]),
+                    command: portable_success_command,
                     responses: None,
                     integration: None,
                 }],
