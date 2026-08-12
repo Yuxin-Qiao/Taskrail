@@ -4,6 +4,7 @@ pub mod core;
 pub mod discovery;
 pub mod executor;
 pub mod github;
+pub mod integrations;
 pub mod mcp;
 pub mod responses;
 pub mod rpc;
