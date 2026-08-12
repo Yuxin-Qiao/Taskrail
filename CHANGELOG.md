@@ -10,3 +10,8 @@ Initial open-source release.
 - MCP tools for ChatGPT, including fresh local automation discovery.
 - Optional Codex, Responses-compatible, and read-only GitHub integrations.
 - macOS desktop client model decoding and CI coverage.
+
+## [0.1.1] - 2026-08-12
+
+Patch release for the reproducible macOS release workflow, using a runner with
+Swift 6 support for the desktop bundle.
