@@ -5,6 +5,8 @@
 - Add an optional loopback browser dashboard served by the local daemon;
   `taskrail gui` opens the dashboard and `taskrail tui` remains the terminal
   fallback.
+- Add versioned MCP Apps dashboard resources and read-only render tools so
+  ChatGPT can present local and multi-host Taskrail overviews interactively.
 
 ## [0.1.6] - 2026-08-12
 

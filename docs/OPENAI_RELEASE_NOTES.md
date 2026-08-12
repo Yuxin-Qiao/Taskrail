@@ -7,7 +7,9 @@ automation inventory, run history and bounded logs, attention items,
 audit-event summaries, and normalized local integration findings.
 
 The public review profile is intentionally narrower than the private local
-profile. It advertises 18 read-only tools, rejects hidden write/execution
+profile. It advertises 19 read-only tools, including the embedded Taskrail
+dashboard render tool; the private Fleet gateway additionally has a separate
+multi-host read-only dashboard resource. It rejects hidden write/execution
 tools, redacts configured environment values and native raw definitions, and
 does not mutate the Registry during discovery. The repository now includes a
 stateless Streamable HTTP `/mcp` adapter, bounded request parsing, origin and

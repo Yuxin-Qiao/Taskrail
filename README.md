@@ -86,7 +86,8 @@ provider, so Taskrail does not manufacture deletion alerts.
 
 ## ChatGPT Scheduled tasks
 
-Taskrail can be connected to ChatGPT as a tool-only app. ChatGPT Web, Desktop,
+Taskrail can be connected to ChatGPT as an MCP app with typed tools and optional
+read-only MCP Apps widgets. ChatGPT Web, Desktop,
 and Mobile use the same MCP tool contract; ChatGPT's Scheduled
 page remains the natural-language scheduler and notification surface; Taskrail
 is the local execution backend that ChatGPT calls on the selected ARM64 macOS
@@ -187,6 +188,11 @@ The browser dashboard supports English, Simplified Chinese, Japanese, and
 Korean. It selects a supported browser language on first load; use the language
 selector in the top-right corner to change it. The selection is stored only in
 the browser's local storage.
+
+The ChatGPT MCP app can render the same bounded overview through a versioned
+MCP Apps resource. The optional Fleet gateway also exposes a read-only
+multi-host view; both widgets call typed MCP tools and never the local browser
+HTTP endpoint.
 
 For definitions that need more fields, use YAML:
 
@@ -331,7 +337,7 @@ private ChatGPT Scheduled-task control. The stable center is:
 add/register → list → daemon → run → history/logs → tui
 ```
 
-The following are optional integrations or still future work:
+The current implementation and remaining release gates are:
 
 | Area | Status |
 | --- | --- |
@@ -340,11 +346,12 @@ The following are optional integrations or still future work:
 | launchd / cron / systemd / Homebrew discovery and background supervision | 🔵 Integration |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
-| Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
+| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
 | Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟢 Verified |
+| Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
-| ARM64 CLI and unsigned Apple Silicon macOS app releases | 🟢 Tag-triggered workflow |
+| ARM64 CLI releases | 🟡 Tag-triggered workflow; release not yet run |
 | Homebrew formula | 🟡 Future |
 
 ## Documentation

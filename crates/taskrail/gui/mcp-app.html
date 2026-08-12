@@ -1,0 +1,156 @@
+<div class="taskrail-app" data-theme="dark">
+  <style>
+    :root { color-scheme: light dark; }
+    .taskrail-app { --bg: #111827; --panel: #1b2638; --border: #334155; --text: #f8fafc; --muted: #a8b4c7; --accent: #b8e36d; --warn: #f5bd68; --bad: #f08484; box-sizing: border-box; color: var(--text); font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 760px; padding: 4px; }
+    .taskrail-app[data-theme="light"] { --bg: #f8fafc; --panel: #ffffff; --border: #dbe3ef; --text: #172033; --muted: #64748b; }
+    .taskrail-app * { box-sizing: border-box; }
+    .taskrail-head { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 14px; }
+    .taskrail-title { align-items: center; display: flex; gap: 9px; }
+    .taskrail-mark { align-items: center; background: var(--accent); border-radius: 8px; color: #19240e; display: inline-flex; font-weight: 800; height: 27px; justify-content: center; width: 27px; }
+    .taskrail-name { font-size: 17px; font-weight: 750; }
+    .taskrail-subtitle { color: var(--muted); font-size: 12px; }
+    .taskrail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .taskrail-button { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; color: var(--text); cursor: pointer; padding: 7px 10px; }
+    .taskrail-button:hover { border-color: var(--accent); }
+    .taskrail-button:disabled { cursor: wait; opacity: .55; }
+    .taskrail-status { color: var(--muted); font-size: 12px; margin: 8px 0 12px; min-height: 18px; }
+    .taskrail-status[data-kind="error"] { color: var(--bad); }
+    .taskrail-cards { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .taskrail-card { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 11px; }
+    .taskrail-card-label { color: var(--muted); font-size: 11px; }
+    .taskrail-card-value { font-size: 22px; font-weight: 750; margin-top: 4px; }
+    .taskrail-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; margin-top: 10px; overflow: hidden; }
+    .taskrail-panel h2 { border-bottom: 1px solid var(--border); font-size: 13px; margin: 0; padding: 10px 12px; }
+    .taskrail-list { list-style: none; margin: 0; max-height: 220px; overflow: auto; padding: 0; }
+    .taskrail-list li { border-bottom: 1px solid var(--border); display: flex; gap: 8px; justify-content: space-between; padding: 9px 12px; }
+    .taskrail-list li:last-child { border-bottom: 0; }
+    .taskrail-item-name { min-width: 0; overflow-wrap: anywhere; }
+    .taskrail-item-meta { color: var(--muted); font-size: 11px; text-align: right; }
+    .taskrail-empty { color: var(--muted); padding: 16px 12px; }
+    @media (max-width: 560px) { .taskrail-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .taskrail-head { align-items: flex-start; flex-direction: column; } }
+  </style>
+  <div class="taskrail-head">
+    <div class="taskrail-title"><span class="taskrail-mark">T</span><div><div class="taskrail-name">Taskrail</div><div class="taskrail-subtitle">Local automation control plane</div></div></div>
+    <div class="taskrail-actions"><button class="taskrail-button" data-action="refresh" type="button">Refresh</button><button class="taskrail-button" data-action="discover" type="button">Scan native jobs</button></div>
+  </div>
+  <div class="taskrail-status" data-role="status" aria-live="polite">Waiting for the latest Taskrail overview…</div>
+  <div class="taskrail-cards" data-role="cards"></div>
+  <section class="taskrail-panel"><h2>Automations</h2><ul class="taskrail-list" data-role="automations"><li class="taskrail-empty">No overview loaded.</li></ul></section>
+  <section class="taskrail-panel"><h2>Needs attention</h2><ul class="taskrail-list" data-role="attention"><li class="taskrail-empty">No overview loaded.</li></ul></section>
+</div>
+<script>
+  (() => {
+    const root = document.querySelector(".taskrail-app");
+    const status = root.querySelector('[data-role="status"]');
+    const cards = root.querySelector('[data-role="cards"]');
+    const automations = root.querySelector('[data-role="automations"]');
+    const attention = root.querySelector('[data-role="attention"]');
+    const pending = new Map();
+    let nextId = 1;
+    let busy = false;
+
+    const text = value => String(value ?? "");
+    const escape = value => text(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const list = value => Array.isArray(value) ? value : [];
+    const resultValue = value => value?.result ?? value ?? {};
+
+    function setStatus(message, kind = "") {
+      status.textContent = message;
+      status.dataset.kind = kind;
+    }
+
+    function bridgeRequest(method, params) {
+      const id = nextId++;
+      const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+      window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+      return promise;
+    }
+
+    async function callTool(name, arguments_ = {}) {
+      if (window.openai?.callTool) return window.openai.callTool(name, arguments_);
+      return bridgeRequest("tools/call", { name, arguments: arguments_ });
+    }
+
+    function renderOverview(payload) {
+      const value = resultValue(payload);
+      const daemon = value.daemon || {};
+      const host = value.host || daemon.host || {};
+      const discovery = value.native_discovery || {};
+      const items = list(value.automations);
+      const attentionItems = list(value.attention?.items || value.attention);
+      const nativeCount = Number(discovery.source_count ?? discovery.count ?? list(discovery.automations).length ?? 0);
+      const runCount = list(value.recent_runs).length;
+      cards.innerHTML = [
+        ["Host", host.label || host.hostname || "local"],
+        ["Automations", items.length],
+        ["Native sources", nativeCount],
+        ["Recent runs", runCount],
+      ].map(([label, count]) => `<div class="taskrail-card"><div class="taskrail-card-label">${escape(label)}</div><div class="taskrail-card-value">${escape(count)}</div></div>`).join("");
+      automations.innerHTML = items.length ? items.slice(0, 12).map(item => `<li><span class="taskrail-item-name">${escape(item.name || item.id || "Unnamed automation")}</span><span class="taskrail-item-meta">${escape(item.runtime_state || item.ownership || "unknown")}</span></li>`).join("") : '<li class="taskrail-empty">No automations registered.</li>';
+      attention.innerHTML = attentionItems.length ? attentionItems.slice(0, 12).map(item => `<li><span class="taskrail-item-name">${escape(item.title || item.kind || item.id || "Attention item")}</span><span class="taskrail-item-meta">${escape(item.severity || item.status || "review")}</span></li>`).join("") : '<li class="taskrail-empty">No attention items.</li>';
+      setStatus(`Connected · ${text(host.label || host.hostname || "local host")} · ${text(host.platform || "local")} ${text(host.architecture || "")}`);
+    }
+
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      root.querySelectorAll("button").forEach(button => { button.disabled = true; });
+      setStatus("Refreshing Taskrail overview…");
+      try {
+        const response = await callTool("taskrail_overview");
+        if (response?.isError) throw new Error(response.content?.[0]?.text || "Taskrail overview failed");
+        renderOverview(response?.structuredContent || response);
+      } catch (error) {
+        setStatus(error?.message || "Taskrail overview failed", "error");
+      } finally {
+        busy = false;
+        root.querySelectorAll("button").forEach(button => { button.disabled = false; });
+      }
+    }
+
+    async function discover() {
+      if (busy) return;
+      busy = true;
+      root.querySelectorAll("button").forEach(button => { button.disabled = true; });
+      setStatus("Scanning native jobs without changing definitions…");
+      try {
+        const scan = await callTool("taskrail_discover_local_automations", { source: "all" });
+        if (scan?.isError) throw new Error(scan.content?.[0]?.text || "Native scan failed");
+        const response = await callTool("taskrail_overview");
+        renderOverview(response?.structuredContent || response);
+        setStatus("Native scan complete · definitions and Registry unchanged");
+      } catch (error) {
+        setStatus(error?.message || "Native scan failed", "error");
+      } finally {
+        busy = false;
+        root.querySelectorAll("button").forEach(button => { button.disabled = false; });
+      }
+    }
+
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent) return;
+      const message = event.data;
+      if (!message || message.jsonrpc !== "2.0") return;
+      if (message.id !== undefined && pending.has(message.id)) {
+        const request = pending.get(message.id);
+        pending.delete(message.id);
+        if (message.error) request.reject(new Error(message.error.message || "MCP app request failed"));
+        else request.resolve(message.result);
+        return;
+      }
+      if (message.method === "ui/notifications/tool-result") renderOverview(message.params?.structuredContent || message.params);
+      if (message.method === "ui/notifications/host-context-changed" && message.params?.theme) root.dataset.theme = message.params.theme === "light" ? "light" : "dark";
+    }, { passive: true });
+
+    root.querySelector('[data-action="refresh"]').addEventListener("click", refresh);
+    root.querySelector('[data-action="discover"]').addEventListener("click", discover);
+    bridgeRequest("ui/initialize", {
+      protocolVersion: "2025-11-25",
+      appInfo: { name: "Taskrail dashboard", version: "0.1.6" },
+      appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+    }).then(result => {
+      if (result?.hostContext?.theme) root.dataset.theme = result.hostContext.theme === "light" ? "light" : "dark";
+      window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+    }).catch(error => setStatus(error?.message || "MCP app initialization failed", "error"));
+  })();
+</script>

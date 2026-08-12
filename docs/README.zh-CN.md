@@ -20,13 +20,15 @@ add/register → schedule → run → history/logs → 浏览器控制台
 - 浏览器控制台只是守护进程本地 RPC handler 的薄客户端，不是公开服务，也不会通过 Tunnel 暴露；
 - 浏览器控制台支持 English、简体中文、日本語和한국어，首次打开会自动识别浏览器语言，手动切换只保存
   在浏览器本地存储中；
+- ChatGPT MCP 应用可以通过带版本的 MCP Apps resource 在对话内渲染只读主机摘要和多主机 Fleet 总览；Widget 只调用
+  类型化 MCP 工具，不会访问本地浏览器 HTTP 接口；
 - Rust CLI、守护进程、TUI、浏览器控制台和本地 MCP 适配器只支持 ARM64 macOS 和 ARM64 Linux；
   控制平面使用受限 Unix socket，浏览器控制台只使用 loopback HTTP；
 - 私有 ChatGPT Scheduled 任务可以通过 OpenAI Secure MCP Tunnel 调用本地 MCP 适配器；
   公开应用审核和托管部署属于独立的外部发布门槛；
 - `taskrail mcp-fleet` 可以把明确配置的多台主机聚合为一个 MCP 应用；端点和令牌环境变量名
-  保留在本机，默认只读，写入路由必须显式启用；私有主机定向能力包括原生领养、漂移确认、
-  类型化集成和持久化审批；
+  保留在本机，默认只读，写入路由必须显式启用；私有主机定向能力包括只读 Fleet 控制面、原生领养、
+  漂移确认、类型化集成和持久化审批；
 - 公开只读 `taskrail mcp-http` 适配器可部署在 TLS/认证边缘之后；`deploy/` 下的容器示例
   仅支持单主机，不是托管的多租户服务；
 - 原生调度器发现和类型化语义集成位于核心管理器边缘；

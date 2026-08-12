@@ -2,7 +2,8 @@
 
 [简体中文](chatgpt.zh-CN.md)
 
-Taskrail's ChatGPT integration is a tool-only MCP app. ChatGPT provides the
+Taskrail's ChatGPT integration is an MCP app with typed tools and optional
+read-only MCP Apps widgets. ChatGPT provides the
 natural-language conversation, the **Scheduled** page, and notifications.
 Taskrail provides the local daemon, scheduler, command execution, run history,
 logs, and host-local audit events.
@@ -28,8 +29,9 @@ start the gateway:
 taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
 ```
 
-The fleet app exposes `taskrail_fleet_overview` first, followed by explicit
-`host_id`-targeted discovery, inventory, native integrations, adoption, drift,
+The fleet app exposes `taskrail_fleet_overview` first, followed by the optional
+`taskrail_fleet_render_overview` MCP Apps view and then explicit `host_id`-targeted
+discovery, inventory, native integrations, adoption, drift,
 audit events, run history, logs, approval, and lifecycle tools. Fleet hosts are
 read-only by default.
 `allow_writes: true` is an explicit opt-in for a trusted private endpoint; the
@@ -233,6 +235,13 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_status` — verify daemon connectivity and identify the host.
 - `taskrail_overview` — return one safe host summary combining identity,
   discovery, Taskrail automations, recent runs, and attention items.
+- `taskrail_render_overview` — after `taskrail_overview`, render the same
+  read-only snapshot as an interactive MCP Apps control-plane view inside
+  ChatGPT; its refresh and native-scan buttons call typed read-only tools and
+  never expose the local browser HTTP API.
+- `taskrail_fleet_render_overview` — after `taskrail_fleet_overview`, render
+  configured host status as an interactive read-only MCP Apps view; it never
+  bypasses per-host routing, policy, approval, or execution boundaries.
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,

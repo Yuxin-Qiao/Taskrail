@@ -2,7 +2,7 @@
 
 [English](chatgpt.md)
 
-Taskrail 的 ChatGPT 集成是一个仅提供工具的 MCP 应用。ChatGPT 提供自然语言对话、
+Taskrail 的 ChatGPT 集成是一个提供类型化工具和可选只读 MCP Apps Widget 的 MCP 应用。ChatGPT 提供自然语言对话、
 “Scheduled”页面和通知；Taskrail 提供本地守护进程、调度器、命令执行、运行历史、
 日志和主机本地审计事件。
 
@@ -27,8 +27,9 @@ cp examples/fleet.yaml ~/.config/taskrail/fleet.yaml
 taskrail mcp-fleet --config ~/.config/taskrail/fleet.yaml
 ~~~
 
-仓库中的示例主机默认禁用。fleet 工具首先提供 `taskrail_fleet_overview`，然后提供带明确
-`host_id` 的发现、清单、原生集成、领养、漂移、审计事件、运行历史、日志、审批和生命周期操作。
+仓库中的示例主机默认禁用。fleet 工具首先提供 `taskrail_fleet_overview`，可选地提供
+`taskrail_fleet_render_overview` MCP Apps 视图，然后提供带明确 `host_id` 的发现、清单、原生集成、
+领养、漂移、审计事件、运行历史、日志、审批和生命周期操作。
 默认只读；只有可信私有端点才应显式设置 `allow_writes: true`，且远端 Taskrail 仍负责最终策略和审批。
 
 ## 启动本地后端
@@ -194,7 +195,8 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 守护进程状态还包含最近一次后台发现的时间、已完成查询的 provider、漂移数量和已确认
 消失的任务数量。
 
-使用 fleet 网关时，先调用 `taskrail_fleet_overview` 查看所有配置主机的在线状态，再在每次
+使用 fleet 网关时，先调用 `taskrail_fleet_overview` 查看所有配置主机的在线状态；需要交互式多主机视图时再调用
+`taskrail_fleet_render_overview`，然后在每次
 主机操作中传入稳定的 `host_id`。不要只根据显示名称猜测目标；fleet 配置是本地文件，令牌
 只能通过 `token_env` 引用，远端主机仍负责最终策略、审批和执行。
 
@@ -204,6 +206,10 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 
 - taskrail_status — 检查守护进程连通性并识别主机；
 - taskrail_overview — 返回合并了身份、发现、Taskrail 自动化、最近运行和待处理事项的安全主机摘要；
+- taskrail_render_overview — 在 taskrail_overview 之后，将同一份只读摘要渲染为 ChatGPT 内的
+  MCP Apps 控制面视图；刷新和原生扫描按钮只调用类型化只读工具，不会暴露本地浏览器 HTTP API；
+- taskrail_fleet_render_overview — 在 taskrail_fleet_overview 之后，将配置主机状态渲染为只读的
+  多主机 MCP Apps 控制面视图；不会绕过每台主机的路由、策略、审批或执行边界；
 - taskrail_list_automations / taskrail_get_automation — 查看本地清单；
 - taskrail_discover_local_automations — 新扫描 launchd、cron、systemd 和 Homebrew 服务；
 - taskrail_scan_native — 执行只读的 launchd、cron、systemd 或 Homebrew 扫描；

@@ -120,3 +120,7 @@ jobs:
             | grep -F 'gui/styles.css'
           cargo +stable package --locked --package taskrail --list \
             | grep -F 'gui/favicon.svg'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/mcp-app.html'
+          cargo +stable package --locked --package taskrail --list \
+            | grep -F 'gui/mcp-fleet-app.html'

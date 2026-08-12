@@ -12,13 +12,15 @@ stdio review tests.
   open-world behavior, and every descriptor includes an output schema.
 - `automation.discover` is a true read-only RPC path; it does not reconcile or
   write the local Registry. The MCP discovery and scan tools use that path.
-- Public-profile tool calls are allowlisted to 18 read-only tools. Write,
+- Public-profile tool calls are allowlisted to 19 read-only tools, including a
+  ChatGPT MCP Apps dashboard render tool. The private Fleet gateway also
+  exposes a separate read-only multi-host dashboard resource. Write,
   delete, adoption, approval, cancellation, and execution tools are both
   omitted from `tools/list` and rejected if called directly.
 - MCP responses omit native raw definitions and environment values, redact
   configured environment values in automation/run snapshots, redact event
   `raw`/`env` fields, and hide the current home-directory prefix in paths.
-- `chatgpt-app-submission.json` contains the app information, all 18 public
+- `chatgpt-app-submission.json` contains the app information, all 19 public
   tools, five positive tests, and three negative tests.
 - `OPENAI_RELEASE_NOTES.md` contains the portal-ready initial-submission
   release notes.

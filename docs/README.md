@@ -26,6 +26,9 @@ add/register → schedule → run → history/logs → browser dashboard
 - The browser dashboard supports English, Simplified Chinese, Japanese, and
   Korean. It detects the browser language on first load and stores manual
   language changes only in browser local storage.
+- The ChatGPT MCP app can render the same read-only overview inside the
+  conversation through a versioned MCP Apps resource; its widget calls only
+  typed MCP tools and never the local browser HTTP endpoint.
 - The Rust CLI, daemon, TUI, browser dashboard, and local MCP adapter are
   supported only on ARM64 macOS and ARM64 Linux. The daemon uses a restricted
   Unix socket for the control plane and loopback-only HTTP for the dashboard.
@@ -35,8 +38,8 @@ add/register → schedule → run → history/logs → browser dashboard
 - `taskrail mcp-fleet` can aggregate multiple explicitly configured hosts into
   one MCP app; host endpoints and token environment references remain local,
   and write routing is opt-in and read-only by default. Its private host-targeted
-  surface includes native adoption, drift acknowledgement, typed integrations,
-  and durable approvals.
+  surface includes a versioned read-only MCP Apps fleet dashboard plus native
+  adoption, drift acknowledgement, typed integrations, and durable approvals.
 - The public read-only `taskrail mcp-http` adapter is available for deployment
   behind a TLS/authentication edge; the container example under `deploy/` is
   single-host only and is not a hosted multi-tenant service.

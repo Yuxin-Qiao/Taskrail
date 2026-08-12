@@ -1,0 +1,139 @@
+<div class="taskrail-fleet-app" data-theme="dark">
+  <style>
+    :root { color-scheme: light dark; }
+    .taskrail-fleet-app { --bg: #111827; --panel: #1b2638; --border: #334155; --text: #f8fafc; --muted: #a8b4c7; --accent: #b8e36d; --good: #91d59a; --warn: #f5bd68; --bad: #f08484; box-sizing: border-box; color: var(--text); font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 760px; padding: 4px; }
+    .taskrail-fleet-app[data-theme="light"] { --panel: #ffffff; --border: #dbe3ef; --text: #172033; --muted: #64748b; }
+    .taskrail-fleet-app * { box-sizing: border-box; }
+    .taskrail-fleet-head { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 14px; }
+    .taskrail-fleet-title { align-items: center; display: flex; gap: 9px; }
+    .taskrail-fleet-mark { align-items: center; background: var(--accent); border-radius: 8px; color: #19240e; display: inline-flex; font-weight: 800; height: 27px; justify-content: center; width: 27px; }
+    .taskrail-fleet-name { font-size: 17px; font-weight: 750; }
+    .taskrail-fleet-subtitle { color: var(--muted); font-size: 12px; }
+    .taskrail-fleet-actions { display: flex; gap: 7px; }
+    .taskrail-fleet-button { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; color: var(--text); cursor: pointer; padding: 7px 10px; }
+    .taskrail-fleet-button:hover { border-color: var(--accent); }
+    .taskrail-fleet-button:disabled { cursor: wait; opacity: .55; }
+    .taskrail-fleet-status { color: var(--muted); font-size: 12px; margin: 8px 0 12px; min-height: 18px; }
+    .taskrail-fleet-status[data-kind="error"] { color: var(--bad); }
+    .taskrail-fleet-cards { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .taskrail-fleet-card { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 11px; }
+    .taskrail-fleet-card-label { color: var(--muted); font-size: 11px; }
+    .taskrail-fleet-card-value { font-size: 22px; font-weight: 750; margin-top: 4px; }
+    .taskrail-fleet-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; margin-top: 10px; overflow: hidden; }
+    .taskrail-fleet-panel h2 { border-bottom: 1px solid var(--border); font-size: 13px; margin: 0; padding: 10px 12px; }
+    .taskrail-fleet-list { list-style: none; margin: 0; max-height: 320px; overflow: auto; padding: 0; }
+    .taskrail-fleet-list li { align-items: center; border-bottom: 1px solid var(--border); display: flex; gap: 8px; justify-content: space-between; padding: 9px 12px; }
+    .taskrail-fleet-list li:last-child { border-bottom: 0; }
+    .taskrail-fleet-host { min-width: 0; }
+    .taskrail-fleet-host-name { display: block; font-weight: 650; overflow-wrap: anywhere; }
+    .taskrail-fleet-host-meta { color: var(--muted); font-size: 11px; }
+    .taskrail-fleet-host-status { color: var(--muted); font-size: 11px; text-align: right; }
+    .taskrail-fleet-host-status[data-state="online"] { color: var(--good); }
+    .taskrail-fleet-host-status[data-state="offline"] { color: var(--bad); }
+    .taskrail-fleet-host-status[data-state="disabled"] { color: var(--warn); }
+    .taskrail-fleet-empty { color: var(--muted); padding: 16px 12px; }
+    @media (max-width: 560px) { .taskrail-fleet-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .taskrail-fleet-head { align-items: flex-start; flex-direction: column; } }
+  </style>
+  <div class="taskrail-fleet-head">
+    <div class="taskrail-fleet-title"><span class="taskrail-fleet-mark">T</span><div><div class="taskrail-fleet-name">Taskrail Fleet</div><div class="taskrail-fleet-subtitle">Multi-host automation control plane</div></div></div>
+    <div class="taskrail-fleet-actions"><button class="taskrail-fleet-button" data-action="refresh" type="button">Refresh</button></div>
+  </div>
+  <div class="taskrail-fleet-status" data-role="status" aria-live="polite">Waiting for the fleet overview…</div>
+  <div class="taskrail-fleet-cards" data-role="cards"></div>
+  <section class="taskrail-fleet-panel"><h2>Configured hosts</h2><ul class="taskrail-fleet-list" data-role="hosts"><li class="taskrail-fleet-empty">No fleet overview loaded.</li></ul></section>
+</div>
+<script>
+  (() => {
+    const root = document.querySelector(".taskrail-fleet-app");
+    const status = root.querySelector('[data-role="status"]');
+    const cards = root.querySelector('[data-role="cards"]');
+    const hosts = root.querySelector('[data-role="hosts"]');
+    const pending = new Map();
+    let nextId = 1;
+    let busy = false;
+
+    const text = value => String(value ?? "");
+    const escape = value => text(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const list = value => Array.isArray(value) ? value : [];
+    const resultValue = value => value?.result ?? value ?? {};
+
+    function setStatus(message, kind = "") {
+      status.textContent = message;
+      status.dataset.kind = kind;
+    }
+
+    function bridgeRequest(method, params) {
+      const id = nextId++;
+      const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+      window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+      return promise;
+    }
+
+    async function callTool(name, arguments_ = {}) {
+      if (window.openai?.callTool) return window.openai.callTool(name, arguments_);
+      return bridgeRequest("tools/call", { name, arguments: arguments_ });
+    }
+
+    function renderOverview(payload) {
+      const value = resultValue(payload);
+      const hostItems = list(value.hosts);
+      const hostCount = Number(value.host_count ?? hostItems.length);
+      const enabledCount = Number(value.enabled_count ?? hostItems.filter(host => host.enabled !== false).length);
+      const onlineCount = Number(value.online_count ?? hostItems.filter(host => host.status === "online").length);
+      cards.innerHTML = [
+        ["Hosts", hostCount],
+        ["Enabled", enabledCount],
+        ["Online", onlineCount],
+      ].map(([label, count]) => `<div class="taskrail-fleet-card"><div class="taskrail-fleet-card-label">${escape(label)}</div><div class="taskrail-fleet-card-value">${escape(count)}</div></div>`).join("");
+      hosts.innerHTML = hostItems.length ? hostItems.map(host => {
+        const state = text(host.status || "unknown");
+        const overview = host.overview || {};
+        const automationCount = overview.automations?.length ?? overview.automation_count ?? "—";
+        return `<li><span class="taskrail-fleet-host"><span class="taskrail-fleet-host-name">${escape(host.label || host.id || "Unnamed host")}</span><span class="taskrail-fleet-host-meta">${escape(host.id || "")} · ${escape(automationCount)} automations</span></span><span class="taskrail-fleet-host-status" data-state="${escape(state)}">${escape(state)}${host.allow_writes ? " · writes enabled" : " · read-only"}</span></li>`;
+      }).join("") : '<li class="taskrail-fleet-empty">No configured hosts.</li>';
+      setStatus(`Connected · ${onlineCount}/${hostCount} hosts online`);
+    }
+
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      root.querySelectorAll("button").forEach(button => { button.disabled = true; });
+      setStatus("Refreshing fleet overview…");
+      try {
+        const response = await callTool("taskrail_fleet_overview");
+        if (response?.isError) throw new Error(response.content?.[0]?.text || "Taskrail fleet overview failed");
+        renderOverview(response?.structuredContent || response);
+      } catch (error) {
+        setStatus(error?.message || "Taskrail fleet overview failed", "error");
+      } finally {
+        busy = false;
+        root.querySelectorAll("button").forEach(button => { button.disabled = false; });
+      }
+    }
+
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent) return;
+      const message = event.data;
+      if (!message || message.jsonrpc !== "2.0") return;
+      if (message.id !== undefined && pending.has(message.id)) {
+        const request = pending.get(message.id);
+        pending.delete(message.id);
+        if (message.error) request.reject(new Error(message.error.message || "MCP app request failed"));
+        else request.resolve(message.result);
+        return;
+      }
+      if (message.method === "ui/notifications/tool-result") renderOverview(message.params?.structuredContent || message.params);
+      if (message.method === "ui/notifications/host-context-changed" && message.params?.theme) root.dataset.theme = message.params.theme === "light" ? "light" : "dark";
+    }, { passive: true });
+
+    root.querySelector('[data-action="refresh"]').addEventListener("click", refresh);
+    bridgeRequest("ui/initialize", {
+      protocolVersion: "2025-11-25",
+      appInfo: { name: "Taskrail fleet dashboard", version: "0.1.6" },
+      appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+    }).then(result => {
+      if (result?.hostContext?.theme) root.dataset.theme = result.hostContext.theme === "light" ? "light" : "dark";
+      window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+    }).catch(error => setStatus(error?.message || "MCP app initialization failed", "error"));
+  })();
+</script>

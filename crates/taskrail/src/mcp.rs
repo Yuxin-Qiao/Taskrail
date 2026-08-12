@@ -21,13 +21,18 @@ use tokio::net::{TcpListener, TcpStream};
 const SERVER_NAME: &str = "Taskrail";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+const MCP_APP_RESOURCE_URI: &str = "ui://taskrail/dashboard/v1.html";
+const MCP_FLEET_APP_RESOURCE_URI: &str = "ui://taskrail/fleet/v1.html";
+const MCP_APP_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 const MAX_HTTP_HEADER_BYTES: usize = 32 * 1024;
 const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_APP_HTML: &str = include_str!("../gui/mcp-app.html");
+const MCP_FLEET_APP_HTML: &str = include_str!("../gui/mcp-fleet-app.html");
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
-const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, or taskrail_status for a lightweight connectivity check, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, then call taskrail_render_overview when an interactive control-plane view is useful; use taskrail_status for a lightweight connectivity check. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +80,7 @@ impl HttpProfile {
 const PUBLIC_READ_ONLY_TOOLS: &[&str] = &[
     "taskrail_status",
     "taskrail_overview",
+    "taskrail_render_overview",
     "taskrail_list_automations",
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
@@ -624,7 +630,10 @@ async fn handle_request_with_profile(
         "initialize" => Ok(initialize_result_for_profile(&request.params, profile)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_descriptors_for_profile(profile) })),
-        "resources/list" => Ok(json!({ "resources": [] })),
+        "resources/list" => Ok(json!({
+            "resources": resources_for_profile(profile)
+        })),
+        "resources/read" => read_app_resource(&request.params),
         "prompts/list" => Ok(json!({ "prompts": [] })),
         "tools/call" => call_tool_with_profile(&request.params, socket_path, profile).await,
         "notifications/initialized" => Ok(Value::Null),
@@ -649,7 +658,10 @@ async fn handle_fleet_request(
         "initialize" => Ok(fleet_initialize_result()),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": fleet_tool_descriptors()})),
-        "resources/list" => Ok(json!({"resources": []})),
+        "resources/list" => Ok(json!({
+            "resources": [fleet_app_resource_descriptor()]
+        })),
+        "resources/read" => read_fleet_app_resource(&request.params),
         "prompts/list" => Ok(json!({"prompts": []})),
         "notifications/initialized" => Ok(Value::Null),
         "tools/call" => fleet_call_tool(&request.params, gateway).await,
@@ -664,9 +676,12 @@ async fn handle_fleet_request(
 fn fleet_initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
-        "capabilities": {"tools": {"listChanged": false}},
+        "capabilities": {
+            "tools": {"listChanged": false},
+            "resources": {"listChanged": false, "subscribe": false}
+        },
         "serverInfo": {"name": "Taskrail Fleet", "version": SERVER_VERSION},
-        "instructions": "Taskrail Fleet routes explicit host-targeted tools to user-configured Taskrail daemons. Call taskrail_fleet_overview first, then name a host_id for every host-specific operation. Host endpoints, policies, approvals, and execution remain authoritative on the target host. Never claim a remote run succeeded unless its tool result reports that status.",
+        "instructions": "Taskrail Fleet routes explicit host-targeted tools to user-configured Taskrail daemons. Call taskrail_fleet_overview first, then call taskrail_fleet_render_overview when an interactive multi-host view is useful; name a host_id for every host-specific operation. Host endpoints, policies, approvals, and execution remain authoritative on the target host. Never claim a remote run succeeded unless its tool result reports that status.",
     })
 }
 
@@ -676,6 +691,15 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             "taskrail_fleet_overview",
             "Taskrail fleet overview",
             "Use this first when the user wants a complete overview of every configured Taskrail host. It probes each enabled host and returns online/offline state plus safe host summaries without changing any host.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_fleet_render_overview",
+            "Render Taskrail fleet overview",
+            "Use this after taskrail_fleet_overview when the user wants an interactive view of configured Taskrail hosts. It renders only the safe fleet status snapshot and never changes a host.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -1226,9 +1250,12 @@ async fn fleet_call_tool(params: &Value, gateway: &crate::fleet::FleetGateway) -
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if name == "taskrail_fleet_overview" {
+    if matches!(
+        name,
+        "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+    ) {
         let result = gateway.fleet_overview().await;
-        return Ok(tool_result("taskrail_fleet_overview", result));
+        return Ok(tool_result(name, result));
     }
     let host_id = arguments
         .get("host_id")
@@ -1297,7 +1324,7 @@ fn fleet_remote_tool(name: &str) -> Option<&'static str> {
 
 fn tool_result(name: &str, result: Value) -> Value {
     let summary = match name {
-        "taskrail_fleet_overview" => format!(
+        "taskrail_fleet_overview" | "taskrail_fleet_render_overview" => format!(
             "Taskrail fleet overview: {} configured host(s), {} online.",
             result
                 .get("host_count")
@@ -1324,13 +1351,22 @@ mod fleet_contract_tests {
     #[test]
     fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
         let tools = fleet_tool_descriptors();
-        assert_eq!(tools.len(), 38);
+        assert_eq!(tools.len(), 39);
         let overview = tools
             .iter()
             .find(|tool| tool["name"] == "taskrail_fleet_overview")
             .unwrap();
         assert_eq!(overview["annotations"]["readOnlyHint"], true);
         assert_eq!(overview["annotations"]["openWorldHint"], true);
+        let render = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_fleet_render_overview")
+            .unwrap();
+        assert_eq!(render["annotations"]["readOnlyHint"], true);
+        assert_eq!(
+            render["_meta"]["ui"]["resourceUri"],
+            MCP_FLEET_APP_RESOURCE_URI
+        );
         let host_tool = tools
             .iter()
             .find(|tool| tool["name"] == "taskrail_fleet_run_automation")
@@ -1345,7 +1381,10 @@ mod fleet_contract_tests {
         );
         for descriptor in &tools {
             let name = descriptor["name"].as_str().unwrap();
-            if name == "taskrail_fleet_overview" {
+            if matches!(
+                name,
+                "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+            ) {
                 continue;
             }
             assert!(
@@ -1373,10 +1412,82 @@ mod fleet_contract_tests {
         );
         for descriptor in tools {
             let name = descriptor["name"].as_str().unwrap();
-            if name != "taskrail_fleet_overview" {
+            if !matches!(
+                name,
+                "taskrail_fleet_overview" | "taskrail_fleet_render_overview"
+            ) {
                 assert!(fleet_remote_tool(name).is_some(), "{name} lacks a route");
             }
         }
+    }
+
+    #[test]
+    fn fleet_app_resource_is_versioned_and_embedded() {
+        let resource = fleet_app_resource_descriptor();
+        assert_eq!(resource["uri"], MCP_FLEET_APP_RESOURCE_URI);
+        assert_eq!(resource["mimeType"], MCP_APP_RESOURCE_MIME_TYPE);
+        let read = read_fleet_app_resource(&json!({"uri": MCP_FLEET_APP_RESOURCE_URI})).unwrap();
+        assert_eq!(read["contents"][0]["uri"], MCP_FLEET_APP_RESOURCE_URI);
+        assert!(
+            read["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("taskrail-fleet-app")
+        );
+        assert!(
+            read_fleet_app_resource(&json!({
+                "uri": "ui://taskrail/fleet/v0.html"
+            }))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn fleet_resource_routes_advertise_and_read_the_widget() {
+        let gateway = crate::fleet::FleetGateway::from_config(crate::fleet::FleetConfig {
+            version: 1,
+            hosts: vec![crate::fleet::FleetHost {
+                id: "disabled".into(),
+                label: "Disabled host".into(),
+                endpoint: "https://example.invalid/mcp".into(),
+                token_env: None,
+                enabled: false,
+                allow_writes: false,
+            }],
+        })
+        .unwrap();
+        let list = handle_fleet_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/list".into(),
+                params: json!({}),
+            },
+            &gateway,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list["result"]["resources"][0]["uri"],
+            MCP_FLEET_APP_RESOURCE_URI
+        );
+        let read = handle_fleet_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: "resources/read".into(),
+                params: json!({"uri": MCP_FLEET_APP_RESOURCE_URI}),
+            },
+            &gateway,
+        )
+        .await
+        .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Taskrail Fleet")
+        );
     }
 }
 
@@ -1389,7 +1500,8 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": {"listChanged": false}
+            "tools": {"listChanged": false},
+            "resources": {"listChanged": false, "subscribe": false}
         },
         "serverInfo": {
             "name": SERVER_NAME,
@@ -1401,6 +1513,98 @@ fn initialize_result_for_profile(params: &Value, profile: McpProfile) -> Value {
             McpProfile::PrivateHttp => PRIVATE_HTTP_INSTRUCTIONS,
         }
     })
+}
+
+fn app_resource_descriptor() -> Value {
+    json!({
+        "uri": MCP_APP_RESOURCE_URI,
+        "name": "Taskrail dashboard",
+        "description": "Interactive local automation overview and safe control surface.",
+        "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+        "_meta": {
+            "ui": {
+                "prefersBorder": true,
+                "csp": {
+                    "connectDomains": [],
+                    "resourceDomains": []
+                }
+            }
+        }
+    })
+}
+
+fn fleet_app_resource_descriptor() -> Value {
+    json!({
+        "uri": MCP_FLEET_APP_RESOURCE_URI,
+        "name": "Taskrail fleet dashboard",
+        "description": "Interactive read-only overview of configured Taskrail hosts.",
+        "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+        "_meta": {
+            "ui": {
+                "prefersBorder": true,
+                "csp": {
+                    "connectDomains": [],
+                    "resourceDomains": []
+                }
+            }
+        }
+    })
+}
+
+fn read_app_resource(params: &Value) -> Result<Value> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .context("resources/read requires params.uri")?;
+    if uri != MCP_APP_RESOURCE_URI {
+        anyhow::bail!("unknown Taskrail app resource: {uri}");
+    }
+    Ok(json!({
+        "contents": [{
+            "uri": MCP_APP_RESOURCE_URI,
+            "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+            "text": MCP_APP_HTML,
+            "_meta": {
+                "ui": {
+                    "prefersBorder": true,
+                    "csp": {
+                        "connectDomains": [],
+                        "resourceDomains": []
+                    }
+                }
+            }
+        }]
+    }))
+}
+
+fn read_fleet_app_resource(params: &Value) -> Result<Value> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .context("resources/read requires params.uri")?;
+    if uri != MCP_FLEET_APP_RESOURCE_URI {
+        anyhow::bail!("unknown Taskrail Fleet app resource: {uri}");
+    }
+    Ok(json!({
+        "contents": [{
+            "uri": MCP_FLEET_APP_RESOURCE_URI,
+            "mimeType": MCP_APP_RESOURCE_MIME_TYPE,
+            "text": MCP_FLEET_APP_HTML,
+            "_meta": {
+                "ui": {
+                    "prefersBorder": true,
+                    "csp": {
+                        "connectDomains": [],
+                        "resourceDomains": []
+                    }
+                }
+            }
+        }]
+    }))
+}
+
+fn resources_for_profile(_profile: McpProfile) -> Vec<Value> {
+    vec![app_resource_descriptor()]
 }
 
 fn tool_descriptors() -> Vec<Value> {
@@ -1418,6 +1622,15 @@ fn tool_descriptors() -> Vec<Value> {
             "taskrail_overview",
             "Taskrail host overview",
             "Use this first when the user wants one safe summary of this host: identity, daemon state, fresh native discovery, Taskrail automations, recent runs, and attention items. It is read-only and does not change scheduler definitions, the Registry, or any external service.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_render_overview",
+            "Render Taskrail overview",
+            "Use this after taskrail_overview when the user wants an interactive Taskrail control-plane view inside ChatGPT. It returns the same safe, read-only host snapshot and never changes the host.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -1941,7 +2154,7 @@ fn tool(
                 | "taskrail_run_automation"
                 | "taskrail_execute_approved"
         );
-    json!({
+    let mut descriptor = json!({
         "name": name,
         "title": title,
         "description": description,
@@ -1953,7 +2166,24 @@ fn tool(
             "openWorldHint": open_world,
             "idempotentHint": idempotent,
         }
-    })
+    });
+    let app_resource_uri = match name {
+        "taskrail_render_overview" => Some(MCP_APP_RESOURCE_URI),
+        "taskrail_fleet_render_overview" => Some(MCP_FLEET_APP_RESOURCE_URI),
+        _ => None,
+    };
+    if let Some(resource_uri) = app_resource_uri {
+        descriptor["_meta"] = json!({
+            "ui": {
+                "resourceUri": resource_uri,
+                "prefersBorder": true
+            },
+            "openai/outputTemplate": resource_uri,
+            "openai/toolInvocation/invoking": "Loading Taskrail overview…",
+            "openai/toolInvocation/invoked": "Taskrail overview ready."
+        });
+    }
+    descriptor
 }
 
 async fn call_tool_with_profile(
@@ -1972,7 +2202,7 @@ async fn call_tool_with_profile(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if name == "taskrail_overview" {
+    if matches!(name, "taskrail_overview" | "taskrail_render_overview") {
         return call_overview_tool(socket_path).await;
     }
     let (rpc_method, rpc_params) = match name {
@@ -2798,6 +3028,84 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("discover_local_automations")
+        );
+        assert_eq!(result["capabilities"]["resources"]["listChanged"], false);
+    }
+
+    #[test]
+    fn app_resource_is_embedded_and_render_tool_is_the_ui_entrypoint() {
+        let resource = app_resource_descriptor();
+        assert_eq!(resource["uri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(resource["mimeType"], MCP_APP_RESOURCE_MIME_TYPE);
+        assert_eq!(resource["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+
+        let tools = tool_descriptors();
+        let overview = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_overview")
+            .unwrap();
+        assert!(overview.get("_meta").is_none());
+        let render = tools
+            .iter()
+            .find(|tool| tool["name"] == "taskrail_render_overview")
+            .unwrap();
+        assert_eq!(render["_meta"]["ui"]["resourceUri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(
+            render["_meta"]["openai/outputTemplate"],
+            MCP_APP_RESOURCE_URI
+        );
+    }
+
+    #[test]
+    fn app_resource_read_is_versioned_and_rejects_unknown_uris() {
+        let resource = read_app_resource(&json!({"uri": MCP_APP_RESOURCE_URI})).unwrap();
+        assert_eq!(resource["contents"][0]["uri"], MCP_APP_RESOURCE_URI);
+        assert_eq!(
+            resource["contents"][0]["mimeType"],
+            MCP_APP_RESOURCE_MIME_TYPE
+        );
+        assert!(
+            resource["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("taskrail-app")
+        );
+        assert!(read_app_resource(&json!({"uri": "ui://taskrail/dashboard/v0.html"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn local_resource_routes_advertise_and_read_the_widget() {
+        let socket_path = PathBuf::from("/tmp/taskrail-resource-route-test.sock");
+        let list = handle_request_with_profile(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/list".into(),
+                params: json!({}),
+            },
+            &socket_path,
+            McpProfile::PublicReadOnly,
+        )
+        .await
+        .unwrap();
+        assert_eq!(list["result"]["resources"][0]["uri"], MCP_APP_RESOURCE_URI);
+        let read = handle_request_with_profile(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: "resources/read".into(),
+                params: json!({"uri": MCP_APP_RESOURCE_URI}),
+            },
+            &socket_path,
+            McpProfile::PublicReadOnly,
+        )
+        .await
+        .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Taskrail")
         );
     }
 

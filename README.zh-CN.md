@@ -83,7 +83,7 @@ taskrail daemon --install
 
 ## ChatGPT 定时任务
 
-Taskrail 可以作为仅提供工具的 MCP 应用连接到 ChatGPT。ChatGPT Web、Desktop
+Taskrail 可以作为带类型化工具和可选只读 MCP Apps Widget 的 MCP 应用连接到 ChatGPT。ChatGPT Web、Desktop
 和 Mobile 使用同一套 MCP 工具契约；ChatGPT 的“Scheduled”页面负责自然语言
 调度和通知，Taskrail 则作为 ChatGPT 在选定 ARM64 macOS 或 Linux 主机上调用的
 本地执行后端。
@@ -168,6 +168,9 @@ Taskrail 会自动回退到后续 loopback 端口，`taskrail gui` 会发现真�
 
 浏览器控制台支持 English、简体中文、日本語和한국어。首次打开时会根据浏览器语言自动选择；
 也可以使用右上角的语言选择器切换。选择只保存在浏览器本地存储中。
+
+ChatGPT MCP 应用可以通过带版本的 MCP Apps resource 在对话内渲染同一份受约束的摘要；可选的
+Fleet 网关还提供只读多主机视图。两个 Widget 都只调用类型化 MCP 工具，不会访问本地浏览器 HTTP 接口。
 
 需要更多字段的定义可以使用 YAML：
 
@@ -299,7 +302,7 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 add/register → list → daemon → run → history/logs → tui
 ~~~
 
-以下是可选集成或仍在未来规划中的部分：
+当前实现和剩余发布门槛如下：
 
 | 领域 | 状态 |
 | --- | --- |
@@ -308,11 +311,12 @@ add/register → list → daemon → run → history/logs → tui
 | launchd / cron / systemd / Homebrew 发现和后台监督 | 🔵 集成 |
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
-| 原生语义集成 | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |
+| 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |
 | 私有 ChatGPT MCP/Tunnel 和 Scheduled 任务控制 | 🟢 已验证 |
+| ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
 | 公开 ChatGPT 应用托管、审核和发布 | 🟡 外部门槛 |
-| ARM64 CLI 和未签名 Apple Silicon macOS 应用发布 | 🟢 标签触发的工作流 |
+| ARM64 CLI 发布 | 🟡 标签触发的工作流，尚未实际运行发布 |
 | Homebrew formula | 🟡 未来 |
 
 ## 文档
