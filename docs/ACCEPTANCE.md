@@ -24,12 +24,12 @@ Execution date: 2026-08-12
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
 | B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo fmt --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo test --workspace --all-features`; 147 tests passed | PASS |
 | B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
-| B3 | Linux build | Linux target produces an ELF binary without macOS-only warnings/errors | `cargo zigbuild --release --workspace --target x86_64-unknown-linux-gnu`; ELF produced; Linux test binaries cross-built | PASS |
+| B3 | Linux build | Linux target produces an ELF binary without macOS-only warnings/errors | `cargo +1.88.0 zigbuild --locked --workspace --target x86_64-unknown-linux-gnu`; Linux workspace cross-build passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
-| C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | fixture-backed Windows CSV parser and native discovery tests passed | PASS |
+| C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | macOS/Linux scans and tests passed; Windows Task Scheduler CSV parser fixture passed; live Windows scan awaits the Windows CI runner | PARTIAL |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
-| C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke; Windows GNU cross-build passed | PASS |
+| C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke passed; Windows named-pipe implementation and CI job are configured, but no Windows runner execution has completed locally | PARTIAL |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 37 tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
@@ -46,9 +46,24 @@ Execution date: 2026-08-12
 | G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
 | G4 | Host/package integrations | GitHub/Homebrew/mas/Topgrade adapters use the shared layer without arbitrary writes or sudo | fixture tests; existing discovery preserved | PASS |
 | G5 | Security integrations | OSV-Scanner, Gitleaks, and Trivy normalize findings without retaining secret/match values | fixture tests; malformed and missing-tool paths fail closed | PASS |
-| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 144 tests; approval lifecycle and replay rejection passed | PASS |
-| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 144 tests passed | PASS |
-| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 144 tests passed | PASS |
+| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 147 tests; approval lifecycle and replay rejection passed | PASS |
+| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 147 tests passed | PASS |
+| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 147 tests passed | PASS |
+
+`PARTIAL` marks functionality that is implemented and covered by fixtures or
+local cross-builds but still needs execution on the target Windows runner.
+
+## External release gates
+
+The local macOS validation and Linux cross-build are complete. The following
+are intentionally not claimed as local passes:
+
+- Windows named-pipe, Task Scheduler, and Windows CI execution must complete on
+  the configured GitHub Actions Windows runner.
+- Docker/container smoke testing, a stable public HTTPS MCP deployment, and
+  ChatGPT app review/publication remain external deployment gates.
+- Real destructive integration writes and native adoption remain approval- and
+  host-specific; the checklist keeps them dry-run or fixture-only.
 
 ## Commands to execute
 
