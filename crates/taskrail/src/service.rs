@@ -1351,6 +1351,7 @@ mod tests {
     use chrono::Duration;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn shared_service_records_run_without_cli_output() {
         let dir = tempdir().unwrap();
@@ -1376,6 +1377,7 @@ mod tests {
         assert_eq!(result.stdout.trim(), "rpc-ok");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn mole_dry_run_uses_shared_run_event_metric_and_log_path() {
         let dir = tempdir().unwrap();
@@ -1405,6 +1407,7 @@ mod tests {
         assert!(logs.stdout.contains("clean --dry-run"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_read_only_integration_is_typed_and_redacts_scanner_logs() {
         let dir = tempdir().unwrap();
@@ -1444,6 +1447,7 @@ mod tests {
         assert!(stored.stdout.is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_write_integration_is_refused_before_persistence() {
         let dir = tempdir().unwrap();
@@ -1472,6 +1476,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn mole_destructive_action_is_held_and_audited_before_spawn() {
         let dir = tempdir().unwrap();
@@ -1496,6 +1501,7 @@ mod tests {
         assert!(registry.list_runs(20, None).unwrap().is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn approved_integration_is_bound_to_plan_and_consumed_once() {
         let dir = tempdir().unwrap();
@@ -1530,6 +1536,7 @@ mod tests {
         assert!(error.contains("invalid, expired, already consumed"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn retry_policy_records_bounded_attempts_for_a_failed_step() {
         let dir = tempdir().unwrap();
@@ -1571,6 +1578,7 @@ mod tests {
         assert_eq!(failed_events, 3);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn manual_run_respects_forbid_overlap_admission() {
         let dir = tempdir().unwrap();
@@ -1629,6 +1637,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_pass_applies_run_once_misfire_and_persists_schedule() {
         let dir = tempdir().unwrap();
@@ -1676,6 +1685,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_pass_audits_skipped_misfire_without_creating_a_run() {
         let dir = tempdir().unwrap();
@@ -1719,6 +1729,7 @@ mod tests {
         }));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_pass_preserves_a_future_next_run() {
         let dir = tempdir().unwrap();
@@ -1761,6 +1772,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scheduled_pass_expires_an_overage_misfire_without_running_it() {
         let dir = tempdir().unwrap();
@@ -1812,6 +1824,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn cancel_run_signals_the_active_executor_and_records_cancelled() {
         let dir = tempdir().unwrap();
