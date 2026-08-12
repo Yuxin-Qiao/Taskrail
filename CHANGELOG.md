@@ -1,11 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.3] - 2026-08-12
 
 - Harden CI with a pinned Rust toolchain, MSRV coverage, dependency review, and
   Rust supply-chain audits.
 - Make tagged releases version-checked, checksummed, SBOM-backed, and
   provenance-attested.
+- Upgrade the cron parser to 0.17 and refresh the release-time GitHub Actions.
+
+## [Unreleased]
+
+Planned changes for the next release.
 
 ## [0.1.0] - 2026-08-12
 
