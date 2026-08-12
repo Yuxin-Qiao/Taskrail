@@ -25,7 +25,8 @@
 - Persist typed native integration steps as managed, schedulable Automations and
   expose integration catalog, adoption, drift, deletion, and approval controls
   through JSON-RPC and MCP.
-- Add macOS desktop discovery, integration health, and approval views.
+- Use the daemon-hosted browser dashboard as the supported local UI; the
+  historical SwiftUI desktop client is not part of this release surface.
 
 ## [0.1.5] - 2026-08-12
 
