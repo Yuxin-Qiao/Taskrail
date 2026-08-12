@@ -16,8 +16,9 @@ add/register → schedule → run → history/logs → tui
 - The Rust CLI, daemon, TUI, and local MCP adapter are supported on macOS, Linux,
   and Windows; macOS/Linux use a restricted Unix socket, Windows uses a named
   pipe and Task Scheduler, and the SwiftUI desktop view remains macOS-only.
-- ChatGPT Scheduled tasks can call the local MCP adapter through a private
-  OpenAI Secure MCP Tunnel.
+- Private ChatGPT Scheduled tasks can call the local MCP adapter through an
+  OpenAI Secure MCP Tunnel; the public App review and hosted deployment are
+  separate external release gates.
 - The public read-only `taskrail mcp-http` adapter is available for deployment
   behind a TLS/authentication edge; the container example under `deploy/` is
   single-host only and is not a hosted multi-tenant service.

@@ -274,8 +274,8 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## Current status
 
-The current package is `0.1.x` and is early but usable for local command
-automation. The stable center is:
+The current package is `0.1.5` and is usable for local command automation and
+private ChatGPT Scheduled-task control. The stable center is:
 
 ```text
 add/register → list → daemon → run → history/logs → tui
@@ -288,10 +288,11 @@ The following are optional integrations or still future work:
 | Registry, scheduler, runs, logs, events | 🟢 Core |
 | CLI and TUI | 🟢 Core |
 | launchd / cron / systemd / Homebrew discovery | 🔵 Integration |
-| User-level native adoption | 🔵 Integration |
+| User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
 | Native semantic integrations | 🔵 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
-| ChatGPT MCP app and Scheduled-task control | 🔵 Integration |
+| Private ChatGPT MCP/Tunnel and Scheduled-task control | 🟢 Verified |
+| Public ChatGPT App hosting, review, and publication | 🟡 External gate |
 | Packaged CLI and unsigned macOS app releases | 🟢 Tag-triggered workflow |
 | Homebrew formula | 🟡 Future |
 
