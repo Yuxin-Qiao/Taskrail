@@ -16,7 +16,7 @@ jobs:
     name: Linux release asset
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build and package
         run: |
@@ -31,7 +31,7 @@ jobs:
     name: macOS release assets
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build Rust binary
         run: |
