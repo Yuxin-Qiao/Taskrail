@@ -30,7 +30,7 @@ Execution date: 2026-08-12
 | C3 | Native discovery | launchd, cron, systemd, Windows Task Scheduler, and Homebrew discovery paths execute without native mutation | macOS/Linux scans and tests passed; Windows Task Scheduler CSV parser fixture passed; live Windows scan awaits the Windows CI runner | PARTIAL |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | macOS/Linux Unix socket and Windows named-pipe daemons expose lifecycle/log/run APIs with local-only boundaries | Unix temporary daemon/MCP smoke passed; Windows named-pipe implementation and CI job are configured, but no Windows runner execution has completed locally | PARTIAL |
-| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 37 tools; MCP tests and negative paths passed | PASS |
+| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 38 local tools; 18 public read-only tools; MCP tests and negative paths passed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; ChatGPT can call Taskrail | doctor ready; ChatGPT session called Taskrail | PASS |
 | D4 | Scheduled workflow | ChatGPT Scheduled task can call the connected Taskrail app and report a completed read-only result | Scheduled task history/detail showed completed Taskrail status call | PASS |
@@ -95,7 +95,7 @@ The black-box checks must use a temporary Registry and must include at least:
 3. pause/resume and active-run cancellation;
 4. native scan;
 5. MCP initialize, tools/list, discovery, error, and shell-rejection paths;
-6. Codex, Responses, and GitHub read-only integrations;
+6. MCP overview plus Codex, Responses, and GitHub read-only integrations;
 7. daemon restart/status and socket permission checks.
 
 ## Execution record

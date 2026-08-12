@@ -15,6 +15,7 @@ MCP_MANIFEST = ROOT / ".mcp.json"
 
 PUBLIC_TOOLS = {
     "taskrail_status",
+    "taskrail_overview",
     "taskrail_list_automations",
     "taskrail_discover_local_automations",
     "taskrail_scan_native",

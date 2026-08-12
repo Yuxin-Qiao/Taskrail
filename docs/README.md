@@ -37,8 +37,8 @@ add/register → schedule → run → history/logs → tui
 - [Research report](../deep-research-report.md) — historical product and
   architecture research; it contains proposals that were intentionally removed
   from the current MVP.
-- [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to a Mac
-  or Linux Taskrail host.
+- [ChatGPT integration](chatgpt.md) — connect ChatGPT Scheduled tasks to a
+  macOS, Linux, or Windows Taskrail host.
 - [OpenAI submission checklist](OPENAI_SUBMISSION.md) — public review profile,
   metadata, test cases, policy pages, and external launch gates.
 - [OpenAI release notes](OPENAI_RELEASE_NOTES.md) — portal-ready initial

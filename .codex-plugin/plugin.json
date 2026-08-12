@@ -1,6 +1,6 @@
 {
   "name": "taskrail",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "Inspect and manage local computer automations through a typed, approval-aware MCP server.",
   "author": {
     "name": "Yuxin Qiao",
@@ -14,13 +14,14 @@
     "scheduler",
     "mcp",
     "macos",
-    "linux"
+    "linux",
+    "windows"
   ],
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Taskrail",
     "shortDescription": "Inspect local automations",
-    "longDescription": "Taskrail connects a user-owned Mac or Linux automation daemon to an MCP host. It discovers native jobs, reports runs and logs, summarizes typed integrations, and keeps local writes behind explicit policy and approvals.",
+    "longDescription": "Taskrail connects a user-owned macOS, Linux, or Windows automation daemon to an MCP host. It provides a safe host overview, discovers native jobs, reports runs and logs, summarizes typed integrations, and keeps local writes behind explicit policy and approvals.",
     "developerName": "Yuxin Qiao",
     "category": "Developer Tools",
     "capabilities": [
@@ -34,7 +35,7 @@
     "composerIcon": "./docs/assets/taskrail-mark.svg",
     "logo": "./docs/assets/taskrail-mark.svg",
     "defaultPrompt": [
-      "Show the local automations and what needs attention.",
+      "Give me a complete local automation overview.",
       "Discover the native scheduler jobs on this host.",
       "Explain the latest failed automation run."
     ]

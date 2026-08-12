@@ -177,8 +177,10 @@ If the run fails, get its logs and notify me with the exit status and the next a
 
 For multiple hosts, use a separate tunnel/profile and host label for each
 machine. In the Scheduled task, name the target host explicitly. Always call
-`taskrail_status` first. That stable entry also includes a fresh safe local
-discovery summary for compatibility with cached ChatGPT tool metadata. When
+`taskrail_overview` first when the user wants a complete host summary. It
+returns the host identity, daemon state, fresh discovery, Taskrail inventory,
+recent runs, and attention items in one read-only result. Use
+`taskrail_status` for a lightweight connectivity check. When
 the user asks what automation tasks already exist on the host, prefer
 `taskrail_discover_local_automations` for a fresh native scan; a successful
 ChatGPT response is not proof that a different host's daemon ran the task.
@@ -188,6 +190,8 @@ ChatGPT response is not proof that a different host's daemon ran the task.
 The adapter exposes focused tools rather than a generic shell endpoint:
 
 - `taskrail_status` — verify daemon connectivity and identify the host.
+- `taskrail_overview` — return one safe host summary combining identity,
+  discovery, Taskrail automations, recent runs, and attention items.
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
 - `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,

@@ -111,7 +111,7 @@ See [ChatGPT integration](docs/chatgpt.md) for the tunnel, permissions, and
 multi-host setup details. Set `TASKRAIL_HOST_LABEL` for a stable label when
 more than one host is connected.
 
-For a future public MCP deployment, use the enforced read-only review profile:
+For a public deployment, use the enforced read-only HTTP profile:
 
 ```bash
 export TASKRAIL_MCP_BEARER_TOKEN="<inject from a secret manager>"
@@ -124,16 +124,16 @@ HTTPS proxy with end-user authentication and per-user host binding; a local
 tunnel is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md)
 and the [single-host deployment example](deploy/README.md).
 
-For a future public MCP deployment, use the enforced read-only review profile:
+For a local stdio review of the public read-only profile, use:
 
 ```bash
 TASKRAIL_MCP_PROFILE=public taskrail mcp
 ```
 
 This profile omits creation, deletion, execution, adoption, and approval
-tools. It must run behind a production HTTPS endpoint with authentication and
-per-user host binding; a local tunnel is only a developer connection. See the
-[OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
+tools. For a public deployment, use `taskrail mcp-http` behind a production
+HTTPS endpoint with authentication and per-user host binding; a local tunnel
+is only a developer connection. See the [OpenAI submission checklist](docs/OPENAI_SUBMISSION.md).
 
 Open the live terminal dashboard:
 

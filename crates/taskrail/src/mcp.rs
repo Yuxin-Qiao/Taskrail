@@ -26,8 +26,8 @@ const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(15);
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_status first. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Linux cron/systemd, and Windows Task Scheduler discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
-const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_status first, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Linux cron/systemd, and Windows Task Scheduler discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. ChatGPT Scheduled tasks can call these tools at their scheduled time.";
+const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, or taskrail_status for a lightweight connectivity check, then use discovery and inspection tools to summarize this host's automation state. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -47,6 +47,7 @@ enum McpProfile {
 
 const PUBLIC_READ_ONLY_TOOLS: &[&str] = &[
     "taskrail_status",
+    "taskrail_overview",
     "taskrail_list_automations",
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
@@ -565,6 +566,15 @@ fn tool_descriptors() -> Vec<Value> {
             "taskrail_status",
             "Taskrail status",
             "Use this first to verify that the Taskrail daemon is connected and identify the local macOS, Linux, or Windows host. This check only reads daemon status and a fresh native-scheduler summary.",
+            object_schema(json!({}), &[]),
+            true,
+            false,
+            true,
+        ),
+        tool(
+            "taskrail_overview",
+            "Taskrail host overview",
+            "Use this first when the user wants one safe summary of this host: identity, daemon state, fresh native discovery, Taskrail automations, recent runs, and attention items. It is read-only and does not change scheduler definitions, the Registry, or any external service.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -1118,6 +1128,9 @@ async fn call_tool_with_profile(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if name == "taskrail_overview" {
+        return call_overview_tool(socket_path).await;
+    }
     let (rpc_method, rpc_params) = match name {
         "taskrail_status" => ("daemon.status", json!({})),
         "taskrail_list_automations" => ("automation.list", json!({})),
@@ -1326,6 +1339,42 @@ async fn call_tool_with_profile(
         value
     };
     let summary = summarize(name, &value);
+    Ok(json!({
+        "content": [{"type":"text","text":summary}],
+        "structuredContent": {"result": value},
+        "isError": false,
+    }))
+}
+
+async fn call_overview_tool(socket_path: &PathBuf) -> Result<Value> {
+    let daemon = sanitize_tool_value(
+        "taskrail_status",
+        rpc::call(socket_path, "daemon.status", json!({})).await?,
+    );
+    let native_discovery = rpc::call(socket_path, "automation.discover", json!({"source":"all"}))
+        .await
+        .map(sanitize_discovered_sources)?;
+    let automations =
+        sanitize_automation_value(rpc::call(socket_path, "automation.list", json!({})).await?);
+    let runs =
+        sanitize_run_list_value(rpc::call(socket_path, "runs.list", json!({"limit":20})).await?);
+    let attention = sanitize_tool_value(
+        "taskrail_list_attention",
+        rpc::call(socket_path, "inbox.list", json!({"limit":100})).await?,
+    );
+    let value = json!({
+        "host": {
+            "label": std::env::var("TASKRAIL_HOST_LABEL").ok(),
+            "platform": std::env::consts::OS,
+            "architecture": std::env::consts::ARCH,
+        },
+        "daemon": daemon,
+        "native_discovery": native_discovery,
+        "automations": automations,
+        "recent_runs": runs,
+        "attention": attention,
+    });
+    let summary = summarize("taskrail_overview", &value);
     Ok(json!({
         "content": [{"type":"text","text":summary}],
         "structuredContent": {"result": value},
@@ -1609,6 +1658,32 @@ fn summarize(name: &str, value: &Value) -> String {
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
         ),
+        "taskrail_overview" => format!(
+            "Taskrail overview for {}: {} automation(s), {} native source(s), {} recent run(s), and {} attention item(s).",
+            value
+                .get("host")
+                .and_then(|host| host.get("label"))
+                .and_then(Value::as_str)
+                .filter(|label| !label.is_empty())
+                .unwrap_or("this host"),
+            value
+                .get("automations")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+            value
+                .get("native_discovery")
+                .and_then(|discovery| discovery.get("count"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            value
+                .get("recent_runs")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+            value
+                .get("attention")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        ),
         "taskrail_list_automations" => format!(
             "Taskrail returned {} automation(s).",
             value.as_array().map_or(0, Vec::len)
@@ -1799,6 +1874,7 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), tools.len());
         assert!(names.contains(&"taskrail_mole"));
+        assert!(names.contains(&"taskrail_overview"));
         assert!(names.contains(&"taskrail_restic"));
         assert!(names.contains(&"taskrail_rclone"));
         assert!(names.contains(&"taskrail_github"));
@@ -2231,6 +2307,10 @@ mod tests {
         assert_eq!(
             find("taskrail_list_integrations")["annotations"]["readOnlyHint"],
             true
+        );
+        assert_eq!(
+            find("taskrail_overview")["annotations"]["destructiveHint"],
+            false
         );
         assert_eq!(
             find("taskrail_schedule_integration")["annotations"]["destructiveHint"],

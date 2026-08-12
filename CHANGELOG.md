@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.5] - 2026-08-12
+
+- Make macOS App checksum manifests directly verifiable after download.
+
 ## [0.1.4] - 2026-08-12
 
 - Upgrade `rusqlite` to 0.40.2 with checked revision conversion at the SQLite boundary.
@@ -15,6 +19,8 @@
 
 ## [Unreleased]
 
+- Add a read-only MCP host overview that combines local identity, native
+  discovery, Taskrail automations, recent runs, and attention items.
 - Persist typed native integration steps as managed, schedulable Automations.
 - Add integration catalog/doctor status, adoption lifecycle, drift, deletion,
   and approval controls to JSON-RPC and MCP.

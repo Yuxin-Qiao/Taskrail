@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Taskrail",
     "subtitle": "Inspect local automations",
-    "description": "Taskrail gives ChatGPT a safe, read-only view of a user's local automation control plane: native scheduler discovery, automation inventory, run history and logs, attention items, audit events, and normalized local integration findings.",
+    "description": "Taskrail gives ChatGPT a safe, read-only view of a user's local automation control plane: host overview, native scheduler discovery, automation inventory, run history and logs, attention items, audit events, and normalized local integration findings.",
     "category": "DEVELOPER_TOOLS"
   },
   "tools": {
@@ -17,6 +17,18 @@
       "justifications": {
         "read_only_justification": "Only reads daemon status and a fresh native-scheduler summary without changing the host or Registry.",
         "open_world_justification": "Only observes the private, user-owned Taskrail host and does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
+      }
+    },
+    "taskrail_overview": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only combines daemon status, local discovery, automation inventory, recent runs, and attention items for the user-owned host.",
+        "open_world_justification": "Only observes the private local Taskrail host and does not write to scheduler definitions, the Registry, or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
     },
@@ -215,11 +227,11 @@
   },
   "test_cases": [
     {
-      "description": "Verify the connection and summarize host attention state.",
-      "user_prompt": "Check Taskrail, tell me whether this host is connected, and summarize anything that needs attention.",
+      "description": "Verify the connection and summarize the complete host state.",
+      "user_prompt": "Give me a complete Taskrail overview of this host: what automations exist, what native jobs were discovered, what ran recently, and what needs attention.",
       "file_attachment_urls": null,
-      "tools_triggered": "taskrail_status; taskrail_list_attention",
-      "expected_output": "Reports the connected host, automation count, fresh local discovery count, and any bounded attention items without changing the host.",
+      "tools_triggered": "taskrail_overview",
+      "expected_output": "Reports the connected host, Taskrail automations, fresh local discovery, recent runs, and bounded attention items without changing the host.",
       "expected_output_url": null
     },
     {

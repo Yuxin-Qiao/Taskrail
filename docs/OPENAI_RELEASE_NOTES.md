@@ -2,12 +2,12 @@
 
 Taskrail is an MCP-only developer tool that gives ChatGPT a bounded,
 read-only view of a user-authorized macOS, Linux, or Windows automation host. The initial
-submission includes native scheduler discovery, automation inventory, run
-history and bounded logs, attention items, audit-event summaries, and
-normalized local integration findings.
+submission includes a safe host overview, native scheduler discovery,
+automation inventory, run history and bounded logs, attention items,
+audit-event summaries, and normalized local integration findings.
 
 The public review profile is intentionally narrower than the private local
-profile. It advertises 17 read-only tools, rejects hidden write/execution
+profile. It advertises 18 read-only tools, rejects hidden write/execution
 tools, redacts configured environment values and native raw definitions, and
 does not mutate the Registry during discovery. The repository now includes a
 stateless Streamable HTTP `/mcp` adapter, bounded request parsing, origin and
