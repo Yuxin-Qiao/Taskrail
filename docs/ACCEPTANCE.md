@@ -24,7 +24,7 @@ Execution date: 2026-08-12
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
 | B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 161 tests passed | PASS |
 | B2 | Swift client | Desktop client builds and model-decoding tests pass | `swift build`, `swift test`; 2 tests passed | PASS |
-| B3 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31596113419`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
+| B3 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31602413568`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
 | C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures; background reconciliation and missing-source tests | PASS |
@@ -39,7 +39,7 @@ Execution date: 2026-08-12
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Desktop runtime | Installed daemon is running, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; Tunnel ready; socket mode 0600 | PASS |
-| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging, Apple Silicon Swift, dependency review, and supply-chain audit jobs | Latest CI run `31596113419` and Security run `31596113153` passed; CodeQL run `31595249271` passed; dependency-review workflow present and prior run passed | PASS |
+| F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging, Apple Silicon Swift, dependency review, and supply-chain audit jobs | CI run `31602413568`, Security run `31602413825`, and CodeQL run `31602413582` passed; dependency-review workflow present and prior run passed | PASS |
 | F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives, unsigned Apple Silicon desktop bundle, SHA-256 checksums, SPDX SBOMs, and provenance attestations | Release workflow is defined; no matching tag has been run yet | PENDING |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
@@ -116,9 +116,9 @@ and the fleet localhost routing smoke. The SwiftUI desktop client and its 2
 tests pass on Apple Silicon. The public HTTP adapter unit tests cover health,
 authentication, origin, MCP headers, public-profile allowlisting, private
 profile authentication, and protocol version boundaries. GitHub Actions run
-`31596113419` passed the updated ARM64 matrix, MSRV, package, and Swift jobs;
-run `31596113153` passed audit and deny;
-run `31595249271` passed CodeQL. Docker Compose execution remains an external
+`31602413568` passed the updated ARM64 matrix, MSRV, package, and Swift jobs;
+run `31602413825` passed audit and deny; run `31602413582` passed CodeQL.
+Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
 ## Release decision
