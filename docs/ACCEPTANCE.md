@@ -136,11 +136,11 @@ discovery rows. The public HTTP adapter unit tests cover health, authentication,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
 GitHub Actions runs `31626953386` (CI), `31626953382` (Security),
-`31626953454` (CodeQL), and `31626953487` (Dependency review) passed on
-implementation head `28e02cc`.
-The implementation history also includes documentation-only evidence alignment
-from commits `9b7f82a`, `3af892a`, and `bea7d8c`; the MCP Apps implementation
-and its HTTP resource-route coverage are now included in the fresh checks.
+`31626953454` (CodeQL), and `31626953487` (Dependency review) passed on the
+code-bearing implementation head `0c3452b`. Commits `1cf5e08`, `28e02cc`,
+and `bdd4628` only reconcile acceptance evidence and current runtime status;
+the MCP Apps implementation and its HTTP resource-route coverage are included
+in those fresh checks.
 Docker Compose execution remains an external
 deployment-host check because Docker is not installed on this host.
 
