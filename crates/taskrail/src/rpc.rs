@@ -338,7 +338,7 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
                     _ => {
                         return invalid_params(
                             request.id,
-                            "params.source must be one of all, launchd, cron, systemd, or homebrew"
+                            "params.source must be one of all, launchd, cron, systemd, homebrew, shortcuts, automator, keyboard-maestro, raycast, alfred, or hazel"
                                 .into(),
                         );
                     }

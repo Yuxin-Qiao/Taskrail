@@ -19,7 +19,8 @@ stdio review tests.
   omitted from `tools/list` and rejected if called directly.
 - MCP responses omit native raw definitions and environment values, redact
   configured environment values in automation/run snapshots, redact event
-  `raw`/`env` fields, and hide the current home-directory prefix in paths.
+  `raw`/`env` fields, hide the current home-directory prefix in paths, and
+  mark application-owned definitions and systemd timers as `observe_only`.
 - `chatgpt-app-submission.json` contains the app information, all 19 public
   tools, five positive tests, and three negative tests.
 - `OPENAI_RELEASE_NOTES.md` contains the portal-ready initial-submission
@@ -91,8 +92,9 @@ be completed by a local source change:
 
 ## Reviewer-facing boundaries
 
-The public profile can inspect local automation inventory, native scheduler
-observations on an ARM64 macOS or Linux agent, adoption journal state, read-only
+The public profile can inspect local automation inventory, native scheduler and
+supported macOS application observations on an ARM64 macOS or Linux agent,
+adoption journal state, read-only
 GitHub observations, local
 package/security findings, run history/logs, attention items, and audit events.
 It cannot create or run commands, change scheduler ownership, change files,

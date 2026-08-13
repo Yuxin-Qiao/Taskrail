@@ -14,7 +14,8 @@ store:
 
 - automation metadata such as an identifier, name, scheduler/provider,
   executable, arguments, working directory, trigger, enabled state, and a
-  native source path;
+  native source path. Application-owned observations may include bounded names,
+  provider identifiers, fingerprints, and paths, but not action bodies;
 - a stable random `host_id` generated and stored in the local Registry, host
   operating-system and architecture information, plus the optional
   `TASKRAIL_HOST_LABEL` chosen by the user. When no label is configured, MCP

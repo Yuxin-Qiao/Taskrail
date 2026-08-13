@@ -31,7 +31,7 @@ const MCP_FLEET_APP_HTML: &str = include_str!("../gui/mcp-fleet-app.html");
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-scheduler scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd and Linux cron/systemd discovery. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-source scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel observations plus Linux cron/systemd services and timers; application-owned definitions and systemd timers remain observe-only. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, then call taskrail_render_overview when an interactive control-plane view is useful; use taskrail_status for a lightweight connectivity check. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
@@ -732,11 +732,11 @@ fn fleet_tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_fleet_discover",
             "Discover a remote host",
-            "Use this when the user wants a fresh read-only native scheduler scan on one configured host. It never mutates that host's scheduler definitions or Registry.",
+            "Use this when the user wants a fresh read-only scan of system schedulers and supported macOS automation apps on one configured host. It never mutates that host's definitions or Registry.",
             object_schema(
                 json!({
                     "host_id":{"type":"string","minLength":1},
-                    "source":{"type":"string","enum":["all","launchd","cron","systemd","homebrew"],"default":"all"}
+                    "source":{"type":"string","enum":["all","launchd","cron","systemd","homebrew","shortcuts","automator","keyboard-maestro","raycast","alfred","hazel"],"default":"all"}
                 }),
                 &["host_id"],
             ),
@@ -1612,7 +1612,7 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_status",
             "Taskrail status",
-            "Use this first to verify that the Taskrail daemon is connected and identify the local ARM64 macOS or Linux host. This check only reads daemon status and a fresh native-scheduler summary.",
+            "Use this first to verify that the Taskrail daemon is connected and identify the local ARM64 macOS or Linux host. This check only reads daemon status and a fresh native-source summary.",
             object_schema(json!({}), &[]),
             true,
             false,
@@ -1648,10 +1648,10 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_discover_local_automations",
             "Discover local automations",
-            "Use this when the user asks what automation tasks already exist on this ARM64 macOS or Linux host. It performs a fresh read-only scan of launchd, cron, systemd, and Homebrew services and returns safe summaries without changing native scheduler definitions or the Taskrail Registry.",
+            "Use this when the user asks what automation tasks already exist on this ARM64 macOS or Linux host. It performs a fresh read-only scan of launchd, cron, systemd services/timers, Homebrew services, and supported macOS automation apps (Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel) and returns safe observed summaries without changing definitions or the Taskrail Registry. App-owned definitions and systemd timers remain observe-only.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"], "default":"all"},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","shortcuts","automator","keyboard-maestro","raycast","alfred","hazel"], "default":"all"},
                 }),
                 &[],
             ),
@@ -1661,11 +1661,11 @@ fn tool_descriptors() -> Vec<Value> {
         ),
         tool(
             "taskrail_scan_native",
-            "Scan native schedulers",
-            "Use this when the user wants a fresh, read-only scan of launchd, cron, systemd, or Homebrew services on this ARM64 host. It does not modify native scheduler definitions or the Taskrail Registry.",
+            "Scan native sources",
+            "Use this when the user wants a fresh, read-only scan of system schedulers or supported macOS automation apps on this ARM64 host. It does not modify definitions or the Taskrail Registry; app-owned definitions and systemd timers remain observe-only.",
             object_schema(
                 json!({
-                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew"]},
+                    "source": {"type":"string", "enum":["all","launchd","cron","systemd","homebrew","shortcuts","automator","keyboard-maestro","raycast","alfred","hazel"]},
                 }),
                 &[],
             ),
@@ -2396,7 +2396,7 @@ async fn call_tool_with_profile(
     let value = if name == "taskrail_status" {
         // ChatGPT can cache an older tool descriptor for a connected Tunnel.
         // Keep the stable status entry useful for that client by attaching a
-        // fresh, safe native-scheduler scan to it as well.
+        // fresh, safe native-source scan to it as well.
         let discovery = rpc::call(socket_path, "automation.discover", json!({"source":"all"}))
             .await
             .map(sanitize_discovered_sources)?;
@@ -2914,6 +2914,9 @@ fn sanitize_discovered_sources(value: Value) -> Value {
         .flatten()
         .map(|source| {
             let command = source.get("command").and_then(|command| {
+                if command.is_null() {
+                    return None;
+                }
                 Some(json!({
                     "executable": sanitize_local_path(command.get("executable")),
                     "args": sanitize_command_args(command.get("args")?),
@@ -2921,6 +2924,19 @@ fn sanitize_discovered_sources(value: Value) -> Value {
                     "shell": command.get("shell").unwrap_or(&Value::Bool(false)),
                 }))
             });
+            let provider = source.get("provider").and_then(Value::as_str);
+            let observe_only = source.get("command").is_none_or(Value::is_null)
+                || matches!(
+                    provider,
+                    Some(
+                        "shortcuts"
+                            | "automator"
+                            | "keyboard-maestro"
+                            | "raycast"
+                            | "alfred"
+                            | "hazel",
+                    )
+                );
             json!({
                 "id": source.get("source_id"),
                 "name": source.get("native_id"),
@@ -2930,6 +2946,7 @@ fn sanitize_discovered_sources(value: Value) -> Value {
                 "path": sanitize_local_path(source.get("path")),
                 "trigger": source.get("trigger"),
                 "command": command,
+                "execution": if observe_only { "observe_only" } else { "direct_argv" },
                 "ownership": "observed",
             })
         })
@@ -3136,7 +3153,22 @@ mod tests {
         assert_eq!(value["automations"][0]["name"], "example");
         assert!(value["automations"][0].get("raw").is_none());
         assert!(value["automations"][0]["command"].get("env").is_none());
+        assert_eq!(value["automations"][0]["execution"], "direct_argv");
         assert_eq!(value["automations"][0]["command"]["args"][1], "[REDACTED]");
+
+        let observe_only = sanitize_discovered_sources(json!([{
+            "source_id": "shortcuts:example",
+            "native_id": "Example",
+            "provider": "shortcuts",
+            "kind": "shortcut",
+            "enabled": true,
+            "path": null,
+            "trigger": {"kind":"manual"},
+            "command": null,
+            "raw": "private shortcut metadata"
+        }]));
+        assert_eq!(observe_only["automations"][0]["execution"], "observe_only");
+        assert!(observe_only["automations"][0]["command"].is_null());
     }
 
     #[test]

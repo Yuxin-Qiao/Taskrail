@@ -78,7 +78,7 @@ loginctl enable-linger "$USER"
 taskrail daemon --install
 ```
 
-The daemon performs a read-only native scheduler inventory refresh every five
+The daemon performs a read-only local-source inventory refresh every five
 minutes by default. Use `--discovery-interval-seconds` to adjust it. Status and
 overview report the last scan, provider completeness, drift, and confirmed
 missing-source counts; an unavailable provider is not treated as an empty
@@ -213,7 +213,10 @@ Taskrail can manage commands and scripts you already use:
 
 - one-shot commands and recurring interval or cron jobs;
 - local run history, stdout, stderr, and operational events;
-- launchd, cron, systemd user services, and Homebrew service discovery;
+- launchd, cron, systemd user services/timers, Homebrew services, and supported
+  macOS application automation discovery (Shortcuts, Automator, Keyboard
+  Maestro, Raycast, Alfred, and Hazel); application-owned definitions remain
+  observe-only;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;
@@ -346,7 +349,7 @@ The current implementation and remaining release gates are:
 | --- | --- |
 | Registry, scheduler, runs, logs, events | 🟢 Core |
 | CLI and TUI | 🟢 Core |
-| launchd / cron / systemd / Homebrew discovery and background supervision | 🔵 Integration |
+| launchd / cron / systemd / Homebrew plus supported macOS app discovery (including Alfred) and background supervision | 🔵 Integration |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
 | Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |

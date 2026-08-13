@@ -47,6 +47,12 @@ enum SourceKind {
     Cron,
     Systemd,
     Homebrew,
+    Shortcuts,
+    Automator,
+    KeyboardMaestro,
+    Raycast,
+    Alfred,
+    Hazel,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -2497,6 +2503,12 @@ fn scan(registry: &Registry, source: SourceKind, json: bool) -> Result<()> {
         SourceKind::Cron => "cron",
         SourceKind::Systemd => "systemd",
         SourceKind::Homebrew => "homebrew",
+        SourceKind::Shortcuts => "shortcuts",
+        SourceKind::Automator => "automator",
+        SourceKind::KeyboardMaestro => "keyboard-maestro",
+        SourceKind::Raycast => "raycast",
+        SourceKind::Alfred => "alfred",
+        SourceKind::Hazel => "hazel",
     };
     let discovered = scan_native_sources(source)?;
     for item in &discovered {
@@ -2636,8 +2648,12 @@ async fn daemon(
         if once || std::time::Instant::now() >= next_discovery {
             match service::native_discovery_pass(registry.path()) {
                 Ok(summary) => eprintln!(
-                    "native discovery: {} source(s), {} drifted, {} missing, {} unrunnable",
-                    summary.source_count, summary.drifted, summary.missing, summary.unrunnable
+                    "native discovery: {} source(s), {} observe-only, {} drifted, {} missing, {} unrunnable",
+                    summary.source_count,
+                    summary.observed_only,
+                    summary.drifted,
+                    summary.missing,
+                    summary.unrunnable
                 ),
                 Err(error) => {
                     eprintln!("native discovery failed: {error:#}");

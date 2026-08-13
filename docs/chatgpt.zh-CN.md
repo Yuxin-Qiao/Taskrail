@@ -214,8 +214,10 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 - taskrail_fleet_render_overview — 在 taskrail_fleet_overview 之后，将配置主机状态渲染为只读的
   多主机 MCP Apps 控制面视图；不会绕过每台主机的路由、策略、审批或执行边界；
 - taskrail_list_automations / taskrail_get_automation — 查看本地清单；
-- taskrail_discover_local_automations — 新扫描 launchd、cron、systemd 和 Homebrew 服务；
-- taskrail_scan_native — 执行只读的 launchd、cron、systemd 或 Homebrew 扫描；
+- taskrail_discover_local_automations — 新扫描 launchd、cron、systemd 服务/定时器、Homebrew 服务，
+  以及受支持的 macOS 应用自动化来源（Shortcuts、Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel）；
+  应用自有定义和 systemd 定时器明确保持只读观察；
+- taskrail_scan_native — 执行不修改原生定义或 Registry 的只读原生来源扫描；
 - taskrail_list_integrations — 查看内置集成目录、可执行文件检测和本机 doctor 状态；
 - taskrail_schedule_integration — 将类型化只读或 dry-run 集成持久化为本地自动化；拒绝周期性写操作；
 - taskrail_list_adoptions / taskrail_get_adoption — 查看原生领养日志状态；
