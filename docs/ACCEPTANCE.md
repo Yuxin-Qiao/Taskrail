@@ -43,7 +43,7 @@ Execution date: 2026-08-13
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
 | F1 | Local runtime | Installed daemon serves the loopback dashboard, the local MCP adapter is runnable, and the local socket is user-only | Shortcuts doctor and fresh source scan pass; strict MCP/RPC contract tests pass; preferred dashboard `10100` fell back to `10101` because another local service occupied it; dashboard/MCP Apps render native and app-owned rows with observe-only labels; socket mode 0600; the managed Tunnel process is currently stopped only because its protected runtime key is absent | PASS |
 | F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging with embedded browser and MCP Apps assets, dependency review, and supply-chain audit jobs | CI workflow and package asset checks inspected; browser and both MCP Apps resources are checked; security workflows retained | PASS |
-| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and signed release/SBOM attestations | v0.1.7 validation and tag/release workflow evidence will be filled after protected-main merge | PENDING_RELEASE |
+| F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and signed release/SBOM attestations | Published GitHub Release `v0.1.7` from `7f30706`; release workflow `31658493582` passed Linux ARM64 and macOS ARM64 builds, SBOM generation, attestations, checksums, and asset upload | PASS |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
 | G1 | Mole integration | Mole detect/doctor/version/analyze/status/history/clean planning use typed argv and shared semantic boundaries | fixture tests; Mole CLI/RPC/MCP path; real clean held by policy | PASS |
 | G2 | Mole safety | Dry-run is read-only, real clean is destructive and fail-closed, output is bounded and normalized | policy test; parser fixtures; no real cleanup executed | PASS |
@@ -56,10 +56,10 @@ Execution date: 2026-08-13
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
 ARM64-only release contract. The updated ARM64 runner evidence and the
-matching `v0.1.6` release assets remain complete as the prior release baseline. The release workflow's
-attestation step recorded signed in-toto SBOM attestations in GitHub and the
-Sigstore transparency log; the local asset check verified both SHA-256 files,
-archive contents, and SBOM JSON structure.
+matching `v0.1.7` GitHub Release are the current release baseline. The release
+workflow's attestation steps recorded signed in-toto SBOM attestations in
+GitHub and the Sigstore transparency log; the published release contains both
+ARM64 archives, SHA-256 files, and SPDX SBOM JSON files.
 
 ## External release gates
 
@@ -73,9 +73,6 @@ following remain intentionally remote or external release gates:
   no credential was written to the repository, profile, Registry, or logs.
   Restoring it through the operator's protected environment mechanism is an
   external deployment step.
-- The feature branch is based on protected `main` at `46d0331`; this release
-  candidate still needs the normal pull-request checks, protected merge, and
-  matching tag before it can be called a published release.
 - Real destructive integration writes and native adoption remain approval- and
   host-specific; the checklist keeps them dry-run or fixture-only.
 
@@ -141,9 +138,11 @@ connected host's native and app-owned discovery rows. The public HTTP adapter
 unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
-The prior `v0.1.6` main-branch CI, security, CodeQL, dependency-review, and
-release runs remain the baseline; this candidate's new checks will be recorded
-after protected-main merge. The MCP Apps implementation,
+The `v0.1.7` pull request and protected-main merge passed the Rust, MSRV,
+packaging, audit, deny, dependency-review, and CodeQL checks. Release workflow
+`31658493582` then published the matching `v0.1.7` GitHub Release with Linux
+ARM64 and macOS ARM64 archives, checksums, SPDX SBOMs, and attestations. The
+MCP Apps implementation,
 HTTP resource-route coverage, and native-task-list Widget are included in the
 validated branch history.
 Docker Compose execution remains an external
@@ -158,9 +157,8 @@ was printed or persisted, and no destructive operation was requested.
 
 ## Release decision
 
-The repository-level control-plane implementation is release-ready for `v0.1.7`
-once the protected merge and tag workflow complete. The local repository gates
-and typed Shortcuts safety boundaries are complete. A future ChatGPT Scheduled
-trigger, current Tunnel runtime, public HTTPS hosting, OpenAI review/publication,
-and real destructive/adoption operations remain explicit external or
-approval-gated steps.
+The repository-level control-plane implementation is published as `v0.1.7`.
+The local repository gates and typed Shortcuts safety boundaries are complete.
+A future ChatGPT Scheduled trigger, current Tunnel runtime, public HTTPS
+hosting, OpenAI review/publication, and real destructive/adoption operations
+remain explicit external or approval-gated steps.
