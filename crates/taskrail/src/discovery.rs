@@ -2,11 +2,13 @@ use crate::core::{CommandSpec, DiscoveredSource, Trigger, fingerprint_bytes};
 use anyhow::{Context, Result};
 use plist::Value;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Cursor,
     path::{Path, PathBuf},
+    process::Command,
 };
+use uuid::Uuid;
 
 pub trait DiscoveryProvider {
     fn name(&self) -> &'static str;
@@ -259,6 +261,791 @@ pub struct HomebrewProvider {
     /// Fixture-friendly output from `brew services list --json`.
     pub listing: Option<String>,
     pub brew_path: PathBuf,
+}
+
+/// Read-only discovery of Apple Shortcuts exposed by the supported `shortcuts`
+/// command-line utility. Shortcuts are kept observed-only: although a direct
+/// argv invocation is known, the shortcut itself may require GUI permissions,
+/// prompts, or contextual input that Taskrail cannot safely infer.
+#[derive(Debug, Clone)]
+pub struct ShortcutsProvider {
+    /// Fixture-friendly output from `shortcuts list --show-identifiers`.
+    pub listing: Option<String>,
+    pub executable: PathBuf,
+}
+
+impl Default for ShortcutsProvider {
+    fn default() -> Self {
+        Self {
+            listing: None,
+            executable: PathBuf::from("shortcuts"),
+        }
+    }
+}
+
+impl DiscoveryProvider for ShortcutsProvider {
+    fn name(&self) -> &'static str {
+        "shortcuts"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let listing = match &self.listing {
+            Some(listing) => listing.clone(),
+            None => {
+                let output = match Command::new(&self.executable)
+                    .args(["list", "--show-identifiers"])
+                    .output()
+                {
+                    Ok(output) => output,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Vec::new());
+                    }
+                    Err(error) => return Err(error).context("run shortcuts list"),
+                };
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "shortcuts list failed: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    );
+                }
+                String::from_utf8(output.stdout).context("shortcuts output is not UTF-8")?
+            }
+        };
+        parse_shortcuts_list(&listing)
+    }
+}
+
+pub fn parse_shortcuts_list(content: &str) -> Result<Vec<DiscoveredSource>> {
+    let mut sources = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        let Some(identifier) = line.strip_suffix(')') else {
+            continue;
+        };
+        let Some((name, identifier)) = identifier.rsplit_once(" (") else {
+            continue;
+        };
+        if name.trim().is_empty() || Uuid::parse_str(identifier).is_err() {
+            continue;
+        }
+        sources.push(DiscoveredSource {
+            source_id: format!("shortcuts:{identifier}"),
+            provider: "shortcuts".into(),
+            native_id: bounded_label(name.trim()),
+            path: None,
+            enabled: true,
+            kind: "shortcut".into(),
+            fingerprint: fingerprint_bytes(line.as_bytes()),
+            // The shortcut may prompt for input, access GUI state, or perform
+            // arbitrary third-party actions. It is therefore discoverable but
+            // not represented as a directly runnable Taskrail command.
+            command: None,
+            trigger: Trigger::Manual,
+            raw: format!("shortcut_id={identifier}"),
+        });
+    }
+    Ok(sources)
+}
+
+/// Discover Automator workflow bundles from the user and system workflow
+/// locations. The workflow bundle is not parsed or opened; its path and
+/// fingerprint are enough for safe observation and drift reporting.
+#[derive(Debug, Clone)]
+pub struct AutomatorProvider {
+    pub roots: Vec<PathBuf>,
+}
+
+impl Default for AutomatorProvider {
+    fn default() -> Self {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let mut roots = Vec::new();
+        if let Some(home) = home {
+            roots.extend([
+                home.join("Library/Services"),
+                home.join("Library/Workflows"),
+                home.join("Library/Automator"),
+            ]);
+        }
+        roots.extend([
+            PathBuf::from("/Library/Services"),
+            PathBuf::from("/Library/Workflows"),
+            PathBuf::from("/Library/Automator"),
+            PathBuf::from("/System/Library/Services"),
+            PathBuf::from("/System/Library/Workflows"),
+        ]);
+        Self { roots }
+    }
+}
+
+impl DiscoveryProvider for AutomatorProvider {
+    fn name(&self) -> &'static str {
+        "automator"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let mut bundles = Vec::new();
+        for root in &self.roots {
+            collect_bundles(root, 6, &mut bundles);
+        }
+        bundles.sort();
+        bundles.dedup();
+        bundles.into_iter().map(automator_source).collect()
+    }
+}
+
+fn collect_bundles(root: &Path, depth: usize, result: &mut Vec<PathBuf>) {
+    if depth == 0 || !root.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("workflow") {
+            result.push(path);
+        } else if path.is_dir() {
+            collect_bundles(&path, depth - 1, result);
+        }
+    }
+}
+
+fn automator_source(path: PathBuf) -> Result<DiscoveredSource> {
+    let fingerprint = fingerprint_path(&path)?;
+    let native_id = path
+        .file_stem()
+        .map(|value| bounded_label(&value.to_string_lossy()))
+        .unwrap_or_else(|| "workflow".into());
+    Ok(DiscoveredSource {
+        source_id: format!("automator:{}", stable_source_key(&path)),
+        provider: "automator".into(),
+        native_id,
+        path: Some(path.clone()),
+        enabled: true,
+        kind: "workflow".into(),
+        fingerprint,
+        command: None,
+        trigger: Trigger::Manual,
+        raw: format!("workflow={}", stable_relative_path(&path)),
+    })
+}
+
+/// Keyboard Maestro's macro database is a private plist. We intentionally
+/// inspect only stable names, UIDs, enabled flags, and trigger/action counts;
+/// action bodies and variables are never copied into the Registry or MCP.
+#[derive(Debug, Clone)]
+pub struct KeyboardMaestroProvider {
+    pub files: Vec<PathBuf>,
+}
+
+impl Default for KeyboardMaestroProvider {
+    fn default() -> Self {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let mut files = Vec::new();
+        if let Some(home) = home {
+            files.extend([
+                home.join(
+                    "Library/Application Support/Keyboard Maestro/Keyboard Maestro Macros.plist",
+                ),
+                home.join("Library/Preferences/Keyboard Maestro Macros.plist"),
+                home.join("Library/Preferences/Keyboard Maestro/Keyboard Maestro Macros.plist"),
+            ]);
+        }
+        Self { files }
+    }
+}
+
+impl DiscoveryProvider for KeyboardMaestroProvider {
+    fn name(&self) -> &'static str {
+        "keyboard-maestro"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let mut result = Vec::new();
+        for file in &self.files {
+            if !file.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(file)
+                .with_context(|| format!("read Keyboard Maestro plist {}", file.display()))?;
+            let value = plist::Value::from_reader(Cursor::new(&bytes))
+                .with_context(|| format!("parse Keyboard Maestro plist {}", file.display()))?;
+            let mut ordinal = 0usize;
+            collect_keyboard_maestro_macros(&value, None, file, &bytes, &mut ordinal, &mut result);
+        }
+        Ok(result)
+    }
+}
+
+fn collect_keyboard_maestro_macros(
+    value: &plist::Value,
+    group: Option<&str>,
+    file: &Path,
+    bytes: &[u8],
+    ordinal: &mut usize,
+    result: &mut Vec<DiscoveredSource>,
+) {
+    match value {
+        plist::Value::Dictionary(dict) => {
+            let name = dict.get("Name").and_then(plist::Value::as_string);
+            let is_group = dict.contains_key("Macros") || dict.contains_key("MacroGroupUID");
+            let current_group = if is_group { name.or(group) } else { group };
+            let triggers = dict.get("Triggers").and_then(plist::Value::as_array);
+            let actions = dict.get("Actions").and_then(plist::Value::as_array);
+            if let (Some(name), Some(triggers), Some(actions)) = (name, triggers, actions) {
+                let uid = dict
+                    .get("MacroUID")
+                    .or_else(|| dict.get("UID"))
+                    .and_then(plist::Value::as_string)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "generated-{}",
+                            fingerprint_bytes(
+                                format!("{}:{name}:{ordinal}", file.display()).as_bytes()
+                            )
+                        )
+                    });
+                let enabled = dict
+                    .get("IsActive")
+                    .or_else(|| dict.get("Enabled"))
+                    .and_then(plist::Value::as_boolean)
+                    .unwrap_or(true);
+                result.push(DiscoveredSource {
+                    source_id: format!("keyboard-maestro:{}", safe_source_component(&uid)),
+                    provider: "keyboard-maestro".into(),
+                    native_id: bounded_label(name),
+                    path: Some(file.to_path_buf()),
+                    enabled,
+                    kind: "macro".into(),
+                    fingerprint: fingerprint_bytes(bytes),
+                    command: None,
+                    trigger: Trigger::Manual,
+                    raw: format!(
+                        "macro_group={}; trigger_count={}; action_count={}",
+                        bounded_label(current_group.unwrap_or("unknown")),
+                        triggers.len(),
+                        actions.len()
+                    ),
+                });
+                *ordinal += 1;
+            }
+            for child in dict.values() {
+                collect_keyboard_maestro_macros(child, current_group, file, bytes, ordinal, result);
+            }
+        }
+        plist::Value::Array(values) => {
+            for child in values {
+                collect_keyboard_maestro_macros(child, group, file, bytes, ordinal, result);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Discover Alfred workflows from the user's configured Alfred preferences
+/// store. Alfred workflows can contain arbitrary scripts and application
+/// actions, so Taskrail records metadata and a fingerprint but does not make
+/// them directly runnable.
+#[derive(Debug, Clone)]
+pub struct AlfredProvider {
+    pub directories: Vec<PathBuf>,
+}
+
+impl Default for AlfredProvider {
+    fn default() -> Self {
+        Self {
+            directories: alfred_workflow_directories(),
+        }
+    }
+}
+
+impl DiscoveryProvider for AlfredProvider {
+    fn name(&self) -> &'static str {
+        "alfred"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let mut workflows = Vec::new();
+        for directory in &self.directories {
+            collect_workflow_directories(directory, 2, &mut workflows);
+        }
+        workflows.sort();
+        workflows.dedup();
+        workflows.into_iter().map(alfred_source).collect()
+    }
+}
+
+fn collect_workflow_directories(root: &Path, depth: usize, result: &mut Vec<PathBuf>) {
+    if depth == 0 || !root.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.join("info.plist").is_file() {
+            result.push(path);
+        } else {
+            collect_workflow_directories(&path, depth - 1, result);
+        }
+    }
+}
+
+fn alfred_source(path: PathBuf) -> Result<DiscoveredSource> {
+    let metadata = path.join("info.plist");
+    let value = std::fs::read(&metadata)
+        .ok()
+        .and_then(|bytes| plist::Value::from_reader(Cursor::new(bytes)).ok());
+    let name = value
+        .as_ref()
+        .and_then(plist_string)
+        .or_else(|| {
+            path.file_name()
+                .map(|name| bounded_label(&name.to_string_lossy()))
+        })
+        .unwrap_or_else(|| "workflow".into());
+    let uid = value
+        .as_ref()
+        .and_then(|value| plist_string_for(value, &["uid", "bundleid", "id"]))
+        .unwrap_or_else(|| stable_relative_path(&path));
+    let version = value
+        .as_ref()
+        .and_then(|value| plist_string_for(value, &["version"]))
+        .unwrap_or_else(|| "unknown".into());
+    let description_present = value
+        .as_ref()
+        .and_then(|value| plist_string_for(value, &["description"]))
+        .is_some_and(|description| !description.is_empty());
+    Ok(DiscoveredSource {
+        source_id: format!(
+            "alfred:{}",
+            if uid == stable_relative_path(&path) {
+                stable_source_key(&path)
+            } else {
+                safe_source_component(&uid)
+            }
+        ),
+        provider: "alfred".into(),
+        native_id: bounded_label(&name),
+        path: Some(path.clone()),
+        enabled: true,
+        kind: "workflow".into(),
+        fingerprint: fingerprint_path(&path)?,
+        command: None,
+        trigger: Trigger::Manual,
+        raw: format!(
+            "workflow_path={}; version={}; description_present={description_present}",
+            stable_relative_path(&path),
+            bounded_label(&version)
+        ),
+    })
+}
+
+fn plist_string(value: &plist::Value) -> Option<String> {
+    value
+        .as_dictionary()
+        .and_then(|dict| {
+            ["name", "title", "workflow_name"]
+                .iter()
+                .find_map(|key| dict.get(key).and_then(plist::Value::as_string))
+        })
+        .map(str::to_owned)
+}
+
+fn plist_string_for(value: &plist::Value, keys: &[&str]) -> Option<String> {
+    let dict = value.as_dictionary()?;
+    keys.iter().find_map(|key| {
+        dict.iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(key))
+            .and_then(|(_, value)| value.as_string())
+            .map(str::to_owned)
+    })
+}
+
+fn alfred_workflow_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(value) = std::env::var_os("TASKRAIL_ALFRED_WORKFLOW_DIRS") {
+        directories.extend(std::env::split_paths(&value));
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        directories.push(
+            home.join("Library/Application Support/Alfred/Alfred.alfredpreferences/workflows"),
+        );
+    }
+    if let Ok(output) = Command::new("defaults")
+        .args(["export", "com.runningwithcrayons.Alfred", "-"])
+        .output()
+        && output.status.success()
+        && let Ok(value) = plist::Value::from_reader(Cursor::new(output.stdout))
+    {
+        collect_alfred_preference_paths(&value, false, &mut directories);
+    }
+    directories.retain(|path| path.is_dir());
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
+fn collect_alfred_preference_paths(value: &plist::Value, hinted: bool, result: &mut Vec<PathBuf>) {
+    match value {
+        plist::Value::Dictionary(dict) => {
+            for (key, child) in dict {
+                let key = key.to_ascii_lowercase();
+                collect_alfred_preference_paths(
+                    child,
+                    hinted || key.contains("preference") || key.contains("sync"),
+                    result,
+                );
+            }
+        }
+        plist::Value::Array(values) => {
+            for child in values {
+                collect_alfred_preference_paths(child, hinted, result);
+            }
+        }
+        plist::Value::String(path) if hinted && path.contains(".alfredpreferences") => {
+            let path = PathBuf::from(path).join("workflows");
+            if path.is_dir() {
+                result.push(path);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Discover Hazel rule bundles without parsing or copying rule actions. Hazel
+/// rules are proprietary and can contain arbitrary file operations, scripts,
+/// and secrets, so they remain observe-only and unrunnable by Taskrail.
+#[derive(Debug, Clone)]
+pub struct HazelProvider {
+    pub roots: Vec<PathBuf>,
+}
+
+impl Default for HazelProvider {
+    fn default() -> Self {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let mut roots = Vec::new();
+        if let Some(home) = home {
+            roots.push(home.join("Library/Application Support/Hazel"));
+        }
+        roots.push(PathBuf::from("/Library/Application Support/Hazel"));
+        Self { roots }
+    }
+}
+
+impl DiscoveryProvider for HazelProvider {
+    fn name(&self) -> &'static str {
+        "hazel"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let mut files = Vec::new();
+        for root in &self.roots {
+            collect_files_with_extension(root, "hazelrules", 3, &mut files);
+        }
+        files.sort();
+        files.dedup();
+        files
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(&path)
+                    .with_context(|| format!("read Hazel rule {}", path.display()))?;
+                let native_id = path
+                    .file_stem()
+                    .map(|value| bounded_label(&value.to_string_lossy()))
+                    .unwrap_or_else(|| "rule".into());
+                Ok(DiscoveredSource {
+                    source_id: format!("hazel:{}", stable_source_key(&path)),
+                    provider: "hazel".into(),
+                    native_id,
+                    path: Some(path.clone()),
+                    enabled: true,
+                    kind: "rule".into(),
+                    fingerprint: fingerprint_bytes(&bytes),
+                    command: None,
+                    trigger: Trigger::Manual,
+                    raw: format!("rule_file={}", stable_relative_path(&path)),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Raycast script commands are stored in user-selected directories rather than
+/// one mandatory location. Taskrail accepts an explicit environment override,
+/// a small set of conventional folders, and path values from Raycast's own
+/// exported preferences. Only metadata comments from each script are read.
+#[derive(Debug, Clone)]
+pub struct RaycastProvider {
+    pub directories: Vec<PathBuf>,
+}
+
+impl Default for RaycastProvider {
+    fn default() -> Self {
+        Self {
+            directories: raycast_script_directories(),
+        }
+    }
+}
+
+impl DiscoveryProvider for RaycastProvider {
+    fn name(&self) -> &'static str {
+        "raycast"
+    }
+
+    fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+        let mut files = Vec::new();
+        for directory in &self.directories {
+            collect_files_bounded(directory, 8, &mut files);
+        }
+        files.sort();
+        files.dedup();
+        files.retain(|path| raycast_script_extension(path));
+        files.into_iter().map(raycast_source).collect()
+    }
+}
+
+fn raycast_source(path: PathBuf) -> Result<DiscoveredSource> {
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("read Raycast script {}", path.display()))?;
+    let (title, description) = raycast_metadata(&bytes);
+    let native_id = title.map(|value| bounded_label(&value)).unwrap_or_else(|| {
+        path.file_stem()
+            .map(|value| bounded_label(&value.to_string_lossy()))
+            .unwrap_or_else(|| "script-command".into())
+    });
+    Ok(DiscoveredSource {
+        source_id: format!("raycast:{}", stable_source_key(&path)),
+        provider: "raycast".into(),
+        native_id,
+        path: Some(path.clone()),
+        enabled: true,
+        kind: "script-command".into(),
+        fingerprint: fingerprint_bytes(&bytes),
+        command: None,
+        trigger: Trigger::Manual,
+        raw: format!(
+            "script_command={}; description_present={}",
+            stable_relative_path(&path),
+            description.is_some()
+        ),
+    })
+}
+
+fn raycast_script_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(value) = std::env::var_os("TASKRAIL_RAYCAST_SCRIPT_DIRS") {
+        directories.extend(std::env::split_paths(&value));
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        directories.extend([
+            home.join("Documents/Raycast"),
+            home.join("raycast"),
+            home.join(".raycast"),
+            home.join("Library/Application Support/Raycast/Script Commands"),
+            home.join("Library/Application Support/com.raycast.macos/Script Commands"),
+        ]);
+    }
+    if let Ok(output) = Command::new("defaults")
+        .args(["export", "com.raycast.macos", "-"])
+        .output()
+        && output.status.success()
+        && let Ok(value) = plist::Value::from_reader(Cursor::new(output.stdout))
+    {
+        collect_configured_script_paths(&value, false, &mut directories);
+    }
+    directories.retain(|path| path.is_dir());
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
+fn collect_configured_script_paths(value: &plist::Value, hinted: bool, result: &mut Vec<PathBuf>) {
+    match value {
+        plist::Value::Dictionary(dict) => {
+            for (key, child) in dict {
+                let key = key.to_ascii_lowercase();
+                collect_configured_script_paths(
+                    child,
+                    hinted
+                        || key.contains("script")
+                        || key.contains("command")
+                        || key.contains("directory"),
+                    result,
+                );
+            }
+        }
+        plist::Value::Array(values) => {
+            for child in values {
+                collect_configured_script_paths(child, hinted, result);
+            }
+        }
+        plist::Value::String(path) if hinted => {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                result.push(path);
+            } else if path.is_file()
+                && let Some(parent) = path.parent()
+            {
+                result.push(parent.to_path_buf());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn raycast_script_extension(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some(
+            "sh" | "bash"
+                | "zsh"
+                | "fish"
+                | "py"
+                | "js"
+                | "ts"
+                | "rb"
+                | "php"
+                | "swift"
+                | "applescript"
+                | "scpt"
+        )
+    )
+}
+
+fn raycast_metadata(bytes: &[u8]) -> (Option<String>, Option<String>) {
+    let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(16 * 1024)]);
+    let mut title = None;
+    let mut description = None;
+    for line in prefix.lines().take(100) {
+        let Some((_prefix, value)) = line.split_once("@raycast.") else {
+            continue;
+        };
+        let mut parts = value.splitn(2, |character: char| character.is_whitespace());
+        let field = parts.next().unwrap_or_default();
+        let value = parts.next().unwrap_or_default();
+        let value = value.trim().trim_matches(['#', '/', ' ', '\t']).trim();
+        match field {
+            "title" if !value.is_empty() => title = Some(value.to_owned()),
+            "description" if !value.is_empty() => description = Some(value.to_owned()),
+            _ => {}
+        }
+    }
+    (title, description)
+}
+
+fn fingerprint_path(path: &Path) -> Result<String> {
+    if path.is_file() {
+        return Ok(fingerprint_bytes(
+            &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+        ));
+    }
+    if !path.is_dir() {
+        anyhow::bail!(
+            "discovered path is neither a file nor directory: {}",
+            path.display()
+        );
+    }
+    let mut files = Vec::new();
+    collect_files_bounded(path, 8, &mut files);
+    files.sort();
+    let mut material = Vec::new();
+    for file in files {
+        let relative = file.strip_prefix(path).unwrap_or(&file);
+        material.extend_from_slice(relative.to_string_lossy().as_bytes());
+        material.push(0);
+        let bytes = std::fs::read(&file)
+            .with_context(|| format!("read discovered file {}", file.display()))?;
+        material.extend_from_slice(&bytes);
+        material.push(0);
+    }
+    Ok(fingerprint_bytes(&material))
+}
+
+fn collect_files_with_extension(
+    root: &Path,
+    extension: &str,
+    depth: usize,
+    result: &mut Vec<PathBuf>,
+) {
+    let mut paths = Vec::new();
+    collect_files_bounded(root, depth, &mut paths);
+    result.extend(
+        paths
+            .into_iter()
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some(extension)),
+    );
+}
+
+fn collect_files_bounded(root: &Path, depth: usize, result: &mut Vec<PathBuf>) {
+    if depth == 0 || !root.exists() {
+        return;
+    }
+    if root.is_file() {
+        result.push(root.to_path_buf());
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            result.push(path);
+        } else if path.is_dir() {
+            collect_files_bounded(&path, depth - 1, result);
+        }
+    }
+}
+
+fn stable_relative_path(path: &Path) -> String {
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+        && let Ok(relative) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", relative.to_string_lossy());
+    }
+    path.to_string_lossy().into_owned()
+}
+
+fn stable_source_key(path: &Path) -> String {
+    format!(
+        "path-{}",
+        fingerprint_bytes(stable_relative_path(path).as_bytes())
+    )
+}
+
+fn bounded_label(value: &str) -> String {
+    let label = value
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(256)
+        .collect::<String>();
+    if label.is_empty() {
+        "unnamed".into()
+    } else {
+        label
+    }
+}
+
+fn safe_source_component(value: &str) -> String {
+    let component = value
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+        .take(128)
+        .collect::<String>();
+    if component.is_empty() {
+        format!("sha256-{}", fingerprint_bytes(value.as_bytes()))
+    } else {
+        component
+    }
 }
 
 impl Default for HomebrewProvider {
@@ -561,9 +1348,22 @@ pub fn merge_homebrew_sources(
 /// each entry point observes the same source set and Homebrew/launchd identity
 /// reconciliation rules.
 pub fn scan_native_sources(source: &str) -> Result<Vec<DiscoveredSource>> {
-    if !matches!(source, "all" | "launchd" | "cron" | "systemd" | "homebrew") {
+    if !matches!(
+        source,
+        "all"
+            | "launchd"
+            | "cron"
+            | "systemd"
+            | "homebrew"
+            | "shortcuts"
+            | "automator"
+            | "keyboard-maestro"
+            | "raycast"
+            | "alfred"
+            | "hazel"
+    ) {
         anyhow::bail!(
-            "unknown native source {source}; expected all, launchd, cron, systemd, or homebrew"
+            "unknown native source {source}; expected all, launchd, cron, systemd, homebrew, shortcuts, automator, keyboard-maestro, raycast, alfred, or hazel"
         );
     }
 
@@ -599,7 +1399,52 @@ pub fn scan_native_sources(source: &str) -> Result<Vec<DiscoveredSource>> {
             discovered.extend(related);
         }
     }
+    if matches!(source, "all" | "shortcuts") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(
+            ShortcutsProvider::default(),
+            source,
+        )?);
+    }
+    if matches!(source, "all" | "automator") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(
+            AutomatorProvider::default(),
+            source,
+        )?);
+    }
+    if matches!(source, "all" | "keyboard-maestro") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(
+            KeyboardMaestroProvider::default(),
+            source,
+        )?);
+    }
+    if matches!(source, "all" | "raycast") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(RaycastProvider::default(), source)?);
+    }
+    if matches!(source, "all" | "alfred") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(AlfredProvider::default(), source)?);
+    }
+    if matches!(source, "all" | "hazel") && cfg!(target_os = "macos") {
+        discovered.extend(scan_optional_provider(HazelProvider::default(), source)?);
+    }
     Ok(discovered)
+}
+
+fn scan_optional_provider<P: DiscoveryProvider>(
+    provider: P,
+    source: &str,
+) -> Result<Vec<DiscoveredSource>> {
+    match provider.scan() {
+        Ok(sources) => Ok(sources),
+        Err(error) if source == "all" => {
+            // An unavailable or permission-blocked optional application must
+            // not hide launchd/cron/systemd discovery or turn its old entries
+            // into false missing alerts. Explicit provider scans still return
+            // the real error to the operator.
+            let _ = error;
+            Ok(Vec::new())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Return a complete native snapshot plus the providers that were actually
@@ -629,6 +1474,10 @@ pub fn scan_native_snapshot(source: &str) -> Result<NativeDiscoverySnapshot> {
     {
         complete_providers.insert("homebrew".into());
     }
+    // Application-owned stores are intentionally not marked complete here.
+    // Their formats and permission surfaces vary by app; retaining the last
+    // observation without manufacturing a missing alert is safer than treating
+    // an unavailable app database as an authoritative empty inventory.
 
     Ok(NativeDiscoverySnapshot {
         sources,
@@ -649,13 +1498,7 @@ fn executable_available(name: &str) -> bool {
 
 fn systemd_user_manager_available() -> bool {
     let Ok(output) = Command::new("systemctl")
-        .args([
-            "--user",
-            "list-unit-files",
-            "--type=service",
-            "--no-legend",
-            "--no-pager",
-        ])
+        .args(["--user", "list-unit-files", "--no-legend", "--no-pager"])
         .output()
     else {
         return false;
@@ -677,13 +1520,7 @@ impl DiscoveryProvider for SystemdProvider {
             Some(listing) => listing.clone(),
             None => {
                 let output = match Command::new("systemctl")
-                    .args([
-                        "--user",
-                        "list-unit-files",
-                        "--type=service",
-                        "--no-legend",
-                        "--no-pager",
-                    ])
+                    .args(["--user", "list-unit-files", "--no-legend", "--no-pager"])
                     .output()
                 {
                     Ok(output) => output,
@@ -707,23 +1544,41 @@ impl DiscoveryProvider for SystemdProvider {
         let mut discovered = Vec::new();
         for line in listing.lines() {
             let fields = line.split_whitespace().collect::<Vec<_>>();
-            let Some(unit) = fields.first().filter(|unit| unit.ends_with(".service")) else {
+            let Some(unit) = fields
+                .first()
+                .filter(|unit| unit.ends_with(".service") || unit.ends_with(".timer"))
+            else {
                 continue;
             };
             let state = fields.get(1).copied().unwrap_or("unknown");
-            let raw = if self.unit_list.is_some() {
+            let timer = unit.ends_with(".timer");
+            let timer_raw = if self.unit_list.is_some() {
                 line.to_owned()
             } else {
                 systemd_show(unit).unwrap_or_else(|_| line.to_owned())
             };
-            let properties = parse_systemd_properties(&raw);
-            let command = properties
-                .get("ExecStart")
-                .and_then(|value| parse_systemd_command(value));
-            let trigger = properties
-                .get("OnUnitActiveSec")
-                .and_then(|value| parse_systemd_duration(value))
-                .map_or(Trigger::Manual, |seconds| Trigger::Interval { seconds });
+            let timer_properties = parse_systemd_properties(&timer_raw);
+            let service_raw = if timer && self.unit_list.is_none() {
+                timer_properties
+                    .get("Unit")
+                    .filter(|service| service.ends_with(".service"))
+                    .and_then(|service| systemd_show(service).ok())
+            } else {
+                None
+            };
+            let raw = match &service_raw {
+                Some(service_raw) => format!("{timer_raw}\n# taskrail-service: {service_raw}"),
+                None => timer_raw,
+            };
+            let properties = &timer_properties;
+            let command = if timer {
+                None
+            } else {
+                properties
+                    .get("ExecStart")
+                    .and_then(|value| parse_systemd_command(value))
+            };
+            let trigger = systemd_trigger(properties);
             let path = properties
                 .get("FragmentPath")
                 .filter(|value| !value.is_empty())
@@ -734,7 +1589,7 @@ impl DiscoveryProvider for SystemdProvider {
                 native_id: (*unit).into(),
                 path,
                 enabled: matches!(state, "enabled" | "static" | "alias"),
-                kind: "service".into(),
+                kind: if timer { "timer" } else { "service" }.into(),
                 fingerprint: fingerprint_bytes(raw.as_bytes()),
                 command,
                 trigger,
@@ -759,7 +1614,7 @@ fn systemd_show(unit: &str) -> Result<String> {
             "show",
             unit,
             "--no-pager",
-            "--property=FragmentPath,ExecStart,OnUnitActiveSec,OnCalendar,UnitFileState,ActiveState",
+            "--property=FragmentPath,ExecStart,Unit,OnUnitActiveSec,OnCalendar,UnitFileState,ActiveState",
         ])
         .output()
         .with_context(|| format!("show systemd unit {unit}"))?;
@@ -814,6 +1669,112 @@ fn parse_systemd_duration(value: &str) -> Option<u64> {
         return value.parse::<u64>().ok();
     }
     value.parse::<u64>().ok()
+}
+
+fn systemd_trigger(properties: &BTreeMap<String, String>) -> Trigger {
+    if let Some(seconds) = properties
+        .get("OnUnitActiveSec")
+        .and_then(|value| parse_systemd_duration(value))
+    {
+        return Trigger::Interval { seconds };
+    }
+    properties
+        .get("OnCalendar")
+        .and_then(|value| parse_systemd_calendar(value))
+        .unwrap_or(Trigger::Manual)
+}
+
+/// Convert the common, unambiguous subset of systemd calendar expressions to
+/// Taskrail's portable cron representation. Unsupported calendar syntax stays
+/// manual rather than being guessed into a different schedule.
+fn parse_systemd_calendar(value: &str) -> Option<Trigger> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("hourly") {
+        return Some(Trigger::Cron {
+            expression: "0 * * * *".into(),
+            timezone: "local".into(),
+        });
+    }
+    if value.eq_ignore_ascii_case("daily") {
+        return Some(Trigger::Cron {
+            expression: "0 0 * * *".into(),
+            timezone: "local".into(),
+        });
+    }
+    if value.eq_ignore_ascii_case("weekly") {
+        return Some(Trigger::Cron {
+            expression: "0 0 * * 0".into(),
+            timezone: "local".into(),
+        });
+    }
+    let fields = value.split_whitespace().collect::<Vec<_>>();
+    let (weekday, date, clock) = match fields.as_slice() {
+        [clock] => ("*", "*-*-*", *clock),
+        [date, clock] => ("*", *date, *clock),
+        [weekday, date, clock] => (*weekday, *date, *clock),
+        _ => return None,
+    };
+    let mut clock = clock.split(':');
+    let hour = clock.next()?.parse::<u8>().ok()?;
+    let minute = clock.next()?.parse::<u8>().ok()?;
+    if hour > 23
+        || minute > 59
+        || clock.next().is_some_and(|seconds| {
+            seconds
+                .split_once('.')
+                .map_or_else(
+                    || seconds.parse::<u8>().ok(),
+                    |(whole, _)| whole.parse::<u8>().ok(),
+                )
+                .is_none_or(|seconds| seconds > 59)
+        })
+    {
+        return None;
+    }
+    let date = date.split('-').collect::<Vec<_>>();
+    if date.len() != 3 {
+        return None;
+    }
+    let (month, day) = match (date[1], date[2]) {
+        ("*", "*") => ("*", "*"),
+        (month, day) => {
+            if date[0] != "*" {
+                return None;
+            }
+            if month != "*"
+                && month
+                    .parse::<u8>()
+                    .ok()
+                    .is_none_or(|month| !(1..=12).contains(&month))
+            {
+                return None;
+            }
+            if day != "*"
+                && day
+                    .parse::<u8>()
+                    .ok()
+                    .is_none_or(|day| !(1..=31).contains(&day))
+            {
+                return None;
+            }
+            (month, day)
+        }
+    };
+    let weekday = match weekday.to_ascii_lowercase().as_str() {
+        "*" => "*",
+        "sun" => "0",
+        "mon" => "1",
+        "tue" | "tues" => "2",
+        "wed" => "3",
+        "thu" | "thur" | "thurs" => "4",
+        "fri" => "5",
+        "sat" => "6",
+        _ => return None,
+    };
+    Some(Trigger::Cron {
+        expression: format!("{minute} {hour} {day} {month} {weekday}"),
+        timezone: "local".into(),
+    })
 }
 
 impl DiscoveryProvider for CronProvider {
@@ -923,6 +1884,167 @@ mod tests {
     }
 
     #[test]
+    fn parses_shortcuts_listing_as_observe_only_sources() {
+        let sources =
+            parse_shortcuts_list("Daily check (11111111-1111-4111-8111-111111111111)\ninvalid\n")
+                .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].provider, "shortcuts");
+        assert_eq!(sources[0].kind, "shortcut");
+        assert!(sources[0].command.is_none());
+        assert_eq!(
+            sources[0].raw,
+            "shortcut_id=11111111-1111-4111-8111-111111111111"
+        );
+    }
+
+    #[test]
+    fn parses_alfred_workflow_metadata_without_copying_actions() {
+        let directory = tempdir().unwrap();
+        let workflow = directory.path().join("example.alfredworkflow");
+        std::fs::create_dir_all(&workflow).unwrap();
+        let info = plist::Value::Dictionary(plist::Dictionary::from_iter([
+            (
+                "name".to_owned(),
+                plist::Value::String("Example Workflow".into()),
+            ),
+            (
+                "uid".to_owned(),
+                plist::Value::String("com.example.workflow".into()),
+            ),
+            ("version".to_owned(), plist::Value::String("1.0".into())),
+            (
+                "description".to_owned(),
+                plist::Value::String("Private workflow description".into()),
+            ),
+        ]));
+        plist::to_file_xml(workflow.join("info.plist"), &info).unwrap();
+        std::fs::write(workflow.join("script.sh"), "private action body").unwrap();
+        let sources = AlfredProvider {
+            directories: vec![directory.path().to_path_buf()],
+        }
+        .scan()
+        .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].source_id, "alfred:com.example.workflow");
+        assert_eq!(sources[0].native_id, "Example Workflow");
+        assert!(sources[0].command.is_none());
+        assert!(sources[0].raw.contains("description_present=true"));
+        assert!(!sources[0].raw.contains("Private workflow description"));
+        assert!(!sources[0].raw.contains("private action body"));
+    }
+
+    #[test]
+    fn all_scan_skips_optional_provider_errors_but_explicit_scan_surfaces_them() {
+        #[derive(Debug, Clone, Copy)]
+        struct FailingProvider;
+
+        impl DiscoveryProvider for FailingProvider {
+            fn name(&self) -> &'static str {
+                "fixture"
+            }
+
+            fn scan(&self) -> Result<Vec<DiscoveredSource>> {
+                anyhow::bail!("fixture provider unavailable")
+            }
+        }
+
+        assert!(
+            scan_optional_provider(FailingProvider, "all")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(scan_optional_provider(FailingProvider, "fixture").is_err());
+    }
+
+    #[test]
+    fn automator_bundle_is_observe_only_and_fingerprinted() {
+        let directory = tempdir().unwrap();
+        let workflow = directory.path().join("Example.workflow");
+        std::fs::create_dir_all(&workflow).unwrap();
+        std::fs::write(workflow.join("document.wflow"), "workflow").unwrap();
+        let provider = AutomatorProvider {
+            roots: vec![directory.path().to_path_buf()],
+        };
+        let sources = provider.scan().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].native_id, "Example");
+        assert!(sources[0].command.is_none());
+        assert!(sources[0].fingerprint.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn parses_keyboard_maestro_macro_metadata_without_action_bodies() {
+        let directory = tempdir().unwrap();
+        let file = directory.path().join("Keyboard Maestro Macros.plist");
+        let value = plist::Value::Dictionary(plist::Dictionary::from_iter([
+            (
+                String::from("Name"),
+                plist::Value::String("Example Macro".into()),
+            ),
+            (
+                String::from("MacroUID"),
+                plist::Value::String("macro-1".into()),
+            ),
+            (String::from("IsActive"), plist::Value::Boolean(true)),
+            (
+                String::from("Triggers"),
+                plist::Value::Array(vec![plist::Value::Dictionary(plist::Dictionary::new())]),
+            ),
+            (
+                String::from("Actions"),
+                plist::Value::Array(vec![plist::Value::Dictionary(plist::Dictionary::new())]),
+            ),
+        ]));
+        plist::to_file_xml(&file, &value).unwrap();
+        let sources = KeyboardMaestroProvider { files: vec![file] }
+            .scan()
+            .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].source_id, "keyboard-maestro:macro-1");
+        assert!(sources[0].command.is_none());
+        assert!(sources[0].raw.contains("trigger_count=1"));
+        assert!(!sources[0].raw.contains("secret"));
+    }
+
+    #[test]
+    fn parses_raycast_metadata_without_copying_script_body() {
+        let directory = tempdir().unwrap();
+        let script = directory.path().join("example.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/zsh\n# @raycast.schemaVersion 1\n# @raycast.title Build project\n# @raycast.description Build the project\necho secret-body\n",
+        )
+        .unwrap();
+        let sources = RaycastProvider {
+            directories: vec![directory.path().to_path_buf()],
+        }
+        .scan()
+        .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].native_id, "Build project");
+        assert_eq!(sources[0].kind, "script-command");
+        assert!(sources[0].command.is_none());
+        assert!(!sources[0].raw.contains("secret-body"));
+    }
+
+    #[test]
+    fn hazel_rules_are_observe_only() {
+        let directory = tempdir().unwrap();
+        let rules = directory.path().join("folder.hazelrules");
+        std::fs::write(&rules, "private rule body").unwrap();
+        let sources = HazelProvider {
+            roots: vec![directory.path().to_path_buf()],
+        }
+        .scan()
+        .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].native_id, "folder");
+        assert!(sources[0].command.is_none());
+        assert!(!sources[0].raw.contains("private rule body"));
+    }
+
+    #[test]
     fn parses_launchd_program_arguments() {
         let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -956,6 +2078,25 @@ mod tests {
         assert_eq!(
             parse_systemd_duration(properties.get("OnUnitActiveSec").unwrap()),
             Some(300)
+        );
+    }
+
+    #[test]
+    fn parses_systemd_timer_calendar_without_making_it_runnable() {
+        let provider = SystemdProvider {
+            unit_list: Some("taskrail.timer enabled\n".into()),
+        };
+        let sources = provider.scan().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].kind, "timer");
+        assert!(sources[0].is_observe_only());
+        assert!(sources[0].command.is_none());
+        assert_eq!(
+            parse_systemd_calendar("Mon *-*-* 09:30:00").unwrap(),
+            Trigger::Cron {
+                expression: "30 9 * * 1".into(),
+                timezone: "local".into()
+            }
         );
     }
 

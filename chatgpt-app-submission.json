@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Taskrail",
     "subtitle": "Inspect local automations",
-    "description": "Taskrail gives ChatGPT a safe, read-only view of a user's local automation control plane: host overview, native scheduler discovery, automation inventory, run history and logs, attention items, audit events, and normalized local integration findings.",
+    "description": "Taskrail gives ChatGPT a safe, read-only view of a user's local automation control plane: host overview, scheduler and macOS app automation discovery, automation inventory, run history and logs, attention items, audit events, and normalized local integration findings.",
     "category": "DEVELOPER_TOOLS"
   },
   "tools": {
@@ -15,7 +15,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Only reads daemon status and a fresh native-scheduler summary without changing the host or Registry.",
+        "read_only_justification": "Only reads daemon status and a fresh native-source summary without changing the host or Registry.",
         "open_world_justification": "Only observes the private, user-owned Taskrail host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -63,7 +63,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Scans native launchd, cron, systemd, and Homebrew sources on the supported ARM64 host and returns sanitized observations without reconciling or writing the Registry.",
+        "read_only_justification": "Scans launchd, cron, systemd services/timers, Homebrew, and supported macOS application sources on the ARM64 host and returns sanitized observations without reconciling or writing the Registry; app-owned definitions remain observe-only.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -75,7 +75,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Performs a fresh native scheduler scan on the supported ARM64 host and returns sanitized observations without changing native definitions or the Registry.",
+        "read_only_justification": "Performs a fresh read-only scan of supported scheduler and macOS application sources on the ARM64 host and returns sanitized observations without changing definitions or the Registry.",
         "open_world_justification": "Only observes private scheduler state on the user's host and does not write to public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, execute work, or perform an irreversible action."
       }
@@ -247,11 +247,11 @@
       "expected_output_url": null
     },
     {
-      "description": "Discover native scheduler jobs without changing them.",
-      "user_prompt": "What launchd, cron, systemd, and Homebrew automation jobs are present on this ARM64 computer? Do not modify anything.",
+      "description": "Discover local scheduler and application automation sources without changing them.",
+      "user_prompt": "What launchd, cron, systemd, Homebrew, Shortcuts, Automator, Raycast, Alfred, Keyboard Maestro, and Hazel automation sources are present on this ARM64 computer? Do not modify anything.",
       "file_attachment_urls": null,
       "tools_triggered": "taskrail_discover_local_automations",
-      "expected_output": "Returns a sanitized provider-grouped inventory with safe command summaries and explicitly states that native definitions and the Registry were not changed.",
+      "expected_output": "Returns a sanitized provider-grouped inventory with safe command summaries, marks app-owned definitions and systemd timers as observe-only, and explicitly states that native definitions and the Registry were not changed.",
       "expected_output_url": null
     },
     {

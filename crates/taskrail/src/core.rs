@@ -356,7 +356,20 @@ pub struct DiscoveredSource {
 }
 
 impl DiscoveredSource {
+    /// Application-owned definitions are inventory facts, not Taskrail
+    /// commands. They may require GUI state, prompts, permissions, or a
+    /// proprietary runtime that cannot be represented by direct argv safely.
+    pub fn is_observe_only(&self) -> bool {
+        matches!(
+            self.provider.as_str(),
+            "shortcuts" | "automator" | "keyboard-maestro" | "raycast" | "alfred" | "hazel"
+        ) || (self.provider == "systemd" && self.kind == "timer")
+    }
+
     pub fn as_observed_automation(&self) -> Option<Automation> {
+        if self.is_observe_only() {
+            return None;
+        }
         let command = self.command.clone()?;
         if command.shell || command.invokes_shell() {
             return None;

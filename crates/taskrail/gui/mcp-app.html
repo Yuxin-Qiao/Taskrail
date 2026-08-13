@@ -32,7 +32,7 @@
   </style>
   <div class="taskrail-head">
     <div class="taskrail-title"><span class="taskrail-mark">T</span><div><div class="taskrail-name">Taskrail</div><div class="taskrail-subtitle">Local automation control plane</div></div></div>
-    <div class="taskrail-actions"><button class="taskrail-button" data-action="refresh" type="button">Refresh</button><button class="taskrail-button" data-action="discover" type="button">Scan native jobs</button></div>
+    <div class="taskrail-actions"><button class="taskrail-button" data-action="refresh" type="button">Refresh</button><button class="taskrail-button" data-action="discover" type="button">Scan local sources</button></div>
   </div>
   <div class="taskrail-status" data-role="status" aria-live="polite">Waiting for the latest Taskrail overview…</div>
   <div class="taskrail-cards" data-role="cards"></div>
@@ -95,8 +95,9 @@
         const trigger = item.trigger?.kind || "manual";
         const state = item.enabled === false ? "disabled" : "enabled";
         const provider = item.provider || "native";
+        const execution = item.execution === "observe_only" ? " · observe-only" : "";
         const path = item.path ? ` · ${item.path}` : "";
-        return `<li><span class="taskrail-item-name">${escape(item.name || item.id || "Unnamed native task")}<span class="taskrail-item-detail">${escape(provider)} · ${escape(trigger)}${escape(path)}</span></span><span class="taskrail-item-meta">${escape(state)}</span></li>`;
+        return `<li><span class="taskrail-item-name">${escape(item.name || item.id || "Unnamed native task")}<span class="taskrail-item-detail">${escape(provider)} · ${escape(trigger)}${escape(execution)}${escape(path)}</span></span><span class="taskrail-item-meta">${escape(state)}</span></li>`;
       }).join("") : '<li class="taskrail-empty">No native tasks discovered.</li>';
       attention.innerHTML = attentionItems.length ? attentionItems.slice(0, 12).map(item => `<li><span class="taskrail-item-name">${escape(item.title || item.kind || item.id || "Attention item")}</span><span class="taskrail-item-meta">${escape(item.severity || item.status || "review")}</span></li>`).join("") : '<li class="taskrail-empty">No attention items.</li>';
       setStatus(`Connected · ${text(host.label || host.hostname || "local host")} · ${text(host.platform || "local")} ${text(host.architecture || "")}`);

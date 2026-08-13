@@ -76,7 +76,7 @@ loginctl enable-linger "$USER"
 taskrail daemon --install
 ~~~
 
-守护进程默认每五分钟执行一次只读的原生调度器库存刷新。可以用
+守护进程默认每五分钟执行一次只读的本地来源库存刷新。可以用
 `--discovery-interval-seconds` 调整间隔；状态和 overview 会报告最近扫描时间、provider
 完整性、漂移和已确认消失的任务数量。provider 不可用时不会被当作空 provider，因此不会
 凭空产生删除告警。
@@ -188,7 +188,8 @@ Taskrail 可以管理你已经在使用的命令和脚本：
 
 - 一次性命令，以及按间隔或 cron 运行的周期性任务；
 - 本地运行历史、标准输出、标准错误和运维事件；
-- launchd、cron、systemd 用户服务和 Homebrew 服务发现；
+- launchd、cron、systemd 用户服务/定时器、Homebrew 服务，以及受支持的 macOS 应用自动化发现
+  （Shortcuts、Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel）；应用自有定义保持只读观察；
 - 对受支持的用户级原生任务进行显式领养，并记录可回滚的变更；
 - 删除没有运行历史的未使用托管定义，同时保留不可变的运行历史；
 - 可选的 Codex 和 Responses 兼容 AI 执行器；
@@ -309,7 +310,7 @@ add/register → list → daemon → run → history/logs → tui
 | --- | --- |
 | Registry、调度器、运行、日志、事件 | 🟢 核心 |
 | CLI 和 TUI | 🟢 核心 |
-| launchd / cron / systemd / Homebrew 发现和后台监督 | 🔵 集成 |
+| launchd / cron / systemd / Homebrew 以及受支持的 macOS 应用发现（包括 Alfred）和后台监督 | 🔵 集成 |
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
 | 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |

@@ -9,8 +9,8 @@ Execution date: 2026-08-13
 ## Scope and safety
 
 - Tests that create or run automations use a temporary Registry.
-- Native discovery is read-only; it must not modify launchd, cron, systemd, or
-  Homebrew definitions.
+- Native discovery is read-only; it must not modify launchd, cron, systemd,
+  Homebrew, or application-owned automation definitions.
 - No real user automation is created, paused, resumed, adopted, or deleted by
   this checklist.
 - Secrets must not appear in source, logs, test output, or this document.
@@ -22,26 +22,26 @@ Execution date: 2026-08-13
 | A1 | Metadata | Rust workspace, package metadata, license, README, and OSS files are present | `Cargo.toml`, `crates/taskrail/Cargo.toml`, `LICENSE`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | PASS |
 | A2 | Repository hygiene | Formatting diff is clean and generated/runtime artifacts are ignored | `git diff --check`, `.gitignore`, tracked-artifact scan | PASS |
 | A3 | Secret safety | No obvious API key, token, private key, or credential marker is tracked or present in the project | repository secret scan | PASS |
-| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 171 tests passed | PASS |
+| B1 | Rust quality | Workspace formatting, Clippy, tests, doc-tests, and build pass | `cargo +1.88.0 fmt --all -- --check`; `cargo +1.88.0 clippy --locked --workspace --all-targets --all-features -- -D warnings`; `cargo +1.88.0 test --locked --workspace --all-features`; 171 tests on the prior main baseline, 180 tests on this discovery branch | PASS |
 | B2 | Browser dashboard | Dashboard source is embedded in the published crate and its HTTP route/origin mapping tests pass | `cargo package --locked --package taskrail`; `cargo test --locked --workspace --lib web`; loopback browser smoke | PASS |
 | B3 | Desktop client | The current branch intentionally uses the daemon-hosted browser dashboard as its local UI; the historical SwiftUI client is not part of this release surface | Not applicable to the current CLI/browser release; dashboard coverage is recorded in B2 and F1 | N/A |
 | B4 | ARM64 Linux build | ARM64 Linux target produces an ELF binary without unsupported-target warnings/errors | GitHub ARM64 CI run `31626953386`: `cargo +stable build --locked --workspace --target aarch64-unknown-linux-gnu` passed | PASS |
 | C1 | CLI lifecycle | Add/register, list, inspect, delete, explain, run, runs, logs, pause, resume, inbox, metrics, events, doctor, and verify work | temporary-Registry CLI smoke | PASS |
 | C2 | Scheduler | Interval scheduling runs repeatedly; cron/misfire/overlap behavior is covered | 3 interval runs succeeded; scheduler tests passed | PASS |
-| C3 | Native discovery | launchd, cron, systemd, and Homebrew discovery paths execute without native mutation on supported ARM64 hosts | Apple Silicon live `overview`/discovery; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures; background reconciliation and missing-source tests | PASS |
+| C3 | Native discovery | launchd, cron, systemd services/timers, Homebrew, and supported macOS application sources execute read-only discovery without native mutation; app-owned sources remain observe-only | Apple Silicon isolated scan: launchd=26, Shortcuts=14, Automator=1; Keyboard Maestro/Raycast/Alfred/Hazel absent on this host; fixtures cover all application providers, Alfred metadata, systemd timer schedules, safe summaries, optional-provider failure handling, and Registry reconciliation; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | ARM64 macOS/Linux Unix-socket daemons expose lifecycle/log/run APIs with local-only boundaries | Apple Silicon temporary daemon/MCP smoke; Linux ARM64 CI build/test and XDG/runtime smoke | PASS |
 | D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, exposes the read-only Taskrail Apps dashboard resource, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 39 local tools including the dashboard render tool; 19 public read-only tools; resource read/origin tests; real stdio and authenticated private/public HTTP probes completed | PASS |
-| D2 | Local automation discovery | A fresh MCP discovery call returns local native tasks as safe summaries and reports no native definition mutation | live call returned 26 sources, `native_definitions_changed=false` | PASS |
+| D2 | Local automation discovery | A fresh MCP discovery call returns local native and app-owned tasks as safe summaries and reports no native definition mutation | isolated local scan returned 41 sources (launchd=26, Shortcuts=14, Automator=1); app-owned entries are marked `execution=observe_only`; `native_definitions_changed=false`; Registry contained 21 runnable observed automations and no app-source attention noise | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; the MCP connection can return Taskrail data | Managed runtime `taskrail-local` reports `runtime_state=ready`, `process_running=true`, `healthy=true`, `ready=true`; `taskrail integration chatgpt-doctor` is ready; direct MCP stdio initialize, `taskrail_overview`, and `taskrail_discover_local_automations` calls succeeded | PASS |
-| D4 | ChatGPT app call | A logged-in ChatGPT client can call the connected Taskrail app and report a completed read-only result | In the logged-in ChatGPT web client, the connected Taskrail app called `taskrail_status` followed by `taskrail_scan_native`; the response identified `Yuxin-MacBook.local` (macOS/aarch64), reported 26 native automation definitions, and confirmed `native_definitions_changed=false`; no write operation was requested | PASS |
+| D4 | ChatGPT app call | A logged-in ChatGPT client can call the connected Taskrail app and report a completed read-only result | In the logged-in ChatGPT web client, the connected Taskrail app called `taskrail_status` followed by `taskrail_scan_native`; the response identified `Yuxin-MacBook.local` (macOS/aarch64), reported the observed host inventory, and confirmed `native_definitions_changed=false`; no write operation was requested | PASS |
 | D5 | Scheduled trigger | A future ChatGPT Scheduled task invocation is observed calling the connected Taskrail app and returning a completed result | The connected app and interactive call are verified, but no future Scheduled trigger was created and observed in this release run; ChatGPT's Scheduled page and Taskrail's local scheduler remain separate layers | NOT VERIFIED |
 | D6 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 39 fleet tools including the read-only dashboard render tool; explicit `host_id` schemas; localhost MCP routing test; adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
 | D7 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 39 Fleet descriptors (37 require `host_id`); versioned read-only Fleet Apps resource; route-completeness contract; private HTTP target exposed the same local data/action boundaries; action-aware write gate and read-only default preserved | PASS |
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
-| F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; browser shows connected host and 26 native rows; the MCP Apps resource now renders the discovered native-task list; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
+| F1 | Local runtime | Installed daemon serves the loopback dashboard, MCP runtime is healthy/ready, and local socket is user-only | doctor ready; preferred dashboard `10100` fell back to `10101` because another local service occupied it; `/healthz` ready; dashboard/MCP Apps render native and app-owned rows with observe-only labels; socket mode 0600; host identity falls back to a bounded system hostname when no label is configured | PASS |
 | F2 | CI definition | GitHub Actions YAML parses and contains ARM64 Linux/macOS Rust, ARM64 MSRV, crate packaging with embedded browser and MCP Apps assets, dependency review, and supply-chain audit jobs | CI workflow and package asset checks inspected; browser and both MCP Apps resources are checked; security workflows retained | PASS |
 | F3 | Release packaging | A matching version tag produces ARM64 Linux/macOS CLI archives containing the browser dashboard, SHA-256 checksums, SPDX SBOMs, and signed release/SBOM attestations | Tag `v0.1.6` points to `a553be0`; release workflow run `31635879714` completed successfully; both ARM64 archives, checksums, SPDX SBOMs, and signed GitHub SBOM attestations were published and independently downloaded/checked | PASS |
 | F4 | OSS governance | Ownership, issue intake, dependency updates, CodeQL, dependency review, cargo audit/deny, and contribution checks are configured | governance files inspected | PASS |
@@ -50,9 +50,9 @@ Execution date: 2026-08-13
 | G3 | Backup/sync integrations | restic and rclone expose typed snapshots, backup, check, copy, and sync dry-run semantics with secret-safe parsing | fixture tests; write paths approval-gated | PASS |
 | G4 | Host/package integrations | GitHub/Homebrew/mas/Topgrade adapters use the shared layer without arbitrary writes or sudo | fixture tests; existing discovery preserved | PASS |
 | G5 | Security integrations | OSV-Scanner, Gitleaks, and Trivy normalize findings without retaining secret/match values | fixture tests; malformed and missing-tool paths fail closed | PASS |
-| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 171 tests; approval lifecycle and replay rejection passed | PASS |
-| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 171 tests passed | PASS |
-| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 171 tests passed | PASS |
+| G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 180 tests; approval lifecycle and replay rejection passed | PASS |
+| G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 180 tests passed | PASS |
+| G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 180 tests passed | PASS |
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
 ARM64-only release contract. The updated ARM64 runner evidence and the
@@ -122,8 +122,9 @@ execution.
 
 ### Results
 
-The current host passes the Rust full suite (171 tests, including the dashboard
-route and origin tests), strict Clippy, formatting check, build, package verification,
+The current host passes the Rust full suite (180 tests on this discovery
+branch, including dashboard route and origin tests), strict Clippy, formatting
+check, build, package verification,
 OpenAI submission validator, and the Fleet localhost routing smoke. The Fleet
 black-box exposed 38 host-routing tools;
 remote status, integration catalog, and a plan-only Topgrade route succeeded,
@@ -136,8 +137,9 @@ confirmed 19 read-only tools and rejected execution calls. The local and Fleet
 MCP Apps resources are embedded, versioned, and attached only to their explicit
 read-only render tools. The dashboard HTTP
 smoke covers health, embedded assets, API reads, same-origin writes, and run
-logs; the in-app browser loaded the connected dashboard and returned 26 native
-discovery rows. The public HTTP adapter unit tests cover health, authentication, origin,
+logs; the in-app browser loaded the connected dashboard and returned the
+connected host's native and app-owned discovery rows. The public HTTP adapter
+unit tests cover health, authentication, origin,
 MCP headers, public-profile allowlisting, private profile authentication, and
 protocol version boundaries.
 GitHub Actions runs `31635284025` (CI), `31635283861` (Security), and
@@ -155,9 +157,9 @@ taskrail-local --json` reports `runtime_state=ready`, `process_running=true`,
 `healthy=true`, and `ready=true`. `tunnel-client health --require-control-plane-poll`
 returned HTTP 200 for both `/healthz` and `/readyz`. The Taskrail MCP stdio
 probe completed initialize, overview, and fresh local discovery; the discovery
-call returned 26 native sources. The logged-in ChatGPT web client then called
-`taskrail_status` and `taskrail_scan_native` through the connected app and
-reported the same host plus 26 native definitions, with
+call returned the connected host's native and app-owned sources. The logged-in
+ChatGPT web client then called `taskrail_status` and `taskrail_scan_native`
+through the connected app and reported the same host inventory, with
 `native_definitions_changed=false`. No credential value was printed or
 persisted, and no write operation was requested. This proves the interactive
 ChatGPT app call, not a future Scheduled trigger; the latter remains an

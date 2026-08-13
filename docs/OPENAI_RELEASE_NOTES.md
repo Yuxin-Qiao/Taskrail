@@ -2,7 +2,8 @@
 
 Taskrail is an MCP-only developer tool that gives ChatGPT a bounded,
 read-only view of a user-authorized ARM64 macOS or Linux automation host. The initial
-submission includes a safe host overview, native scheduler discovery,
+submission includes a safe host overview, scheduler and supported macOS
+application discovery,
 automation inventory, run history and bounded logs, attention items,
 audit-event summaries, and normalized local integration findings.
 

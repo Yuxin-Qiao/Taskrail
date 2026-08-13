@@ -248,11 +248,13 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   bypasses per-host routing, policy, approval, or execution boundaries.
 - `taskrail_list_automations` / `taskrail_get_automation` — inspect the local
   inventory.
-- `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd,
-  and Homebrew services and return safe observed-task summaries.
-- `taskrail_scan_native` — perform a fresh read-only launchd, cron, systemd,
-  or Homebrew scan without mutating native definitions
-  or the Registry.
+- `taskrail_discover_local_automations` — freshly scan launchd, cron, systemd
+  services/timers, Homebrew services, and supported macOS app automation
+  sources (Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel), then
+  return safe observed-task summaries. App-owned definitions and systemd
+  timers are explicitly observe-only.
+- `taskrail_scan_native` — perform a fresh read-only native-source scan without
+  mutating native definitions or the Registry.
 - `taskrail_list_integrations` — inspect the built-in integration catalog,
   executable detection, and doctor status on this host.
 - `taskrail_schedule_integration` — persist a typed read-only or dry-run

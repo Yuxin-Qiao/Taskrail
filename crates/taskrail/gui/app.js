@@ -55,7 +55,7 @@ const translations = {
     "page.automations.title": "Automations",
     "page.automations.subtitle": "Managed commands and observed native jobs.",
     "page.discovery.title": "Native discovery",
-    "page.discovery.subtitle": "Read-only inventory of launchd, cron, systemd, and Homebrew sources.",
+    "page.discovery.subtitle": "Read-only inventory of schedulers and supported macOS application sources.",
     "page.runs.title": "Runs",
     "page.runs.subtitle": "Immutable run records and bounded stdout/stderr logs.",
     "page.inbox.title": "Inbox",
@@ -205,7 +205,7 @@ const translations = {
     "page.automations.title": "自动化",
     "page.automations.subtitle": "托管命令与观察到的原生任务。",
     "page.discovery.title": "原生发现",
-    "page.discovery.subtitle": "只读查看 launchd、cron、systemd 和 Homebrew 来源。",
+    "page.discovery.subtitle": "只读查看调度器和受支持的 macOS 应用自动化来源。",
     "page.runs.title": "运行记录",
     "page.runs.subtitle": "不可变的运行记录，以及有界的 stdout/stderr 日志。",
     "page.inbox.title": "待处理",
@@ -355,7 +355,7 @@ const translations = {
     "page.automations.title": "自動化",
     "page.automations.subtitle": "管理対象コマンドと検出されたネイティブジョブ。",
     "page.discovery.title": "ネイティブ検出",
-    "page.discovery.subtitle": "launchd、cron、systemd、Homebrew ソースの読み取り専用一覧。",
+    "page.discovery.subtitle": "スケジューラと対応する macOS 自動化ソースの読み取り専用一覧。",
     "page.runs.title": "実行履歴",
     "page.runs.subtitle": "変更できない実行記録と、制限付き stdout/stderr ログ。",
     "page.inbox.title": "受信トレイ",
@@ -505,7 +505,7 @@ const translations = {
     "page.automations.title": "자동화",
     "page.automations.subtitle": "관리 명령과 관찰된 네이티브 작업입니다.",
     "page.discovery.title": "네이티브 탐색",
-    "page.discovery.subtitle": "launchd, cron, systemd, Homebrew 소스를 읽기 전용으로 조회합니다.",
+    "page.discovery.subtitle": "스케줄러와 지원되는 macOS 자동화 소스를 읽기 전용으로 조회합니다.",
     "page.runs.title": "실행 기록",
     "page.runs.subtitle": "변경할 수 없는 실행 기록과 제한된 stdout/stderr 로그입니다.",
     "page.inbox.title": "받은 편지함",
@@ -786,7 +786,7 @@ function runRows() {
 function pageBody() {
   switch (state.page) {
     case "automations": return `<h2 class="section-title">${t("page.automations.title")}</h2><p class="section-subtitle">${t("page.automations.subtitle")}</p><section class="panel"><div class="panel-head"><h2>${t("section.registry")}</h2><span class="muted">${t("count.items", { count: state.automations.length })}</span></div>${automationRows()}</section>`;
-    case "discovery": return `<h2 class="section-title">${t("page.discovery.title")}</h2><p class="section-subtitle">${t("page.discovery.subtitle")}</p><div class="toolbar"><button class="button primary" data-action="discover">${t("button.scan")}</button><span class="muted">${t("common.scanNote")}</span></div><section class="panel">${state.discovery.length ? `<div class="table-wrap"><table><thead><tr><th>${t("table.nativeId")}</th><th>${t("table.provider")}</th><th>${t("table.kind")}</th><th>${t("table.state")}</th><th>${t("table.path")}</th></tr></thead><tbody>${state.discovery.map(item => `<tr><td><code>${escapeHtml(item.native_id)}</code></td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.kind)}</td><td>${pill(item.enabled ? "enabled" : "paused", item.enabled ? "ok" : "warn")}</td><td class="mono">${escapeHtml(item.path || "—")}</td></tr>`).join("")}</tbody></table></div>` : empty(t("empty.discovery"))}</section>`;
+    case "discovery": return `<h2 class="section-title">${t("page.discovery.title")}</h2><p class="section-subtitle">${t("page.discovery.subtitle")}</p><div class="toolbar"><button class="button primary" data-action="discover">${t("button.scan")}</button><span class="muted">${t("common.scanNote")}</span></div><section class="panel">${state.discovery.length ? `<div class="table-wrap"><table><thead><tr><th>${t("table.nativeId")}</th><th>${t("table.provider")}</th><th>${t("table.kind")}</th><th>${t("table.state")}</th><th>${t("table.path")}</th></tr></thead><tbody>${state.discovery.map(item => `<tr><td><code>${escapeHtml(item.native_id)}</code></td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.kind)}${item.execution === "observe_only" || !item.command ? " · observe-only" : ""}</td><td>${pill(item.enabled ? "enabled" : "paused", item.enabled ? "ok" : "warn")}</td><td class="mono">${escapeHtml(item.path || "—")}</td></tr>`).join("")}</tbody></table></div>` : empty(t("empty.discovery"))}</section>`;
     case "runs": return `<h2 class="section-title">${t("page.runs.title")}</h2><p class="section-subtitle">${t("page.runs.subtitle")}</p><section class="panel">${runRows()}</section><div id="log-detail"></div>`;
     case "inbox": return `<h2 class="section-title">${t("page.inbox.title")}</h2><p class="section-subtitle">${t("page.inbox.subtitle")}</p><section class="panel">${inboxRows()}</section>`;
     case "integrations": return `<h2 class="section-title">${t("page.integrations.title")}</h2><p class="section-subtitle">${t("page.integrations.subtitle")}</p><section class="panel">${integrationBody()}</section>`;

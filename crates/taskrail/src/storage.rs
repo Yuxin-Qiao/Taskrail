@@ -24,6 +24,7 @@ pub type AdoptionRecord = (String, AdoptionState, String, String, Option<String>
 pub enum SourceReconciliation {
     CreatedObserved,
     UpdatedObserved,
+    ObservedOnly,
     RetainedOwned,
     Drifted,
     Unrunnable,
@@ -359,6 +360,9 @@ impl Registry {
     ) -> Result<SourceReconciliation> {
         self.upsert_source(source)?;
         let existing = self.get_automation(&source.source_id)?;
+        if source.is_observe_only() {
+            return Ok(SourceReconciliation::ObservedOnly);
+        }
         let Some(mut observed) = source.as_observed_automation() else {
             if let Some(mut existing) = existing
                 && existing.ownership == crate::core::Ownership::Observed
@@ -1929,6 +1933,41 @@ mod tests {
         assert_eq!(acknowledged.runtime_state, RuntimeState::Paused);
         assert_eq!(acknowledged.fingerprint.as_deref(), Some("sha256:second"));
         assert!(registry.acknowledge_source_drift("owned").is_err());
+    }
+
+    #[test]
+    fn application_sources_are_inventory_only_without_attention_automations() {
+        let registry = Registry::in_memory().unwrap();
+        let source = DiscoveredSource {
+            source_id: "shortcuts:example".into(),
+            provider: "shortcuts".into(),
+            native_id: "Example shortcut".into(),
+            path: None,
+            enabled: true,
+            kind: "shortcut".into(),
+            fingerprint: "sha256:shortcut".into(),
+            command: None,
+            trigger: Trigger::Manual,
+            raw: "shortcut_id=example".into(),
+        };
+        assert_eq!(
+            registry.reconcile_discovered_source(&source).unwrap(),
+            SourceReconciliation::ObservedOnly
+        );
+        assert_eq!(registry.list_sources().unwrap().len(), 1);
+        assert!(
+            registry
+                .get_automation(&source.source_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !registry
+                .list_events(20)
+                .unwrap()
+                .iter()
+                .any(|event| event.event_type == "source.unrunnable")
+        );
     }
 
     #[test]
