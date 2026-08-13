@@ -648,6 +648,7 @@ const state = {
 };
 
 if (!pageMeta[state.page]) state.page = "dashboard";
+let refreshGeneration = 0;
 
 const localeStorageKey = "taskrail.locale";
 const app = document.querySelector("#app");
@@ -732,6 +733,7 @@ async function request(path, options = {}) {
 }
 
 async function refresh(options = {}) {
+  const generation = ++refreshGeneration;
   state.error = null;
   try {
     const includeIntegrations = options.includeIntegrations === true || state.page === "integrations" || state.integrations === null;
@@ -740,6 +742,7 @@ async function refresh(options = {}) {
       request("/api/approvals?limit=100"), request("/api/runs?limit=100"),
       request("/api/inbox?limit=100"), request("/api/metrics"), request("/api/events?limit=100"),
     ]);
+    if (generation !== refreshGeneration) return;
     state.status = status;
     state.automations = automations;
     state.integrations = integrations;
@@ -749,6 +752,7 @@ async function refresh(options = {}) {
     state.metrics = metrics;
     state.events = events;
   } catch (error) {
+    if (generation !== refreshGeneration) return;
     state.error = error instanceof Error ? error.message : String(error);
   }
   render();
@@ -785,14 +789,14 @@ function runRows() {
 
 function pageBody() {
   switch (state.page) {
-    case "automations": return `<h2 class="section-title">${t("page.automations.title")}</h2><p class="section-subtitle">${t("page.automations.subtitle")}</p><section class="panel"><div class="panel-head"><h2>${t("section.registry")}</h2><span class="muted">${t("count.items", { count: state.automations.length })}</span></div>${automationRows()}</section>`;
-    case "discovery": return `<h2 class="section-title">${t("page.discovery.title")}</h2><p class="section-subtitle">${t("page.discovery.subtitle")}</p><div class="toolbar"><button class="button primary" data-action="discover">${t("button.scan")}</button><span class="muted">${t("common.scanNote")}</span></div><section class="panel">${state.discovery.length ? `<div class="table-wrap"><table><thead><tr><th>${t("table.nativeId")}</th><th>${t("table.provider")}</th><th>${t("table.kind")}</th><th>${t("table.state")}</th><th>${t("table.path")}</th></tr></thead><tbody>${state.discovery.map(item => `<tr><td><code>${escapeHtml(item.native_id)}</code></td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.kind)}${item.execution === "observe_only" || !item.command ? " · observe-only" : ""}</td><td>${pill(item.enabled ? "enabled" : "paused", item.enabled ? "ok" : "warn")}</td><td class="mono">${escapeHtml(item.path || "—")}</td></tr>`).join("")}</tbody></table></div>` : empty(t("empty.discovery"))}</section>`;
-    case "runs": return `<h2 class="section-title">${t("page.runs.title")}</h2><p class="section-subtitle">${t("page.runs.subtitle")}</p><section class="panel">${runRows()}</section><div id="log-detail"></div>`;
-    case "inbox": return `<h2 class="section-title">${t("page.inbox.title")}</h2><p class="section-subtitle">${t("page.inbox.subtitle")}</p><section class="panel">${inboxRows()}</section>`;
-    case "integrations": return `<h2 class="section-title">${t("page.integrations.title")}</h2><p class="section-subtitle">${t("page.integrations.subtitle")}</p><section class="panel">${integrationBody()}</section>`;
-    case "approvals": return `<h2 class="section-title">${t("page.approvals.title")}</h2><p class="section-subtitle">${t("page.approvals.subtitle")}</p><section class="panel">${approvalRows()}</section>`;
-    case "metrics": return `<h2 class="section-title">${t("page.metrics.title")}</h2><p class="section-subtitle">${t("page.metrics.subtitle")}</p><section class="panel">${metricRows()}</section>`;
-    case "events": return `<h2 class="section-title">${t("page.events.title")}</h2><p class="section-subtitle">${t("page.events.subtitle")}</p><section class="panel">${eventRows()}</section>`;
+    case "automations": return `<section class="panel"><div class="panel-head"><h2>${t("section.registry")}</h2><span class="muted">${t("count.items", { count: state.automations.length })}</span></div>${automationRows()}</section>`;
+    case "discovery": return `<div class="toolbar"><button class="button primary" data-action="discover">${t("button.scan")}</button><span class="muted">${t("common.scanNote")}</span></div><section class="panel">${state.discovery.length ? `<div class="table-wrap"><table><thead><tr><th>${t("table.nativeId")}</th><th>${t("table.provider")}</th><th>${t("table.kind")}</th><th>${t("table.state")}</th><th>${t("table.path")}</th></tr></thead><tbody>${state.discovery.map(item => `<tr><td><code>${escapeHtml(item.native_id)}</code></td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.kind)}${item.execution === "observe_only" || !item.command ? " · observe-only" : ""}</td><td>${pill(item.enabled ? "enabled" : "paused", item.enabled ? "ok" : "warn")}</td><td class="mono">${escapeHtml(item.path || "—")}</td></tr>`).join("")}</tbody></table></div>` : empty(t("empty.discovery"))}</section>`;
+    case "runs": return `<section class="panel">${runRows()}</section><div id="log-detail"></div>`;
+    case "inbox": return `<section class="panel">${inboxRows()}</section>`;
+    case "integrations": return `<section class="panel">${integrationBody()}</section>`;
+    case "approvals": return `<section class="panel">${approvalRows()}</section>`;
+    case "metrics": return `<section class="panel">${metricRows()}</section>`;
+    case "events": return `<section class="panel">${eventRows()}</section>`;
     default: return dashboardBody();
   }
 }
@@ -857,7 +861,12 @@ function bindEvents() {
   }));
 }
 
-window.addEventListener("hashchange", () => { state.page = (location.hash.slice(1) || "dashboard").split("/")[0]; if (!pageMeta[state.page]) state.page = "dashboard"; refresh({ includeIntegrations: state.page === "integrations" }); });
+window.addEventListener("hashchange", () => {
+  state.page = (location.hash.slice(1) || "dashboard").split("/")[0];
+  if (!pageMeta[state.page]) state.page = "dashboard";
+  render();
+  refresh({ includeIntegrations: state.page === "integrations" });
+});
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 render();
 refresh();
