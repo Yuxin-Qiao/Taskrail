@@ -329,6 +329,7 @@ add/register → list → daemon → run → history/logs → tui
 - [中文文档索引](docs/README.zh-CN.md)
 - [English README](README.md)
 - [中文 ChatGPT 集成指南](docs/chatgpt.zh-CN.md)
+- [团队功能验收清单](docs/ACCEPTANCE_TEAM.zh-CN.md)
 - [ChatGPT integration](docs/chatgpt.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)

@@ -50,6 +50,7 @@ add/register → schedule → run → history/logs → 浏览器控制台
 - [OpenAI 提交检查清单](OPENAI_SUBMISSION.md) — 公开审核配置、元数据、测试用例、策略页面和外部发布门槛。
 - [OpenAI release notes](OPENAI_RELEASE_NOTES.md) — 可直接用于初始提交的英文摘要。
 - [隐私政策](PRIVACY.md)、[服务条款](TERMS.md)和[支持页面](SUPPORT.md) — 公开应用审核所需的策略页面。
+- [团队功能验收清单](ACCEPTANCE_TEAM.zh-CN.md) — 按 GitHub 当前描述执行的完整黑盒/隔离环境验收模板。
 - [验收检查清单](ACCEPTANCE.md) — 可复现的发布门槛命令和证据要求。
 - [原生集成架构](adr/0031-native-integration-semantic-layer.md) — 共享计划、策略、解析和验证边界。
 
