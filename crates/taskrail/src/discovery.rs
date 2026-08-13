@@ -855,10 +855,9 @@ fn raycast_script_directories() -> Vec<PathBuf> {
         .args(["export", "com.raycast.macos", "-"])
         .output()
         && output.status.success()
+        && let Ok(value) = plist::Value::from_reader(Cursor::new(output.stdout))
     {
-        if let Ok(value) = plist::Value::from_reader(Cursor::new(output.stdout)) {
-            collect_configured_script_paths(&value, false, &mut directories);
-        }
+        collect_configured_script_paths(&value, false, &mut directories);
     }
     directories.retain(|path| path.is_dir());
     directories.sort();
@@ -890,10 +889,10 @@ fn collect_configured_script_paths(value: &plist::Value, hinted: bool, result: &
             let path = PathBuf::from(path);
             if path.is_dir() {
                 result.push(path);
-            } else if path.is_file() {
-                if let Some(parent) = path.parent() {
-                    result.push(parent.to_path_buf());
-                }
+            } else if path.is_file()
+                && let Some(parent) = path.parent()
+            {
+                result.push(parent.to_path_buf());
             }
         }
         _ => {}
@@ -1005,10 +1004,10 @@ fn collect_files_bounded(root: &Path, depth: usize, result: &mut Vec<PathBuf>) {
 }
 
 fn stable_relative_path(path: &Path) -> String {
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        if let Ok(relative) = path.strip_prefix(&home) {
-            return format!("~/{}", relative.to_string_lossy());
-        }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+        && let Ok(relative) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", relative.to_string_lossy());
     }
     path.to_string_lossy().into_owned()
 }
