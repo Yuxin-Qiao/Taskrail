@@ -15,6 +15,7 @@ mod rclone;
 mod registry;
 mod restic;
 mod security;
+mod shortcuts;
 mod topgrade;
 
 pub use github::GithubIntegration;
@@ -33,6 +34,7 @@ pub use rclone::RcloneIntegration;
 pub use registry::{Integration, IntegrationRegistry};
 pub use restic::ResticIntegration;
 pub use security::{SecurityIntegration, SecurityTool};
+pub use shortcuts::ShortcutsIntegration;
 pub use topgrade::TopgradeIntegration;
 
 /// Construct the built-in adapter set used by the daemon, CLI, and MCP
@@ -49,6 +51,7 @@ pub fn built_in_registry() -> anyhow::Result<IntegrationRegistry> {
     registry.register(SecurityIntegration::osv())?;
     registry.register(SecurityIntegration::gitleaks())?;
     registry.register(SecurityIntegration::trivy())?;
+    registry.register(ShortcutsIntegration::default())?;
     registry.register(TopgradeIntegration::default())?;
     Ok(registry)
 }

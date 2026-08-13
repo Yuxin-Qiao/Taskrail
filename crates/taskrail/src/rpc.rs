@@ -4,7 +4,7 @@ use crate::{
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
         MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
-        TopgradeIntegration,
+        ShortcutsIntegration, TopgradeIntegration,
     },
     service,
     storage::Registry,
@@ -575,6 +575,22 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
             )
             .await
         }
+        "integration.shortcuts" => {
+            if request.params.get("action").and_then(Value::as_str) == Some("run")
+                && request.params.get("confirm").and_then(Value::as_bool) != Some(true)
+            {
+                return invalid_params(
+                    request.id,
+                    "Shortcuts run requires params.confirm=true".into(),
+                );
+            }
+            integration_request(
+                registry_path,
+                &request.params,
+                &ShortcutsIntegration::default(),
+            )
+            .await
+        }
         "integration.mas" => {
             integration_request(registry_path, &request.params, &MasIntegration::default()).await
         }
@@ -735,6 +751,12 @@ async fn integration_request(
 fn request_approval(registry_path: &Path, params: &Value) -> Result<Value> {
     let integration_name = string_param(params, "integration").map_err(anyhow::Error::msg)?;
     let action_name = string_param(params, "action").map_err(anyhow::Error::msg)?;
+    if integration_name == "shortcuts"
+        && action_name == "run"
+        && params.get("confirm").and_then(Value::as_bool) != Some(true)
+    {
+        anyhow::bail!("Shortcuts run approval requires confirm=true");
+    }
     let parameters = params
         .get("parameters")
         .cloned()
@@ -766,6 +788,12 @@ fn request_approval(registry_path: &Path, params: &Value) -> Result<Value> {
         "homebrew" => service::request_integration_approval(
             registry_path,
             &HomebrewIntegration::default(),
+            &action,
+            ttl_seconds,
+        )?,
+        "shortcuts" => service::request_integration_approval(
+            registry_path,
+            &ShortcutsIntegration::default(),
             &action,
             ttl_seconds,
         )?,
@@ -1269,6 +1297,28 @@ mod tests {
         let registry = Registry::open(&path).unwrap();
         assert!(registry.list_sources().unwrap().is_empty());
         assert!(registry.list_automations().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shortcuts_run_requires_confirmation_before_fresh_discovery_or_spawn() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("registry.sqlite3");
+        let response = handle_request(
+            Request {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "integration.shortcuts".into(),
+                params: serde_json::json!({
+                    "action": "run",
+                    "parameters": {"shortcut_id":"11111111-1111-4111-8111-111111111111"}
+                }),
+            },
+            &path,
+        )
+        .await;
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("confirm=true"));
     }
 
     #[tokio::test]

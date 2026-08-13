@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-13
+
+- Add a typed Apple Shortcuts integration. Freshly discovered Shortcut UUIDs
+  can be run only with explicit confirmation and a one-time durable approval;
+  action bodies and raw output remain private.
+- Expose the Shortcuts integration consistently through the CLI, JSON-RPC,
+  local MCP, and Fleet surfaces, with a freshness preflight before execution.
+- Keep Automator, Keyboard Maestro, Raycast, Alfred, and Hazel definitions
+  discoverable but observe-only until each provider has a safe typed action
+  contract.
+
 ## [0.1.6] - 2026-08-12
 
 - Add an optional loopback browser dashboard served by the local daemon;

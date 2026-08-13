@@ -8,7 +8,7 @@ private paths are present.
 
 ## GitHub release
 
-Pushing a tag such as `v0.1.6` runs `.github/workflows/release.yml`. The tag
+Pushing a tag such as `v0.1.7` runs `.github/workflows/release.yml`. The tag
 must match the `taskrail` Cargo package version. The workflow builds ARM64 CLI
 archives for `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin`. The CLI
 archives contain the daemon-hosted browser dashboard and MCP Apps assets. The

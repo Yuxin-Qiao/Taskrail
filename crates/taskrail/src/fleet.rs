@@ -362,6 +362,7 @@ pub fn is_mutating_integration_call(tool: &str, arguments: &Value) -> bool {
             .get("dry_run")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        ("taskrail_shortcuts", Some("run")) => true,
         ("taskrail_topgrade", Some("run")) => true,
         _ => false,
     }
@@ -452,6 +453,14 @@ mod tests {
         assert!(!is_mutating_integration_call(
             "taskrail_rclone",
             &json!({"action":"sync","dry_run":true})
+        ));
+        assert!(is_mutating_integration_call(
+            "taskrail_shortcuts",
+            &json!({"action":"run","confirm":true})
+        ));
+        assert!(!is_mutating_integration_call(
+            "taskrail_shortcuts",
+            &json!({"action":"doctor"})
         ));
         let mut config = FleetConfig {
             version: 1,

@@ -190,11 +190,12 @@ Taskrail 可以管理你已经在使用的命令和脚本：
 - 本地运行历史、标准输出、标准错误和运维事件；
 - launchd、cron、systemd 用户服务/定时器、Homebrew 服务，以及受支持的 macOS 应用自动化发现
   （Shortcuts、Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel）；应用自有定义保持只读观察；
+  发现阶段保持只读观察，Shortcuts 另有类型化、需审批的运行路径；
 - 对受支持的用户级原生任务进行显式领养，并记录可回滚的变更；
 - 删除没有运行历史的未使用托管定义，同时保留不可变的运行历史；
 - 可选的 Codex 和 Responses 兼容 AI 执行器；
-- Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、Trivy
-  和 Topgrade 的类型化语义集成；
+- Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、Trivy、
+  Topgrade 和 Apple Shortcuts 的类型化语义集成；
 - 支持只读和 dry-run 调度的持久化、类型化集成自动化；
 - 从这些集成中归一化发现结果、指标、变更、产物、运行历史和待处理事项。
 
@@ -218,6 +219,7 @@ taskrail integration github pulls Yuxin-Qiao/Taskrail
 taskrail integration homebrew outdated
 taskrail integration gitleaks scan .
 taskrail integration topgrade plan
+taskrail integration shortcuts doctor
 
 # 将只读原生集成持久化为周期性自动化
 taskrail schedule-integration homebrew-outdated homebrew outdated \
@@ -229,6 +231,7 @@ taskrail schedule-integration homebrew-outdated homebrew outdated \
 
 ~~~
 taskrail approval-request restic-prune
+taskrail approval-request shortcuts-run <shortcut-uuid> --confirm
 taskrail approvals
 taskrail approval-decide <approval-id> --approve
 taskrail approval-execute <approval-id>
@@ -296,7 +299,7 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## 当前状态
 
-当前软件包版本为 0.1.6，可用于本地命令自动化和私有 ChatGPT 交互式应用控制；未来 Scheduled
+当前软件包版本为 0.1.7，可用于本地命令自动化和私有 ChatGPT 交互式应用控制；未来 Scheduled
 触发仍是尚未验证的账号级工作流门槛。
 稳定的核心路径是：
 
@@ -310,15 +313,15 @@ add/register → list → daemon → run → history/logs → tui
 | --- | --- |
 | Registry、调度器、运行、日志、事件 | 🟢 核心 |
 | CLI 和 TUI | 🟢 核心 |
-| launchd / cron / systemd / Homebrew 以及受支持的 macOS 应用发现（包括 Alfred）和后台监督 | 🔵 集成 |
+| launchd / cron / systemd / Homebrew 以及受支持的 macOS 应用发现和后台监督 | 🔵 集成；Shortcuts 已具备类型化、需审批的运行能力 |
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
-| 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade |
+| 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade / Shortcuts |
 | 私有 ChatGPT MCP/Tunnel 与 ChatGPT 交互式只读调用 | 🟢 已验证；尚未观察到未来 Scheduled 触发 |
 | ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
 | 公开 ChatGPT 应用托管、审核和发布 | 🟡 外部门槛 |
-| ARM64 CLI 发布 | 🟢 [v0.1.6 已发布](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.6) |
+| ARM64 CLI 发布 | 🟢 [v0.1.7 已发布](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.7) |
 | Homebrew formula | 🟡 未来 |
 
 ## 文档

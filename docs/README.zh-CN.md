@@ -32,10 +32,11 @@ add/register → schedule → run → history/logs → 浏览器控制台
 - 公开只读 `taskrail mcp-http` 适配器可部署在 TLS/认证边缘之后；`deploy/` 下的容器示例
   仅支持单主机，不是托管的多租户服务；
 - 原生调度器发现和类型化语义集成位于核心管理器边缘；macOS 还会只读观察 Shortcuts、Automator、
-  Keyboard Maestro、Raycast、Alfred 和 Hazel，不导入动作正文，也不会把应用自有定义变成可执行任务；
+  Keyboard Maestro、Raycast、Alfred 和 Hazel，不导入动作正文；目前只有 Shortcuts 具备独立的、
+  基于最新 UUID 且需要审批的运行路径；
 - 命令使用直接 argv，拒绝 shell 字符串；
 - 语义集成覆盖 Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、
-  Trivy 和 Topgrade；支持写入的操作必须经过持久化审批并在策略边界内失败关闭。
+  Trivy、Topgrade 和 Apple Shortcuts；支持写入的操作必须经过持久化审批并在策略边界内失败关闭。
 
 ## 文档
 

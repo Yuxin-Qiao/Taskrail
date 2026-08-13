@@ -6,12 +6,16 @@ use anyhow::Result;
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Semantic adapter contract. Implementations describe and parse; they do not
-/// create subprocesses or persist state directly.
+/// execute the action or persist state directly. An optional preflight may
+/// perform a bounded, read-only freshness check before policy or execution.
 pub trait Integration: Send + Sync {
     fn descriptor(&self) -> &IntegrationDescriptor;
     fn detect(&self) -> DetectionResult;
     fn doctor(&self) -> DoctorResult;
     fn plan(&self, action: &IntegrationAction) -> Result<ExecutionPlan>;
+    fn preflight(&self, _action: &IntegrationAction) -> Result<()> {
+        Ok(())
+    }
     fn parse(&self, action: &IntegrationAction, output: ProcessOutput)
     -> Result<IntegrationResult>;
     fn verify(

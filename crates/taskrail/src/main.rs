@@ -17,7 +17,8 @@ use taskrail::{
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration,
         IntegrationAction as SemanticIntegrationAction, MasIntegration, MoleIntegration,
-        RcloneIntegration, ResticIntegration, SecurityIntegration, TopgradeIntegration,
+        RcloneIntegration, ResticIntegration, SecurityIntegration, ShortcutsIntegration,
+        TopgradeIntegration,
     },
     mcp, rpc, service,
     storage::Registry,
@@ -455,6 +456,11 @@ enum IntegrationAction {
         #[command(subcommand)]
         action: MasAction,
     },
+    /// Inspect or run a discovered Apple Shortcut through the typed approval path.
+    Shortcuts {
+        #[command(subcommand)]
+        action: ShortcutsAction,
+    },
     /// Run the OSV-Scanner read-only integration.
     OsvScanner {
         #[command(subcommand)]
@@ -611,6 +617,19 @@ enum MasAction {
 }
 
 #[derive(Debug, Subcommand)]
+enum ShortcutsAction {
+    Detect,
+    Doctor,
+    Run {
+        shortcut_id: String,
+        #[arg(long)]
+        confirm: bool,
+        #[arg(long)]
+        approval_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ScannerAction {
     Detect,
     Doctor,
@@ -653,6 +672,11 @@ enum ApprovalAction {
     },
     HomebrewUpgrade,
     HomebrewCleanup,
+    ShortcutsRun {
+        shortcut_id: String,
+        #[arg(long)]
+        confirm: bool,
+    },
     TopgradeRun,
 }
 
@@ -974,6 +998,7 @@ async fn integration_doctor(registry: &Registry, action: IntegrationAction) -> R
         IntegrationAction::Github { action } => return run_github(registry, action).await,
         IntegrationAction::Homebrew { action } => return run_homebrew(registry, action).await,
         IntegrationAction::Mas { action } => return run_mas(registry, action).await,
+        IntegrationAction::Shortcuts { action } => return run_shortcuts(registry, action).await,
         IntegrationAction::OsvScanner { action } => {
             return run_scanner(registry, SecurityIntegration::osv(), action).await;
         }
@@ -1162,6 +1187,37 @@ async fn run_mas(registry: &Registry, action: MasAction) -> Result<()> {
         }
         MasAction::List => SemanticIntegrationAction::new("list")?,
         MasAction::Outdated => SemanticIntegrationAction::new("outdated")?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_shortcuts(registry: &Registry, action: ShortcutsAction) -> Result<()> {
+    let integration = ShortcutsIntegration::default();
+    let action = match action {
+        ShortcutsAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        ShortcutsAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        ShortcutsAction::Run {
+            shortcut_id,
+            confirm,
+            approval_id,
+        } => {
+            if !confirm {
+                anyhow::bail!("Shortcuts run requires --confirm");
+            }
+            let action = SemanticIntegrationAction::with_parameters(
+                "run",
+                serde_json::json!({"shortcut_id": shortcut_id}),
+            )?;
+            approval_id.map_or(action.clone(), |approval_id| {
+                action.with_approval(approval_id)
+            })
+        }
     };
     run_semantic_integration(registry, &integration, &action).await
 }
@@ -2791,6 +2847,21 @@ fn approval_request(registry: &Registry, action: ApprovalAction, ttl_seconds: u6
                 serde_json::json!({"dry_run": false}),
             )?,
         ),
+        ApprovalAction::ShortcutsRun {
+            shortcut_id,
+            confirm,
+        } => {
+            if !confirm {
+                anyhow::bail!("Shortcuts approval requires --confirm");
+            }
+            (
+                Box::new(ShortcutsIntegration::default()) as Box<dyn Integration>,
+                SemanticIntegrationAction::with_parameters(
+                    "run",
+                    serde_json::json!({"shortcut_id": shortcut_id}),
+                )?,
+            )
+        }
         ApprovalAction::TopgradeRun => (
             Box::new(TopgradeIntegration::default()) as Box<dyn Integration>,
             SemanticIntegrationAction::new("run")?,

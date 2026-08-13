@@ -46,12 +46,12 @@ add/register → schedule → run → history/logs → browser dashboard
   single-host only and is not a hosted multi-tenant service.
 - Native scheduler discovery and typed semantic integrations stay at the edge of
   the core manager. On macOS, discovery also observes Shortcuts, Automator,
-  Keyboard Maestro, Raycast, Alfred, and Hazel without importing action bodies or
-  making app-owned definitions runnable.
+  Keyboard Maestro, Raycast, Alfred, and Hazel without importing action bodies;
+  only Shortcuts has a separate typed, fresh-UUID, approval-gated run path.
 - Commands are direct argv and shell strings are rejected.
 - The semantic integration layer covers Mole, restic, rclone, GitHub, Homebrew,
-  mas, OSV-Scanner, Gitleaks, Trivy, and Topgrade; write-capable actions are
-  persisted approval-gated and fail closed.
+  mas, OSV-Scanner, Gitleaks, Trivy, Topgrade, and Apple Shortcuts;
+  write-capable actions are persisted approval-gated and fail closed.
 
 ## Documents
 
