@@ -283,6 +283,10 @@ The adapter exposes focused tools rather than a generic shell endpoint:
   transfer, and sync actions; backup/copy/real sync are policy-controlled.
 - `taskrail_github` / `taskrail_homebrew` — use fixed read-only GitHub
   observations and typed Homebrew health/maintenance actions.
+- `taskrail_shortcuts` — use `doctor` for a read-only CLI check; use `run` only
+  with a UUID returned by a fresh native scan, `confirm=true`, and a one-time
+  approval. Shortcut action bodies and raw output are never returned. Automator,
+  Keyboard Maestro, Raycast, Alfred, and Hazel remain observe-only.
 - `taskrail_mas`, `taskrail_osv_scanner`, `taskrail_gitleaks`, and
   `taskrail_trivy` — inspect local packages and security findings without
   exposing secret or match values.
@@ -301,6 +305,12 @@ access unless that host is explicitly configured with `allow_writes: true`.
 The adapter does not accept arbitrary shell strings, expose the SQLite file, or
 change observed native jobs. Native adoption remains an explicit local
 operation.
+
+A safe Shortcut run is a three-step flow: call `taskrail_scan_native` with
+`source="shortcuts"`, request approval with `integration="shortcuts"`,
+`action="run"`, the selected `shortcut_id`, and `confirm=true`, then call
+`taskrail_execute_approved`. The adapter re-scans Shortcuts immediately before
+execution and refuses a UUID that is no longer present.
 
 For public review, only the read-only subset is advertised and enforced by
 `TASKRAIL_MCP_PROFILE=public`. The full tool surface above is for a private,

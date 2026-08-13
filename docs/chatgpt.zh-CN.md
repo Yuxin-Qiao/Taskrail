@@ -232,6 +232,7 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 - taskrail_mole — 使用类型化 Mole 操作进行检测、分析、状态、历史和清理 dry-run；真实清理具有破坏性，须先获得 Taskrail 策略要求的显式、会过期的审批；
 - taskrail_restic / taskrail_rclone — 使用类型化快照、仓库、传输和同步操作；备份、复制和真实同步受策略控制；
 - taskrail_github / taskrail_homebrew — 使用固定的只读 GitHub 观察和类型化 Homebrew 健康/维护操作；
+- taskrail_shortcuts — `doctor` 只读检查；`run` 只能使用最新原生扫描返回的 UUID，且必须同时提供 `confirm=true` 和一次性审批。不会返回 Shortcut 动作主体或原始输出。Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel 仍保持只读观察；
 - taskrail_mas、taskrail_osv_scanner、taskrail_gitleaks 和 taskrail_trivy — 检查本地软件包和安全发现，不暴露密钥或匹配内容；
 - taskrail_topgrade — 检查或规划更新；执行需要审批；
 - taskrail_list_approvals、taskrail_request_approval、taskrail_approve、taskrail_reject 和 taskrail_execute_approved — 查看和操作持久化、绑定计划的审批流；审批只能使用一次，且不是 shell 授权。
@@ -242,6 +243,11 @@ Fleet 网关提供对应的 `taskrail_fleet_` 主机定向操作，包括原生�
 
 适配器不接受任意 shell 字符串、不暴露 SQLite 文件，也不会修改被观察的原生任务。原生
 领养仍然是显式的本地操作。
+
+安全运行 Shortcut 必须分三步：先用 `taskrail_scan_native` 且传入
+`source="shortcuts"`；再用 `integration="shortcuts"`、`action="run"`、选中的
+`shortcut_id` 和 `confirm=true` 请求审批；最后调用 `taskrail_execute_approved`。
+执行前适配器会再次扫描 Shortcuts；如果 UUID 已不存在，执行会被拒绝。
 
 公开审核时，只有只读子集会通过 TASKRAIL_MCP_PROFILE=public 宣布并强制执行。上面的
 完整工具范围用于私有、用户拥有的连接；分离两种范围可以避免公开端点变成通用的本地命令

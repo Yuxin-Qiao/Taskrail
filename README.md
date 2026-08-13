@@ -216,12 +216,13 @@ Taskrail can manage commands and scripts you already use:
 - launchd, cron, systemd user services/timers, Homebrew services, and supported
   macOS application automation discovery (Shortcuts, Automator, Keyboard
   Maestro, Raycast, Alfred, and Hazel); application-owned definitions remain
-  observe-only;
+  observe-only during discovery, while Shortcuts has a separate typed,
+  approval-gated run path;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;
 - typed semantic integrations for Mole, restic, rclone, GitHub, Homebrew, mas,
-  OSV-Scanner, Gitleaks, Trivy, and Topgrade;
+  OSV-Scanner, Gitleaks, Trivy, Topgrade, and typed Apple Shortcuts runs;
 - durable, typed integration Automations for read-only and dry-run schedules;
 - normalized findings, metrics, changes, artifacts, run history, and inbox
   attention items from those integrations.
@@ -247,6 +248,7 @@ taskrail integration github pulls Yuxin-Qiao/Taskrail
 taskrail integration homebrew outdated
 taskrail integration gitleaks scan .
 taskrail integration topgrade plan
+taskrail integration shortcuts doctor
 
 # Persist a read-only native integration as a recurring Automation
 taskrail schedule-integration homebrew-outdated homebrew outdated \
@@ -259,6 +261,7 @@ destructive actions are bound to a persisted, expiring approval request:
 
 ```bash
 taskrail approval-request restic-prune
+taskrail approval-request shortcuts-run <shortcut-uuid> --confirm
 taskrail approvals
 taskrail approval-decide <approval-id> --approve
 taskrail approval-execute <approval-id>
@@ -335,7 +338,7 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## Current status
 
-The current package is `0.1.6` and is usable for local command automation and
+The current package is `0.1.7` and is usable for local command automation and
 interactive private ChatGPT app control; future Scheduled triggering remains
 an unverified account-level workflow gate. The stable center is:
 
@@ -349,15 +352,15 @@ The current implementation and remaining release gates are:
 | --- | --- |
 | Registry, scheduler, runs, logs, events | 🟢 Core |
 | CLI and TUI | 🟢 Core |
-| launchd / cron / systemd / Homebrew plus supported macOS app discovery (including Alfred) and background supervision | 🔵 Integration |
+| launchd / cron / systemd / Homebrew plus supported macOS app discovery and background supervision | 🔵 Integration; Shortcuts has typed, approval-gated run |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
-| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade |
+| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade / Shortcuts |
 | Private ChatGPT MCP/Tunnel and interactive read-only ChatGPT app call | 🟢 Verified; future Scheduled trigger not yet observed |
 | Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
 | Public ChatGPT App hosting, review, and publication | 🟡 External gate |
-| ARM64 CLI releases | 🟢 [v0.1.6 published](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.6) |
+| ARM64 CLI releases | 🟢 [v0.1.7 published](https://github.com/Yuxin-Qiao/Taskrail/releases/tag/v0.1.7) |
 | Homebrew formula | 🟡 Future |
 
 ## Documentation

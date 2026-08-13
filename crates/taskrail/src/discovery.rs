@@ -325,7 +325,10 @@ pub fn parse_shortcuts_list(content: &str) -> Result<Vec<DiscoveredSource>> {
         let Some((name, identifier)) = identifier.rsplit_once(" (") else {
             continue;
         };
-        if name.trim().is_empty() || Uuid::parse_str(identifier).is_err() {
+        if name.trim().is_empty() {
+            continue;
+        }
+        if Uuid::parse_str(identifier).is_err() {
             continue;
         }
         sources.push(DiscoveredSource {

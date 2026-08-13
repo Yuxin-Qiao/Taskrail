@@ -31,7 +31,7 @@ const MCP_FLEET_APP_HTML: &str = include_str!("../gui/mcp-fleet-app.html");
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-source scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel observations plus Linux cron/systemd services and timers; application-owned definitions and systemd timers remain observe-only. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-source scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel observations plus Linux cron/systemd services and timers; application-owned definitions and systemd timers remain observe-only. Apple Shortcuts also has a typed taskrail_shortcuts adapter: doctor is read-only, while run requires a UUID from a fresh discovery, explicit confirm=true, and a one-time durable approval. Other application-owned sources remain observe-only. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, then call taskrail_render_overview when an interactive control-plane view is useful; use taskrail_status for a lightweight connectivity check. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
@@ -973,6 +973,24 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             true,
         ),
         tool(
+            "taskrail_fleet_shortcuts",
+            "Remote Apple Shortcuts integration",
+            "Use this for typed Apple Shortcuts actions on one named macOS host. `doctor` is read-only; `run` requires a freshly discovered Shortcut UUID, explicit confirmation, durable approval, and a write-enabled private host.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["doctor","run"]},
+                    "shortcut_id":{"type":"string","format":"uuid"},
+                    "confirm":{"type":"boolean","default":false},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["host_id", "action"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
             "taskrail_fleet_mas",
             "Remote Mac App Store integration",
             "Use this for typed, read-only Mac App Store inspection on one named macOS host: detect, doctor, list, or outdated. It never installs or updates an app.",
@@ -1131,9 +1149,10 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             object_schema(
                 json!({
                     "host_id":{"type":"string","minLength":1},
-                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","topgrade"]},
+                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","shortcuts","topgrade"]},
                     "action":{"type":"string","minLength":1},
                     "parameters":{"type":"object"},
+                    "confirm":{"type":"boolean","default":false},
                     "ttl_seconds":{"type":"integer","minimum":1,"maximum":604800,"default":3600}
                 }),
                 &["host_id", "integration", "action"],
@@ -1300,6 +1319,7 @@ fn fleet_remote_tool(name: &str) -> Option<&'static str> {
         "taskrail_fleet_rclone" => "taskrail_rclone",
         "taskrail_fleet_github" => "taskrail_github",
         "taskrail_fleet_homebrew" => "taskrail_homebrew",
+        "taskrail_fleet_shortcuts" => "taskrail_shortcuts",
         "taskrail_fleet_mas" => "taskrail_mas",
         "taskrail_fleet_osv_scanner" => "taskrail_osv_scanner",
         "taskrail_fleet_gitleaks" => "taskrail_gitleaks",
@@ -1351,7 +1371,7 @@ mod fleet_contract_tests {
     #[test]
     fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
         let tools = fleet_tool_descriptors();
-        assert_eq!(tools.len(), 39);
+        assert_eq!(tools.len(), 40);
         let overview = tools
             .iter()
             .find(|tool| tool["name"] == "taskrail_fleet_overview")
@@ -1846,6 +1866,23 @@ fn tool_descriptors() -> Vec<Value> {
             true,
         ),
         tool(
+            "taskrail_shortcuts",
+            "Apple Shortcuts integration",
+            "Use this for typed Apple Shortcuts actions. `doctor` is read-only; `run` requires a freshly discovered Shortcut UUID, explicit confirmation, and the durable approval flow. Shortcut action bodies and raw output are never returned.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["doctor","run"]},
+                    "shortcut_id":{"type":"string","format":"uuid"},
+                    "confirm":{"type":"boolean","default":false},
+                    "approval_id":{"type":"string","minLength":1}
+                }),
+                &["action"],
+            ),
+            false,
+            true,
+            false,
+        ),
+        tool(
             "taskrail_mas",
             "Mac App Store integration",
             "Use this for typed macOS App Store inspection: detect, doctor, list, or outdated. It is read-only and never installs or updates an app.",
@@ -1920,12 +1957,13 @@ fn tool_descriptors() -> Vec<Value> {
         tool(
             "taskrail_request_approval",
             "Request approval",
-            "Use this to create a persisted, plan-bound approval request for a typed Mole, restic, rclone, Homebrew, or Topgrade write. It does not execute the action.",
+            "Use this to create a persisted, plan-bound approval request for a typed Mole, restic, rclone, Homebrew, Apple Shortcuts, or Topgrade write. It does not execute the action.",
             object_schema(
                 json!({
-                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","topgrade"]},
+                    "integration":{"type":"string","enum":["mole","restic","rclone","homebrew","shortcuts","topgrade"]},
                     "action":{"type":"string","minLength":1},
                     "parameters":{"type":"object"},
+                    "confirm":{"type":"boolean","default":false},
                     "ttl_seconds":{"type":"integer","minimum":1,"maximum":604800,"default":3600},
                 }),
                 &["integration", "action"],
@@ -2149,6 +2187,7 @@ fn tool(
                 | "taskrail_rclone"
                 | "taskrail_github"
                 | "taskrail_mas"
+                | "taskrail_shortcuts"
                 | "taskrail_osv_scanner"
                 | "taskrail_trivy"
                 | "taskrail_run_automation"
@@ -2291,6 +2330,37 @@ async fn call_tool_with_profile(
                 socket_path,
                 "integration.homebrew",
                 json!({"action":action,"parameters":parameters,"approval_id":arguments.get("approval_id")}),
+            )
+            .await;
+        }
+        "taskrail_shortcuts" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_shortcuts requires arguments.action")?;
+            let parameters = if action == "run" {
+                if arguments.get("confirm").and_then(Value::as_bool) != Some(true) {
+                    anyhow::bail!("taskrail_shortcuts run requires arguments.confirm=true");
+                }
+                json!({
+                    "shortcut_id": arguments
+                        .get("shortcut_id")
+                        .and_then(Value::as_str)
+                        .context("taskrail_shortcuts run requires arguments.shortcut_id")?,
+                })
+            } else {
+                json!({})
+            };
+            return call_rpc_tool(
+                "taskrail_shortcuts",
+                socket_path,
+                "integration.shortcuts",
+                json!({
+                    "action": action,
+                    "parameters": parameters,
+                    "confirm": arguments.get("confirm"),
+                    "approval_id": arguments.get("approval_id"),
+                }),
             )
             .await;
         }
@@ -2850,6 +2920,7 @@ fn summarize(name: &str, value: &Value) -> String {
         "taskrail_rclone" => integration_summary("rclone", value),
         "taskrail_github" => integration_summary("GitHub", value),
         "taskrail_homebrew" => integration_summary("Homebrew", value),
+        "taskrail_shortcuts" => integration_summary("Apple Shortcuts", value),
         "taskrail_mas" => integration_summary("mas", value),
         "taskrail_osv_scanner" => integration_summary("OSV-Scanner", value),
         "taskrail_gitleaks" => integration_summary("Gitleaks", value),
@@ -3004,6 +3075,7 @@ mod tests {
         assert!(names.contains(&"taskrail_rclone"));
         assert!(names.contains(&"taskrail_github"));
         assert!(names.contains(&"taskrail_homebrew"));
+        assert!(names.contains(&"taskrail_shortcuts"));
         assert!(names.contains(&"taskrail_mas"));
         assert!(names.contains(&"taskrail_osv_scanner"));
         assert!(names.contains(&"taskrail_gitleaks"));

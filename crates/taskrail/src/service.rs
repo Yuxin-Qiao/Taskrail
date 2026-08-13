@@ -198,6 +198,7 @@ pub async fn execute_integration(
     action: &IntegrationAction,
 ) -> Result<IntegrationExecution> {
     let plan = integration.plan(action)?;
+    integration.preflight(action)?;
     let plan_fingerprint = plan.fingerprint()?;
     match DefaultPolicy.evaluate(&plan) {
         PolicyDecision::Allowed => {}
@@ -438,6 +439,7 @@ pub fn request_integration_approval(
         anyhow::bail!("approval TTL must be between 1 second and 7 days");
     }
     let action = sanitize_approval_action(integration, action)?;
+    integration.preflight(&action)?;
     let plan = integration.plan(&action)?;
     let decision = DefaultPolicy.evaluate(&plan);
     if !matches!(decision, PolicyDecision::RequiresApproval { .. }) {
@@ -570,6 +572,7 @@ fn sanitize_approval_action(
         "restic" => ["path", "repository_env", "password_env"].as_slice(),
         "rclone" => ["source", "destination", "dry_run", "config_env"].as_slice(),
         "homebrew" => ["file", "dry_run"].as_slice(),
+        "shortcuts" => ["shortcut_id"].as_slice(),
         "topgrade" => [].as_slice(),
         id => anyhow::bail!("integration does not expose approval-capable parameters: {id}"),
     };
@@ -635,6 +638,14 @@ pub async fn execute_approved_integration(
             execute_integration(
                 registry_path,
                 &crate::integrations::HomebrewIntegration::default(),
+                &action,
+            )
+            .await
+        }
+        "shortcuts" => {
+            execute_integration(
+                registry_path,
+                &crate::integrations::ShortcutsIntegration::default(),
                 &action,
             )
             .await
@@ -784,6 +795,7 @@ async fn execute_scheduled_integration_step(
         .with_context(|| format!("integration not registered: {}", spec.integration))?;
     let action = integration_action_from_spec(spec)?;
     let plan = integration.plan(&action)?;
+    integration.preflight(&action)?;
     let plan_fingerprint = plan.fingerprint()?;
 
     match DefaultPolicy.evaluate(&plan) {
