@@ -274,7 +274,7 @@ cargo run --locked --package taskrail --
 ### INT-00 集成目录和 doctor
 
 - **操作**：执行 `taskrail integrations`、各集成的 `detect` 和 `doctor`；通过 MCP `taskrail_list_integrations` 检查同一目录。
-- **通过标准**：目录至少覆盖 Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、Trivy、Topgrade、Shortcuts；每个 descriptor 说明 actions/capabilities/risk；缺少本机可执行文件只报告 missing/unavailable，不伪造成功，不执行写操作。
+- **通过标准**：目录至少覆盖 VibeCleaner、Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、Trivy、Topgrade、Shortcuts；每个 descriptor 说明 actions/capabilities/risk；缺少本机可执行文件只报告 missing/unavailable，不伪造成功，不执行写操作。
 - **证据/状态**：目录 JSON：____________________；状态：□ 待测 □ 通过 □ 失败 □ 阻塞
 
 ### INT-01 Mole
@@ -292,6 +292,12 @@ cargo run --locked --package taskrail --
   ```
 
 - **通过标准**：使用 typed argv 和 bounded parser；结果被规范化为 findings/metrics/changes/artifacts 等安全结构；`clean --dry-run` 不改系统；真实 clean 没有审批时不 spawn，有审批时仍匹配精确 typed plan、可过期且一次性消费；原始敏感输出不持久化。
+- **证据/状态**：____________________；状态：□ 待测 □ 通过 □ 失败 □ 阻塞 □ 不适用
+
+### INT-01A VibeCleaner
+
+- **操作**：执行 `taskrail integration vibecleaner detect`、`doctor`；用一个或多个明确项目目录执行 `scan <directory>... --min-size-mb <n>`；通过 MCP `taskrail_vibecleaner` 和 `taskrail_fleet_vibecleaner` 重复只读检查。
+- **通过标准**：适配器只调用 VibeCleaner headless CLI 的直接 argv `--cli ... --json`，不驱动公开 GUI DMG；扫描结果必须保留 `safe`/`verify` 风险区别并归一化 `total_bytes`、目录数量和风险发现；空目录、未知参数、畸形 JSON 和缺少 CLI 都 fail-closed；不会删除被扫描目录，也不提供未经审批的清理动作。
 - **证据/状态**：____________________；状态：□ 待测 □ 通过 □ 失败 □ 阻塞 □ 不适用
 
 ### INT-02 restic
@@ -377,9 +383,9 @@ cargo run --locked --package taskrail --
 ### MCP-03 public read-only profile allowlist
 
 - **操作**：使用 `TASKRAIL_MCP_PROFILE=public taskrail mcp` 或 `mcp-http --profile public-read-only`，核对 `tools/list`；直接构造对 create/delete/run/adopt/approve/cancel 等工具的请求。
-- **通过标准**：公开 profile 只宣布并允许 19 个公开只读工具：
+- **通过标准**：公开 profile 只宣布并允许 20 个公开只读工具：
 
-  `taskrail_status`、`taskrail_overview`、`taskrail_render_overview`、`taskrail_list_automations`、`taskrail_discover_local_automations`、`taskrail_scan_native`、`taskrail_list_integrations`、`taskrail_list_adoptions`、`taskrail_get_adoption`、`taskrail_github`、`taskrail_mas`、`taskrail_osv_scanner`、`taskrail_gitleaks`、`taskrail_trivy`、`taskrail_get_automation`、`taskrail_list_runs`、`taskrail_get_run_logs`、`taskrail_list_attention`、`taskrail_list_events`。
+  `taskrail_status`、`taskrail_overview`、`taskrail_render_overview`、`taskrail_list_automations`、`taskrail_discover_local_automations`、`taskrail_scan_native`、`taskrail_list_integrations`、`taskrail_vibecleaner`、`taskrail_list_adoptions`、`taskrail_get_adoption`、`taskrail_github`、`taskrail_mas`、`taskrail_osv_scanner`、`taskrail_gitleaks`、`taskrail_trivy`、`taskrail_get_automation`、`taskrail_list_runs`、`taskrail_get_run_logs`、`taskrail_list_attention`、`taskrail_list_events`。
 
   写入、删除、领养、审批、取消、执行工具既不出现在 `tools/list`，直接调用也必须拒绝，且拒绝发生在 spawn/网络写入前。
 - **证据/状态**：tools/list 和负向调用记录：____________________；状态：□ 待测 □ 通过 □ 失败 □ 阻塞

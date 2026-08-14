@@ -35,7 +35,7 @@ add/register → schedule → run → history/logs → 浏览器控制台
   Keyboard Maestro、Raycast、Alfred 和 Hazel，不导入动作正文；目前只有 Shortcuts 具备独立的、
   基于最新 UUID 且需要审批的运行路径；
 - 命令使用直接 argv，拒绝 shell 字符串；
-- 语义集成覆盖 Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、
+- 语义集成覆盖 VibeCleaner（只读开发者缓存扫描）、Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、
   Trivy、Topgrade 和 Apple Shortcuts；支持写入的操作必须经过持久化审批并在策略边界内失败关闭。
 
 ## 文档
@@ -53,6 +53,7 @@ add/register → schedule → run → history/logs → 浏览器控制台
 - [团队功能验收清单](ACCEPTANCE_TEAM.zh-CN.md) — 按 GitHub 当前描述执行的完整黑盒/隔离环境验收模板。
 - [验收检查清单](ACCEPTANCE.md) — 可复现的发布门槛命令和证据要求。
 - [原生集成架构](adr/0031-native-integration-semantic-layer.md) — 共享计划、策略、解析和验证边界。
+- [VibeCleaner headless 集成](adr/0033-vibecleaner-headless-integration.md) — 只读开发者缓存扫描契约和 GUI 边界。
 
 已移除的 Codex App Server、特权辅助进程和通用远程策略引擎文档不属于当前产品契约。
 当前支持的 ChatGPT 集成边界是 `chatgpt.zh-CN.md` 中描述的 MCP 适配器和本地审批记录。

@@ -31,7 +31,7 @@ const MCP_FLEET_APP_HTML: &str = include_str!("../gui/mcp-fleet-app.html");
 static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_CLIENT_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static HTTP_SERVER_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
-const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-source scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel observations plus Linux cron/systemd services and timers; application-owned definitions and systemd timers remain observe-only. Apple Shortcuts also has a typed taskrail_shortcuts adapter: doctor is read-only, while run requires a UUID from a fresh discovery, explicit confirm=true, and a one-time durable approval. Other application-owned sources remain observe-only. Use taskrail_mole, taskrail_restic, and taskrail_rclone only with their typed actions; writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
+const INSTRUCTIONS: &str = "Taskrail manages scheduled automations on this ARM64 macOS or Linux host. Call taskrail_overview first when the user wants a complete host summary; call taskrail_render_overview after it when an interactive dashboard is useful; use taskrail_status for a lightweight connectivity check. When the user asks what automations exist on the local computer, call taskrail_discover_local_automations for a fresh native-source scan, then use taskrail_list_automations or taskrail_get_automation for details. The local agent supports macOS launchd, Shortcuts, Automator, Keyboard Maestro, Raycast, Alfred, and Hazel observations plus Linux cron/systemd services and timers; application-owned definitions and systemd timers remain observe-only. Apple Shortcuts also has a typed taskrail_shortcuts adapter: doctor is read-only, while run requires a UUID from a fresh discovery, explicit confirm=true, and a one-time durable approval. Other application-owned sources remain observe-only. Use taskrail_mole, taskrail_vibecleaner, taskrail_restic, and taskrail_rclone only with their typed actions; VibeCleaner is a read-only headless developer-cache scan, while writes, destructive cleanup, backups, and syncs are policy-controlled and dry-run should be used first where available. Persisted approvals are plan-bound, expiring, and one-time; they never grant shell access. Use direct argv commands only. Do not claim an automation ran unless the tool result reports its run status. A connected ChatGPT client can call these tools; a future ChatGPT Scheduled trigger must be verified in the target account before being treated as observed.";
 const PUBLIC_INSTRUCTIONS: &str = "Taskrail is running in the public read-only review profile. Call taskrail_overview first for a complete host summary, then call taskrail_render_overview when an interactive control-plane view is useful; use taskrail_status for a lightweight connectivity check. This profile never creates, edits, deletes, adopts, pauses, resumes, runs, cancels, or approves work.";
 const PRIVATE_HTTP_INSTRUCTIONS: &str = "Taskrail is running in the private HTTP profile for one explicitly authorized host. Call taskrail_overview first when the user wants a complete host summary; use taskrail_status for a lightweight connectivity check. Native discovery is read-only. Writes, execution, destructive cleanup, backups, syncs, adoption, and approvals remain policy-controlled and must follow the tool's explicit confirmation and approval rules. Use direct argv commands only, never shell pipelines. Do not claim an automation ran unless the tool result reports its run status.";
 
@@ -85,6 +85,7 @@ const PUBLIC_READ_ONLY_TOOLS: &[&str] = &[
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
     "taskrail_list_integrations",
+    "taskrail_vibecleaner",
     "taskrail_list_adoptions",
     "taskrail_get_adoption",
     "taskrail_github",
@@ -899,6 +900,23 @@ fn fleet_tool_descriptors() -> Vec<Value> {
             true,
         ),
         tool(
+            "taskrail_fleet_vibecleaner",
+            "Remote VibeCleaner integration",
+            "Use this for a typed, read-only VibeCleaner headless developer-cache scan on one named host. The GUI DMG is never driven; scan roots and the optional size threshold are passed as direct argv to the target host's headless CLI.",
+            object_schema(
+                json!({
+                    "host_id":{"type":"string","minLength":1},
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "directories":{"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":32},
+                    "min_size_mb":{"type":"integer","minimum":0,"maximum":1000000,"default":0}
+                }),
+                &["host_id", "action"],
+            ),
+            true,
+            false,
+            true,
+        ),
+        tool(
             "taskrail_fleet_restic",
             "Remote restic integration",
             "Use this for typed restic repository actions on one named host: detect, doctor, snapshots, backup, check, forget, or prune. Credentials remain environment references on the target host; writes require a write-enabled private host and remote approval.",
@@ -1315,6 +1333,7 @@ fn fleet_remote_tool(name: &str) -> Option<&'static str> {
         "taskrail_fleet_rollback_adoption" => "taskrail_rollback_adoption",
         "taskrail_fleet_acknowledge_drift" => "taskrail_acknowledge_drift",
         "taskrail_fleet_mole" => "taskrail_mole",
+        "taskrail_fleet_vibecleaner" => "taskrail_vibecleaner",
         "taskrail_fleet_restic" => "taskrail_restic",
         "taskrail_fleet_rclone" => "taskrail_rclone",
         "taskrail_fleet_github" => "taskrail_github",
@@ -1371,7 +1390,7 @@ mod fleet_contract_tests {
     #[test]
     fn fleet_descriptors_require_explicit_host_targets_and_mark_writes() {
         let tools = fleet_tool_descriptors();
-        assert_eq!(tools.len(), 40);
+        assert_eq!(tools.len(), 41);
         let overview = tools
             .iter()
             .find(|tool| tool["name"] == "taskrail_fleet_overview")
@@ -1793,6 +1812,22 @@ fn tool_descriptors() -> Vec<Value> {
             ),
             false,
             true,
+            true,
+        ),
+        tool(
+            "taskrail_vibecleaner",
+            "VibeCleaner integration",
+            "Use this for typed, read-only VibeCleaner headless scans of explicit project roots. It returns the upstream JSON scan as bounded metrics and risk findings; the public GUI DMG is not driven and no cleanup action is exposed here.",
+            object_schema(
+                json!({
+                    "action":{"type":"string","enum":["detect","doctor","scan"]},
+                    "directories":{"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":32},
+                    "min_size_mb":{"type":"integer","minimum":0,"maximum":1000000,"default":0}
+                }),
+                &["action"],
+            ),
+            true,
+            false,
             true,
         ),
         tool(
@@ -2273,6 +2308,22 @@ async fn call_tool_with_profile(
                     "action": action,
                     "parameters": parameters,
                     "approval_id": arguments.get("approval_id"),
+                }),
+            )
+            .await;
+        }
+        "taskrail_vibecleaner" => {
+            let action = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .context("taskrail_vibecleaner requires arguments.action")?;
+            return call_rpc_tool(
+                "taskrail_vibecleaner",
+                socket_path,
+                "integration.vibecleaner",
+                json!({
+                    "action": action,
+                    "parameters": integration_parameters(&arguments),
                 }),
             )
             .await;
@@ -2916,6 +2967,7 @@ fn summarize(name: &str, value: &Value) -> String {
                 "Mole integration inspection completed.".into()
             }
         }
+        "taskrail_vibecleaner" => integration_summary("VibeCleaner", value),
         "taskrail_restic" => integration_summary("restic", value),
         "taskrail_rclone" => integration_summary("rclone", value),
         "taskrail_github" => integration_summary("GitHub", value),
@@ -3070,6 +3122,7 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), tools.len());
         assert!(names.contains(&"taskrail_mole"));
+        assert!(names.contains(&"taskrail_vibecleaner"));
         assert!(names.contains(&"taskrail_overview"));
         assert!(names.contains(&"taskrail_restic"));
         assert!(names.contains(&"taskrail_rclone"));

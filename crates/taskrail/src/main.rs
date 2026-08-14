@@ -18,7 +18,7 @@ use taskrail::{
         GithubIntegration, HomebrewIntegration, Integration,
         IntegrationAction as SemanticIntegrationAction, MasIntegration, MoleIntegration,
         RcloneIntegration, ResticIntegration, SecurityIntegration, ShortcutsIntegration,
-        TopgradeIntegration,
+        TopgradeIntegration, VibeCleanerIntegration,
     },
     mcp, rpc, service,
     storage::Registry,
@@ -431,6 +431,11 @@ enum IntegrationAction {
         #[command(subcommand)]
         action: MoleAction,
     },
+    /// Run the VibeCleaner headless developer-cache scanner.
+    Vibecleaner {
+        #[command(subcommand)]
+        action: VibeCleanerAction,
+    },
     /// Run the restic semantic integration.
     Restic {
         #[command(subcommand)]
@@ -532,6 +537,23 @@ enum MoleAction {
     Clean {
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum VibeCleanerAction {
+    /// Detect the VibeCleaner headless CLI without launching the GUI app.
+    Detect,
+    /// Check VibeCleaner headless CLI availability.
+    Doctor,
+    /// Scan explicit project roots and return VibeCleaner's JSON report.
+    Scan {
+        /// One or more project roots to scan; paths are passed as direct argv.
+        #[arg(value_name = "DIRECTORY", required = true)]
+        directories: Vec<String>,
+        /// Ignore candidate folders smaller than this many megabytes.
+        #[arg(long = "min-size-mb", default_value_t = 0)]
+        min_size_mb: u64,
     },
 }
 
@@ -993,6 +1015,9 @@ struct IntegrationReport {
 async fn integration_doctor(registry: &Registry, action: IntegrationAction) -> Result<()> {
     let report = match action {
         IntegrationAction::Mole { action } => return run_mole(registry, action).await,
+        IntegrationAction::Vibecleaner { action } => {
+            return run_vibecleaner(registry, action).await;
+        }
         IntegrationAction::Restic { action } => return run_restic(registry, action).await,
         IntegrationAction::Rclone { action } => return run_rclone(registry, action).await,
         IntegrationAction::Github { action } => return run_github(registry, action).await,
@@ -1043,6 +1068,31 @@ async fn run_mole(registry: &Registry, action: MoleAction) -> Result<()> {
         MoleAction::Clean { dry_run } => SemanticIntegrationAction::with_parameters(
             "clean",
             serde_json::json!({"dry_run": dry_run}),
+        )?,
+    };
+    run_semantic_integration(registry, &integration, &action).await
+}
+
+async fn run_vibecleaner(registry: &Registry, action: VibeCleanerAction) -> Result<()> {
+    let integration = VibeCleanerIntegration::default();
+    let action = match action {
+        VibeCleanerAction::Detect => {
+            println!("{}", serde_json::to_string_pretty(&integration.detect())?);
+            return Ok(());
+        }
+        VibeCleanerAction::Doctor => {
+            println!("{}", serde_json::to_string_pretty(&integration.doctor())?);
+            return Ok(());
+        }
+        VibeCleanerAction::Scan {
+            directories,
+            min_size_mb,
+        } => SemanticIntegrationAction::with_parameters(
+            "scan",
+            serde_json::json!({
+                "directories": directories,
+                "min_size_mb": min_size_mb,
+            }),
         )?,
     };
     run_semantic_integration(registry, &integration, &action).await

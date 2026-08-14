@@ -279,6 +279,9 @@ The adapter exposes focused tools rather than a generic shell endpoint:
 - `taskrail_mole` — use typed Mole actions for detection, analysis, status,
   history, and cleanup dry-run planning. Real cleanup is destructive and held
   by Taskrail policy until an explicit, expiring approval is granted.
+- `taskrail_vibecleaner` — use the typed, read-only headless VibeCleaner scan
+  for explicit project roots. It returns reclaimable-byte metrics and
+  `safe`/`verify` findings; it never drives the public GUI DMG or deletes files.
 - `taskrail_restic` / `taskrail_rclone` — use typed snapshot, repository,
   transfer, and sync actions; backup/copy/real sync are policy-controlled.
 - `taskrail_github` / `taskrail_homebrew` — use fixed read-only GitHub

@@ -31,13 +31,13 @@ Execution date: 2026-08-13
 | C3 | Native discovery | launchd, cron, systemd services/timers, Homebrew, and supported macOS application sources execute read-only discovery without native mutation; app-owned sources remain observe-only | Apple Silicon isolated scan: launchd=26, Shortcuts=14, Automator=6; Keyboard Maestro/Raycast/Alfred/Hazel absent on this host; fixtures cover all application providers, Alfred metadata, systemd timer schedules, safe summaries, optional-provider failure handling, and Registry reconciliation; Linux ARM64 CI systemd/cron smoke; Homebrew/provider fixtures | PASS |
 | C4 | Adoption safety | Dry-run, transaction journal, verification failure, rollback, and shell boundary are fail-closed | adoption tests; shell creation now rejected before Registry write | PASS |
 | C5 | Daemon/RPC | ARM64 macOS/Linux Unix-socket daemons expose lifecycle/log/run APIs with local-only boundaries | Apple Silicon temporary daemon/MCP smoke; Linux ARM64 CI build/test and XDG/runtime smoke | PASS |
-| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, exposes the read-only Taskrail Apps dashboard resource, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 40 local tools including the dashboard render tool and typed Shortcuts tool; 19 public read-only tools; resource read/origin tests; stdio and authenticated private/public HTTP probes completed | PASS |
+| D1 | MCP contract | MCP initializes, advertises valid schemas/annotations, handles invalid requests, exposes the read-only Taskrail Apps dashboard resource, and exposes overview, discovery, native integrations, typed scheduling, adoption, drift, deletion, and approval tools | 41 local tools including the dashboard render tool, typed VibeCleaner scan, and typed Shortcuts tool; 20 public read-only tools; resource read/origin tests; stdio and authenticated private/public HTTP probes completed | PASS |
 | D2 | Local automation discovery | A fresh MCP discovery call returns local native and app-owned tasks as safe summaries and reports no native definition mutation | isolated local scan returned 46 sources (launchd=26, Shortcuts=14, Automator=6); app-owned entries are marked `execution=observe_only`; `native_definitions_changed=false`; Registry contained 21 updated observed entries and no app-source attention noise | PASS |
 | D3 | ChatGPT connection | Tunnel runtime and ChatGPT integration doctor are ready; the MCP connection can return Taskrail data | `CONTROL_PLANE_API_KEY` restored in the protected launchd user environment; `tunnel-client` control-plane poll succeeds (`--require-control-plane-poll` ok); `chatgpt-doctor --profile taskrail-local` reports ready with all six checks ok; the tunnel gateway probe returns live Taskrail data; no credential was written to the repository, profile, Registry, or logs | PASS |
 | D4 | ChatGPT app call | A logged-in ChatGPT client can call the connected Taskrail app and report a completed read-only result | In the logged-in ChatGPT web client, the connected Taskrail app called `taskrail_status` followed by `taskrail_scan_native`; the response identified `Yuxin-MacBook.local` (macOS/aarch64), reported the observed host inventory, and confirmed `native_definitions_changed=false`; no write operation was requested. Re-verified after runtime-key restoration: the tunnel gateway probe returned the live host summary (46 sources, 22 automations) for the same host | PASS |
 | D5 | Scheduled trigger | A future ChatGPT Scheduled task invocation is observed calling the connected Taskrail app and returning a completed result | The connected app and interactive call are verified, but no future Scheduled trigger was created and observed in this release run; ChatGPT's Scheduled page and Taskrail's local scheduler remain separate layers | NOT VERIFIED |
-| D6 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 40 fleet tools including the read-only dashboard render tool; explicit `host_id` schemas; localhost MCP routing test; Shortcuts typed route, adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
-| D7 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 40 Fleet descriptors (38 require `host_id`); versioned read-only Fleet Apps resource; route-completeness contract; Shortcuts route and action-aware write gate preserve read-only default | PASS |
+| D6 | Fleet routing | A local fleet MCP gateway loads endpoint metadata without credentials, reports disabled/offline hosts, and routes a named host operation without ambiguity | 41 fleet tools including the read-only dashboard render tool and typed VibeCleaner route; explicit `host_id` schemas; localhost MCP routing test; Shortcuts typed route, adoption, typed integration, audit, and approval routes covered; token values are never stored | PASS |
+| D7 | Fleet control plane | A private Fleet host exposes the same native adoption, drift, typed integration, approval, lifecycle, and run boundaries as a local MCP host | 41 Fleet descriptors (39 require `host_id`); versioned read-only Fleet Apps resource; route-completeness contract; Shortcuts route and action-aware write gate preserve read-only default | PASS |
 | E1 | Codex | Codex doctor and real `codex-run` succeed without exposing credentials; incompatible local catalog is handled ephemerally | `ACCEPT_CODEX_OK`; doctor ready | PASS |
 | E2 | Responses API | Fake Responses-compatible success/error paths work and redact API key output | responses tests and fake-server smoke | PASS |
 | E3 | GitHub watcher | Read-only pulls/issues/checks/failed-runs snapshots work and deduplicate unchanged snapshots | pulls 2, issues 0, failed runs 7, checks 8; watcher tests passed | PASS |
@@ -53,6 +53,7 @@ Execution date: 2026-08-13
 | G6 | Durable approval | Write plans are persisted with expiry, exact plan fingerprints, one-time consumption, audit events, and RPC/MCP/CLI controls | 184 tests; approval lifecycle, replay rejection, and Shortcuts approval-boundary tests passed | PASS |
 | G7 | Typed scheduling | Read-only/dry-run native integration actions persist as typed Automation steps and re-plan at execution time; recurring writes are refused | RPC/service tests; 184 tests passed | PASS |
 | G8 | Secret-safe persistence | Integration parameters reject direct secret values; scanner and referenced-environment output is redacted before run persistence | core/service tests; 184 tests passed | PASS |
+| G9 | VibeCleaner integration | VibeCleaner headless scans use typed direct argv, preserve `safe`/`verify` risk semantics, normalize reclaimable-byte metrics, and never drive the GUI or delete files | focused adapter fixtures; CLI/RPC/MCP descriptor and Fleet-route coverage; no real cleanup executed | PASS |
 
 The previously recorded x86_64 and Windows evidence no longer satisfies the
 ARM64-only release contract. The updated ARM64 runner evidence and the
@@ -116,18 +117,20 @@ execution.
 
 ### Results
 
-The current host passes the Rust full suite (184 tests on this release
-candidate, including Shortcuts confirmation/freshness and dashboard route
-tests), strict Clippy, formatting check, build, package verification, OpenAI
-submission validation, cargo audit/deny, and the Fleet contract now covers 40
-host-routing descriptors;
+The prior release candidate passed the Rust full suite (184 tests, including
+Shortcuts confirmation/freshness and dashboard route tests), strict Clippy,
+formatting, build, package verification, OpenAI submission validation, and
+cargo audit/deny. In the current checkout, the suite contains 192 tests; 189
+pass, while three host-level tests remain blocked by the managed sandbox's
+socket/listen permissions (and the default discovery environment). The Fleet
+contract now covers 41 host-routing descriptors;
 remote status, integration catalog, and a plan-only Topgrade route succeeded,
 while an unavailable Mole executable returned its real remote error and a
 destructive Mole clean was blocked before network access on a read-only host.
 The real local MCP stdio probe completed initialize, tools/list, overview,
 fresh discovery, and automation listing; the authenticated private HTTP probe
 completed initialize, tools/list, and overview, while the public HTTP probe
-confirmed 19 read-only tools and rejected execution calls. The local and Fleet
+confirmed 20 read-only tools and rejected execution calls. The local and Fleet
 MCP Apps resources are embedded, versioned, and attached only to their explicit
 read-only render tools. The dashboard HTTP
 smoke covers health, embedded assets, API reads, same-origin writes, and run

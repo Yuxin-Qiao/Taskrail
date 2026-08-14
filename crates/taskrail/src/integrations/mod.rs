@@ -17,6 +17,7 @@ mod restic;
 mod security;
 mod shortcuts;
 mod topgrade;
+mod vibecleaner;
 
 pub use github::GithubIntegration;
 pub use homebrew::HomebrewIntegration;
@@ -36,6 +37,7 @@ pub use restic::ResticIntegration;
 pub use security::{SecurityIntegration, SecurityTool};
 pub use shortcuts::ShortcutsIntegration;
 pub use topgrade::TopgradeIntegration;
+pub use vibecleaner::VibeCleanerIntegration;
 
 /// Construct the built-in adapter set used by the daemon, CLI, and MCP
 /// boundary. Keeping this in one place prevents a surface from silently
@@ -53,5 +55,6 @@ pub fn built_in_registry() -> anyhow::Result<IntegrationRegistry> {
     registry.register(SecurityIntegration::trivy())?;
     registry.register(ShortcutsIntegration::default())?;
     registry.register(TopgradeIntegration::default())?;
+    registry.register(VibeCleanerIntegration::default())?;
     Ok(registry)
 }

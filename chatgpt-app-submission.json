@@ -92,6 +92,18 @@
         "destructive_justification": "Does not delete, overwrite, revoke access, execute a requested action, or perform an irreversible change."
       }
     },
+    "taskrail_vibecleaner": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Runs the typed VibeCleaner headless scan for explicit project directories and returns normalized reclaimable-byte and risk findings without changing files.",
+        "open_world_justification": "Only observes private local project directories and the configured VibeCleaner CLI; it does not write to public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, move to Trash, overwrite, revoke access, execute cleanup, or perform another irreversible action."
+      }
+    },
     "taskrail_list_adoptions": {
       "annotations": {
         "readOnlyHint": true,

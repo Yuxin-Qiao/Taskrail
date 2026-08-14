@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects VibeCleaner, Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
 
   <p>
     <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
@@ -7,32 +7,156 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <p><a href="#quick-start">Quick start</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
+  <table align="center">
+    <thead>
+      <tr><th>Platform / architecture</th><th>Status</th><th>Install and prerequisites</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Apple Silicon macOS<br><code>aarch64-apple-darwin</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: built-in LaunchAgent</td></tr>
+      <tr><td>ARM64 Linux (GNU libc)<br><code>aarch64-unknown-linux-gnu</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: systemd user manager required</td></tr>
+      <tr><td>Windows, Intel/AMD <code>x86_64</code>, Alpine/musl, other targets</td><td>❌ Not supported</td><td>No official binaries or CI coverage; unsupported targets are rejected at compile time</td></tr>
+    </tbody>
+  </table>
+  <p><sub>Core CLI/TUI needs no Node.js, Python, standalone SQLite, or OpenSSL. VibeCleaner, Homebrew, Mole, restic, rclone, <code>gh</code>, scanners, Codex, and ChatGPT Tunnel are optional integrations.</sub></p>
 
-  <p><sub>Works with</sub> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
+  <p><a href="#supported-platforms-and-prerequisites">Platform &amp; install</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
+  <p><sub>Works with</sub> · <a href="https://vibecleaner.app/">VibeCleaner</a> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
 </div>
 
 <p align="center">
   <sub>discover</sub> &nbsp;→&nbsp; <sub>schedule</sub> &nbsp;→&nbsp; <sub>execute</sub> &nbsp;→&nbsp; <sub>inspect</sub>
 </p>
 
-## Supported targets
+## Supported platforms and prerequisites
 
-Official binaries and CI cover only these ARM64 targets:
+Taskrail is a local executable. There is no Taskrail server, hosted account,
+database service, Node.js runtime, Python runtime, or separate SQLite/OpenSSL
+installation required for the core CLI.
 
-- macOS Apple Silicon: `aarch64-apple-darwin`;
-- Linux ARM64: `aarch64-unknown-linux-gnu`.
+### Supported runtime targets
 
-x86_64 and Windows are not supported release targets. The Rust crate fails
-closed when compiled for another target instead of producing an untested
-binary. Source builds on other architectures are intentionally unsupported.
+Official binaries, CI, and release verification cover only these targets:
+
+| Platform | Rust target | Status |
+| --- | --- | --- |
+| Apple Silicon macOS (M1/M2/M3/M4) | `aarch64-apple-darwin` | Supported |
+| 64-bit ARM Linux with GNU libc (for example, ARM64 Debian/Ubuntu) | `aarch64-unknown-linux-gnu` | Supported |
+
+Intel/AMD `x86_64`, Windows, 32-bit ARM, Linux `musl`/Alpine, and other
+architectures or operating systems are not supported release targets. The Rust
+crate intentionally fails at compile time for an unsupported target instead of
+producing an untested binary. There is no native desktop app bundle: the local
+UI is the CLI, TUI, and daemon-hosted loopback browser dashboard.
+
+### Choose an installation path
+
+#### Option A: Download a release (no Rust required)
+
+Download the archive matching the host from the
+[GitHub Releases](https://github.com/Yuxin-Qiao/Taskrail/releases) page:
+
+- macOS Apple Silicon: `taskrail-<version>-aarch64-apple-darwin.tar.gz`;
+- ARM64 Linux: `taskrail-<version>-aarch64-unknown-linux-gnu.tar.gz`.
+
+Verify the matching `.sha256` file, extract the archive, and put the binary on
+your `PATH` (replace `<target>` with the full Rust target shown above):
+
+```bash
+tar -xzf taskrail-<version>-<target>.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 0755 taskrail "$HOME/.local/bin/taskrail"
+export PATH="$HOME/.local/bin:$PATH"
+taskrail --version
+```
+
+Persist the `PATH` change in your shell profile if `~/.local/bin` is not
+already on it.
+
+#### Option B: Build from the checkout
+
+This path requires [Rustup](https://rustup.rs/), Cargo, Rust `1.88.0` or newer,
+and a native ARM64 C compiler/linker for the bundled native dependencies. On
+macOS, install Apple's Command Line Tools if needed; on Debian/Ubuntu ARM64,
+install the distribution build tools:
+
+```bash
+# macOS, only if the Command Line Tools are not installed
+xcode-select --install
+
+# Debian/Ubuntu ARM64
+sudo apt-get update
+sudo apt-get install build-essential
+
+rustup toolchain install 1.88.0
+cargo +1.88.0 install --locked --path crates/taskrail
+taskrail --version
+```
+
+You do not need to install Node.js, Python, a standalone SQLite server, or
+OpenSSL to build the current crate. The repository pins Rust `1.88.0` in
+`rust-toolchain.toml`; the same command can be run without the `+1.88.0`
+override when Rustup is already selecting that toolchain.
+
+### Platform-specific services and UI
+
+| Feature | macOS Apple Silicon | ARM64 Linux |
+| --- | --- | --- |
+| Core CLI, TUI, foreground daemon, local Registry | No extra package | No extra package; use a glibc-based distribution |
+| `taskrail daemon --install` | Installs a per-user LaunchAgent using the built-in `launchctl` | Installs a systemd user unit; `systemctl --user` must be available |
+| Headless background service | LaunchAgent works in the logged-in user session | Run `loginctl enable-linger "$USER"` before installation when the service must survive logout |
+| `taskrail gui` | Uses the built-in `open` command | Uses `xdg-open`; install the distribution's `xdg-utils` package or open the printed loopback URL manually |
+| Browser dashboard | Any modern browser on the same host | Any modern browser on the same host; the dashboard remains loopback-only |
+
+The browser and `taskrail gui` are optional: the CLI and `taskrail tui` work
+without a graphical desktop. Linux containers and minimal distributions can
+run the foreground CLI, but `daemon --install` needs a systemd user manager;
+the release target is still GNU libc ARM64, not Alpine/musl.
+
+### Optional integrations: install only what you use
+
+The core commands (`add`, `register`, `list`, `run`, `daemon`, `tui`, the local
+dashboard, and local MCP) do not require the tools in this table. Taskrail does
+not install them for you. A missing tool makes only its integration unavailable;
+check the result with `taskrail integrations` or the integration's `doctor`
+command.
+
+| Capability | External command or setup | Platform and notes |
+| --- | --- | --- |
+| Mole cleanup/analyze/status | `mo` (Mole) | macOS only; install Mole separately |
+| VibeCleaner developer-cache scan | `vibecleaner` headless CLI or compatible wrapper | Read-only scan; the public GUI DMG is not driven by Taskrail |
+| Homebrew inventory/services | `brew` (Homebrew) | macOS or Linux; optional |
+| Backup and repository checks | `restic` | macOS or Linux; configure repository/password environment references for repository actions |
+| Copy and sync | `rclone` | macOS or Linux; configure remotes separately |
+| GitHub observations | `gh` (GitHub CLI) | macOS or Linux; authenticate `gh` when the target data requires it |
+| Mac App Store inventory | `mas` | macOS only; optional |
+| Apple Shortcuts | `shortcuts` | Included with macOS; no separate package, but running a Shortcut is approval-gated |
+| Automator, Keyboard Maestro, Raycast, Alfred, Hazel discovery | Corresponding macOS app | macOS only; app-owned definitions are observed, not imported as arbitrary commands |
+| Security scans | `osv-scanner`, `gitleaks`, `trivy` | macOS or Linux; install each scanner you plan to call |
+| System update planning | `topgrade` | macOS or Linux; execution is approval-gated |
+| Codex executor | `codex` CLI | Optional; needed only for `taskrail codex-run` |
+| Responses executor | Network access and an API key such as `OPENAI_API_KEY` | Optional; no extra CLI is required |
+| ChatGPT MCP/Tunnel connection | `tunnel-client`, an OpenAI Secure MCP Tunnel, and its local credentials | Optional; see [ChatGPT integration](docs/chatgpt.md) |
+
+For example, installing Taskrail alone is enough for this first run:
+
+```bash
+taskrail add hello /bin/echo --arg "hello from Taskrail"
+taskrail run hello
+```
+
+The optional container deployment is a separate path. The files under
+[`deploy/`](deploy/) require an ARM64 Docker host and Docker Compose; Docker is
+not required for local CLI/TUI use or for the Rust test suite. The sample is a
+single-host, public-read-only MCP deployment and still needs an HTTPS/auth
+edge; it is not a general hosted service.
 
 ## Quick start
 
-Install the binary from a checkout:
+If you are installing from a checkout, use the source-build command above:
 
 ```bash
-cargo install --path crates/taskrail
+cargo +1.88.0 install --locked --path crates/taskrail
 ```
 
 Add a command without writing a configuration file:
@@ -56,9 +180,12 @@ add → run → inspect
 Add a recurring task:
 
 ```bash
-taskrail add mole-cleanup mo --arg clean \
-  --every-seconds 604800 --name "Mole cleanup"
+taskrail add weekly-hello /bin/echo --arg "weekly Taskrail run" \
+  --every-seconds 604800 --name "Weekly hello"
 ```
+
+On macOS, if Mole is installed separately, the same pattern can call
+`mo clean`; see the optional integrations table below.
 
 Keep the scheduler running with the per-user service for your platform:
 
@@ -221,7 +348,7 @@ Taskrail can manage commands and scripts you already use:
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
 - optional Codex and Responses-compatible AI executions;
-- typed semantic integrations for Mole, restic, rclone, GitHub, Homebrew, mas,
+- typed semantic integrations for VibeCleaner (read-only developer-cache scan), Mole, restic, rclone, GitHub, Homebrew, mas,
   OSV-Scanner, Gitleaks, Trivy, Topgrade, and typed Apple Shortcuts runs;
 - durable, typed integration Automations for read-only and dry-run schedules;
 - normalized findings, metrics, changes, artifacts, run history, and inbox
@@ -242,6 +369,9 @@ taskrail integration mole analyze
 taskrail integration mole status
 taskrail integration mole history --limit 20
 taskrail integration mole clean --dry-run
+taskrail integration vibecleaner detect
+taskrail integration vibecleaner doctor
+taskrail integration vibecleaner scan "$HOME/Projects" --min-size-mb 500
 taskrail integration restic snapshots
 taskrail integration rclone sync ./data remote:backup --dry-run
 taskrail integration github pulls Yuxin-Qiao/Taskrail
@@ -258,6 +388,16 @@ taskrail schedule-integration homebrew-outdated homebrew outdated \
 These actions use typed argv plans, bounded parsing, normalized semantic
 results, Run/Event/Metric records, and adapter verification. Writes and
 destructive actions are bound to a persisted, expiring approval request:
+
+VibeCleaner is intentionally scan-only here. Its public app is a local GUI;
+Taskrail does not attempt to click the app or automate deletion. When a
+headless `vibecleaner` wrapper (or the documented Python CLI source) is present,
+the adapter invokes `--cli ... --json`, preserves the upstream `safe`/`verify`
+risk distinction, and records reclaimable bytes without touching the scanned
+directories. Set `TASKRAIL_VIBECLEANER_SCRIPT` to the Python source path (and
+optionally `TASKRAIL_VIBECLEANER_PYTHON` to choose the interpreter) when using
+the documented source CLI; otherwise the adapter looks for a `vibecleaner`
+wrapper on `PATH`.
 
 ```bash
 taskrail approval-request restic-prune
@@ -355,7 +495,7 @@ The current implementation and remaining release gates are:
 | launchd / cron / systemd / Homebrew plus supported macOS app discovery and background supervision | 🔵 Integration; Shortcuts has typed, approval-gated run |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
-| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade / Shortcuts |
+| Native semantic integrations | 🟢 VibeCleaner (scan) / Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade / Shortcuts |
 | Private ChatGPT MCP/Tunnel and interactive read-only ChatGPT app call | 🟢 Verified; future Scheduled trigger not yet observed |
 | Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
