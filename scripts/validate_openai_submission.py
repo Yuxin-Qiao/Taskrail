@@ -21,6 +21,7 @@ PUBLIC_TOOLS = {
     "taskrail_discover_local_automations",
     "taskrail_scan_native",
     "taskrail_list_integrations",
+    "taskrail_vibecleaner",
     "taskrail_list_adoptions",
     "taskrail_get_adoption",
     "taskrail_github",

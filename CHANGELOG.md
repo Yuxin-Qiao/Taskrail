@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Add a read-only VibeCleaner headless scan integration across the CLI, JSON-RPC,
+  local MCP, and Fleet surfaces. The adapter accepts explicit project roots,
+  preserves `safe`/`verify` risk findings, and never drives the public GUI or
+  deletes files.
+
 ## [0.1.7] - 2026-08-13
 
 - Add a typed Apple Shortcuts integration. Freshly discovered Shortcut UUIDs

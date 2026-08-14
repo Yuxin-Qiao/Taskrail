@@ -230,6 +230,7 @@ taskrail_discover_local_automations 执行新的原生扫描；ChatGPT 成功响
 - taskrail_list_runs / taskrail_get_run_logs — 查看运行结果；
 - taskrail_list_attention / taskrail_list_events — 查看失败、漂移和近期活动；
 - taskrail_mole — 使用类型化 Mole 操作进行检测、分析、状态、历史和清理 dry-run；真实清理具有破坏性，须先获得 Taskrail 策略要求的显式、会过期的审批；
+- taskrail_vibecleaner — 对明确的项目目录执行类型化、只读的 VibeCleaner headless 扫描，返回可回收字节指标和 `safe`/`verify` 风险发现；不会驱动公开 GUI DMG，也不会删除文件；
 - taskrail_restic / taskrail_rclone — 使用类型化快照、仓库、传输和同步操作；备份、复制和真实同步受策略控制；
 - taskrail_github / taskrail_homebrew — 使用固定的只读 GitHub 观察和类型化 Homebrew 健康/维护操作；
 - taskrail_shortcuts — `doctor` 只读检查；`run` 只能使用最新原生扫描返回的 UUID，且必须同时提供 `confirm=true` 和一次性审批。不会返回 Shortcut 动作主体或原始输出。Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel 仍保持只读观察；

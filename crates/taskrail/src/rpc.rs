@@ -4,7 +4,7 @@ use crate::{
     integrations::{
         GithubIntegration, HomebrewIntegration, Integration, IntegrationAction, IntegrationId,
         MasIntegration, MoleIntegration, RcloneIntegration, ResticIntegration, SecurityIntegration,
-        ShortcutsIntegration, TopgradeIntegration,
+        ShortcutsIntegration, TopgradeIntegration, VibeCleanerIntegration,
     },
     service,
     storage::Registry,
@@ -542,6 +542,14 @@ pub async fn handle_request(request: Request, registry_path: &Path) -> Response 
         }
         "integration.mole" => {
             integration_request(registry_path, &request.params, &MoleIntegration::default()).await
+        }
+        "integration.vibecleaner" => {
+            integration_request(
+                registry_path,
+                &request.params,
+                &VibeCleanerIntegration::default(),
+            )
+            .await
         }
         "integration.restic" => {
             integration_request(

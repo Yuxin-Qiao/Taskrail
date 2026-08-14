@@ -49,7 +49,8 @@ add/register → schedule → run → history/logs → browser dashboard
   Keyboard Maestro, Raycast, Alfred, and Hazel without importing action bodies;
   only Shortcuts has a separate typed, fresh-UUID, approval-gated run path.
 - Commands are direct argv and shell strings are rejected.
-- The semantic integration layer covers Mole, restic, rclone, GitHub, Homebrew,
+- The semantic integration layer covers VibeCleaner (read-only developer-cache
+  scans), Mole, restic, rclone, GitHub, Homebrew,
   mas, OSV-Scanner, Gitleaks, Trivy, Topgrade, and Apple Shortcuts;
   write-capable actions are persisted approval-gated and fail closed.
 
@@ -76,6 +77,8 @@ add/register → schedule → run → history/logs → browser dashboard
   and evidence requirements.
 - [Native integration architecture](adr/0031-native-integration-semantic-layer.md)
   — shared plan, policy, parsing, and verification boundary.
+- [VibeCleaner headless integration](adr/0033-vibecleaner-headless-integration.md)
+  — read-only developer-cache scan contract and GUI boundary.
 
 The removed Codex App Server, privileged-helper, and generic remote policy-engine
 documents are no longer part of the current product contract. The MCP adapter
