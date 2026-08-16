@@ -2,21 +2,18 @@
   <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects VibeCleaner, Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
 
   <p>
-    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI status" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/releases/latest"><img src="https://img.shields.io/github/v/release/Yuxin-Qiao/Taskrail?style=flat-square&color=2563eb" alt="Latest release" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.88%2B-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust 1.88+" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <table align="center">
-    <thead>
-      <tr><th>Platform / architecture</th><th>Status</th><th>Install and prerequisites</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Apple Silicon macOS<br><code>aarch64-apple-darwin</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: built-in LaunchAgent</td></tr>
-      <tr><td>ARM64 Linux (GNU libc)<br><code>aarch64-unknown-linux-gnu</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: systemd user manager required</td></tr>
-      <tr><td>Windows, Intel/AMD <code>x86_64</code>, Alpine/musl, other targets</td><td>❌ Not supported</td><td>No official binaries or CI coverage; unsupported targets are rejected at compile time</td></tr>
-    </tbody>
-  </table>
+  <p>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(aarch64)-000000?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon macOS" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/arch-aarch64-0091BD?style=flat-square&logo=arm&logoColor=white" alt="aarch64 architecture" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-unsupported-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 unsupported" /></a>
+  </p>
   <p><sub>Core CLI/TUI needs no Node.js, Python, standalone SQLite, or OpenSSL. VibeCleaner, Homebrew, Mole, restic, rclone, <code>gh</code>, scanners, Codex, and ChatGPT Tunnel are optional integrations.</sub></p>
 
   <p><a href="#supported-platforms-and-prerequisites">Platform &amp; install</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
@@ -38,10 +35,9 @@ installation required for the core CLI.
 
 Official binaries, CI, and release verification cover only these targets:
 
-| Platform | Rust target | Status |
-| --- | --- | --- |
-| Apple Silicon macOS (M1/M2/M3/M4) | `aarch64-apple-darwin` | Supported |
-| 64-bit ARM Linux with GNU libc (for example, ARM64 Debian/Ubuntu) | `aarch64-unknown-linux-gnu` | Supported |
+- <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(M1--M4)-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon" /> `aarch64-apple-darwin` — **Supported** (LaunchAgent daemon supervision)
+- <img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /> `aarch64-unknown-linux-gnu` — **Supported** (`systemd --user` supervision)
+- <img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-unsupported-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 unsupported" /> `x86_64`, Windows, 32-bit ARM, Linux `musl`/Alpine — **Unsupported** (rejected at compile time)
 
 Intel/AMD `x86_64`, Windows, 32-bit ARM, Linux `musl`/Alpine, and other
 architectures or operating systems are not supported release targets. The Rust

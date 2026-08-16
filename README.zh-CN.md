@@ -2,21 +2,18 @@
   <img src="docs/assets/taskrail-topology.svg" alt="Taskrail 将 VibeCleaner、Mole、Homebrew、restic、rclone、本地任务和 ChatGPT 接入统一的自动化控制平面，负责调度、安全执行和审计历史" width="960" />
 
   <p>
-    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI 状态" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="使用 Rust 构建" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 许可证" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI 状态" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/releases/latest"><img src="https://img.shields.io/github/v/release/Yuxin-Qiao/Taskrail?style=flat-square&label=%E7%89%88%E6%9C%AC&color=2563eb" alt="最新版本" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.88%2B-dea584?style=flat-square&logo=rust&logoColor=white" alt="使用 Rust 1.88+ 构建" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 许可证" /></a>
   </p>
 
-  <table align="center">
-    <thead>
-      <tr><th>平台 / 架构</th><th>状态</th><th>安装与前置条件</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Apple Silicon macOS<br><code>aarch64-apple-darwin</code></td><td>✅ 支持</td><td>发布包：不需要 Rust<br>源码构建：Rustup/Cargo + Rust 1.88+<br>Daemon：系统自带 LaunchAgent</td></tr>
-      <tr><td>ARM64 Linux（GNU libc）<br><code>aarch64-unknown-linux-gnu</code></td><td>✅ 支持</td><td>发布包：不需要 Rust<br>源码构建：Rustup/Cargo + Rust 1.88+<br>Daemon：需要 systemd 用户管理器</td></tr>
-      <tr><td>Windows、Intel/AMD <code>x86_64</code>、Alpine/musl、其他目标</td><td>❌ 不支持</td><td>没有官方二进制或 CI 覆盖；不支持的目标会在编译时被拒绝</td></tr>
-    </tbody>
-  </table>
+  <p>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(aarch64)-000000?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon macOS" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/%E6%9E%B6%E6%9E%84-aarch64-0091BD?style=flat-square&logo=arm&logoColor=white" alt="aarch64 架构" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-%E4%B8%8D%E6%94%AF%E6%8C%81-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 不支持" /></a>
+  </p>
   <p><sub>核心 CLI/TUI 不需要 Node.js、Python、独立 SQLite 或 OpenSSL。VibeCleaner、Homebrew、Mole、restic、rclone、<code>gh</code>、扫描器、Codex 和 ChatGPT Tunnel 都是可选集成。</sub></p>
 
   <p><a href="#支持的平台与前置条件">平台与安装</a> · <a href="docs/chatgpt.zh-CN.md">ChatGPT 集成</a> · <a href="README.md">English</a></p>
@@ -37,10 +34,9 @@ Taskrail 是一个运行在本机上的可执行程序。核心 CLI 不需要 Ta
 
 官方二进制、CI 和发布验证只覆盖以下目标：
 
-| 平台 | Rust target | 状态 |
-| --- | --- | --- |
-| Apple Silicon macOS（M1/M2/M3/M4） | `aarch64-apple-darwin` | 支持 |
-| 使用 GNU libc 的 64 位 ARM Linux（例如 ARM64 Debian/Ubuntu） | `aarch64-unknown-linux-gnu` | 支持 |
+- <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(M1--M4)-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon" /> `aarch64-apple-darwin` — **支持**（内置 LaunchAgent 守护进程监督）
+- <img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /> `aarch64-unknown-linux-gnu` — **支持**（`systemd --user` 用户管理器监督）
+- <img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-%E4%B8%8D%E6%94%AF%E6%8C%81-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 不支持" /> `x86_64`、Windows、32 位 ARM、Linux `musl`/Alpine 等 — **不支持**（在编译期主动拒绝）
 
 Intel/AMD `x86_64`、Windows、32 位 ARM、Linux `musl`/Alpine，以及其他架构或操作系统，
 都不是支持的发布目标。Rust crate 会在不支持的目标上主动编译失败，不会生成未经验证的二进制文件。
