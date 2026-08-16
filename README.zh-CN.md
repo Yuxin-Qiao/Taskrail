@@ -1,32 +1,78 @@
 <div align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail 将 VibeCleaner、Mole、Homebrew、restic、rclone、本地任务和 ChatGPT 接入统一的自动化控制平面，负责调度、安全执行和审计历史" width="960" />
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail 将原生任务、本地工具和 ChatGPT 接入统一的自动化控制平面，负责调度、安全执行和审计历史" width="960" />
 
   <p>
-    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI 状态" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="使用 Rust 构建" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 许可证" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI 状态" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/releases/latest"><img src="https://img.shields.io/github/v/release/Yuxin-Qiao/Taskrail?style=flat-square&label=%E7%89%88%E6%9C%AC&color=2563eb" alt="最新版本" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.88%2B-dea584?style=flat-square&logo=rust&logoColor=white" alt="使用 Rust 1.88+ 构建" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 许可证" /></a>
   </p>
 
-  <table align="center">
-    <thead>
-      <tr><th>平台 / 架构</th><th>状态</th><th>安装与前置条件</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Apple Silicon macOS<br><code>aarch64-apple-darwin</code></td><td>✅ 支持</td><td>发布包：不需要 Rust<br>源码构建：Rustup/Cargo + Rust 1.88+<br>Daemon：系统自带 LaunchAgent</td></tr>
-      <tr><td>ARM64 Linux（GNU libc）<br><code>aarch64-unknown-linux-gnu</code></td><td>✅ 支持</td><td>发布包：不需要 Rust<br>源码构建：Rustup/Cargo + Rust 1.88+<br>Daemon：需要 systemd 用户管理器</td></tr>
-      <tr><td>Windows、Intel/AMD <code>x86_64</code>、Alpine/musl、其他目标</td><td>❌ 不支持</td><td>没有官方二进制或 CI 覆盖；不支持的目标会在编译时被拒绝</td></tr>
-    </tbody>
-  </table>
-  <p><sub>核心 CLI/TUI 不需要 Node.js、Python、独立 SQLite 或 OpenSSL。VibeCleaner、Homebrew、Mole、restic、rclone、<code>gh</code>、扫描器、Codex 和 ChatGPT Tunnel 都是可选集成。</sub></p>
+  <p>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(aarch64)-000000?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon macOS" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/%E6%9E%B6%E6%9E%84-aarch64-0091BD?style=flat-square&logo=arm&logoColor=white" alt="aarch64 架构" /></a>
+    <a href="#实际支持的运行目标"><img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-%E4%B8%8D%E6%94%AF%E6%8C%81-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 不支持" /></a>
+  </p>
 
-  <p><a href="#支持的平台与前置条件">平台与安装</a> · <a href="docs/chatgpt.zh-CN.md">ChatGPT 集成</a> · <a href="README.md">English</a></p>
+  <p>
+    <strong>面向 Apple Silicon macOS 与 ARM64 Linux 的本地优先自动化。</strong><br />
+    发现原生任务，调度直接 argv 命令，安全执行，并检查每一次结果。
+  </p>
+
+  <p><a href="#快速开始">快速开始</a> · <a href="#支持的平台与前置条件">安装与平台</a> · <a href="docs/chatgpt.zh-CN.md">ChatGPT 集成</a> · <a href="README.md">English</a></p>
 
   <p><sub>可接入</sub> · <a href="https://vibecleaner.app/">VibeCleaner</a> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
+  <p><sub>核心 CLI/TUI 不需要 Node.js、Python、独立 SQLite 或 OpenSSL；外部工具和 ChatGPT 都是可选集成。</sub></p>
 </div>
 
 <p align="center">
   <sub>发现</sub> &nbsp;→&nbsp; <sub>调度</sub> &nbsp;→&nbsp; <sub>执行</sub> &nbsp;→&nbsp; <sub>检查</sub>
 </p>
+
+# Taskrail
+
+Taskrail 是连接本机调度器与现有工具的本地控制平面。Registry、执行过程、
+运行历史和审计记录都留在主机上，同时提供统一的 CLI、TUI、浏览器控制台和可选 MCP 接口。
+
+| 发现 | 调度 | 执行 | 检查 |
+| --- | --- | --- | --- |
+| 只读观察原生任务，不修改来源 | 一次性、间隔或 cron Automation | 类型化直接 argv 计划；拒绝任意 shell 字符串 | 运行、日志、事件、指标、漂移和审批 |
+
+> **安全边界：**发现是只读的；原生任务领养和所有可写集成都必须显式触发、绑定计划并经过审批。
+> 公开 MCP 部署只提供检查能力。Taskrail 是本地可执行程序，不是托管调度服务。
+
+## 快速开始
+
+### 1. 安装
+
+从仓库检出目录安装，需要 Rust `1.88.0` 或更高版本：
+
+```bash
+cargo +1.88.0 install --locked --path crates/taskrail
+```
+
+如果不想安装 Rust，请使用适配支持平台的[发布包](#选择安装方式)。
+
+### 2. 添加并运行命令
+
+```bash
+taskrail add hello /bin/echo --arg "hello from Taskrail"
+taskrail run hello
+taskrail runs
+taskrail logs <run-id>
+```
+
+### 3. 保持周期性任务运行
+
+```bash
+taskrail daemon --install
+taskrail status
+taskrail tui                 # 终端视图
+taskrail gui                 # loopback 浏览器控制台
+```
+
+详细的平台前置条件、发布包校验和 Linux 无头主机设置见下文。
 
 ## 支持的平台与前置条件
 
@@ -37,10 +83,9 @@ Taskrail 是一个运行在本机上的可执行程序。核心 CLI 不需要 Ta
 
 官方二进制、CI 和发布验证只覆盖以下目标：
 
-| 平台 | Rust target | 状态 |
-| --- | --- | --- |
-| Apple Silicon macOS（M1/M2/M3/M4） | `aarch64-apple-darwin` | 支持 |
-| 使用 GNU libc 的 64 位 ARM Linux（例如 ARM64 Debian/Ubuntu） | `aarch64-unknown-linux-gnu` | 支持 |
+- <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(M1--M4)-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon" /> `aarch64-apple-darwin` — **支持**（内置 LaunchAgent 守护进程监督）
+- <img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /> `aarch64-unknown-linux-gnu` — **支持**（`systemd --user` 用户管理器监督）
+- <img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-%E4%B8%8D%E6%94%AF%E6%8C%81-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 不支持" /> `x86_64`、Windows、32 位 ARM、Linux `musl`/Alpine 等 — **不支持**（在编译期主动拒绝）
 
 Intel/AMD `x86_64`、Windows、32 位 ARM、Linux `musl`/Alpine，以及其他架构或操作系统，
 都不是支持的发布目标。Rust crate 会在不支持的目标上主动编译失败，不会生成未经验证的二进制文件。
@@ -112,57 +157,31 @@ Taskrail 不会替你安装这些外部工具。缺少某个工具只会让对�
 
 | 能力 | 外部命令或设置 | 平台和说明 |
 | --- | --- | --- |
-| Mole 清理/分析/状态 | `mo`（Mole） | 仅 macOS；需要单独安装 Mole |
-| VibeCleaner 开发者缓存扫描 | `vibecleaner` headless CLI 或兼容 wrapper | 只读扫描；不会驱动公开 GUI DMG |
-| Homebrew 清单/服务 | `brew`（Homebrew） | macOS 或 Linux；可选 |
-| 备份和仓库检查 | `restic` | macOS 或 Linux；仓库操作还需要配置仓库/密码环境变量引用 |
-| 复制和同步 | `rclone` | macOS 或 Linux；需要单独配置 remote |
-| GitHub 观察 | `gh`（GitHub CLI） | macOS 或 Linux；目标数据需要认证时先登录 `gh` |
-| Mac App Store 清单 | `mas` | 仅 macOS；可选 |
-| Apple Shortcuts | `shortcuts` | macOS 自带，不需额外安装；运行 Shortcut 需要审批 |
-| Automator、Keyboard Maestro、Raycast、Alfred、Hazel 发现 | 对应的 macOS App | 仅 macOS；应用自有定义只观察，不会导入为任意命令 |
-| 安全扫描 | `osv-scanner`、`gitleaks`、`trivy` | macOS 或 Linux；按需分别安装 |
-| 系统更新计划 | `topgrade` | macOS 或 Linux；执行需要审批 |
-| Codex 执行器 | `codex` CLI | 可选；只有使用 `taskrail codex-run` 时需要 |
-| Responses 执行器 | 网络访问和 `OPENAI_API_KEY` 等 API key | 可选；不需要额外 CLI |
-| ChatGPT MCP/Tunnel 连接 | `tunnel-client`、OpenAI Secure MCP Tunnel 和本地凭据 | 可选；参阅 [ChatGPT 集成指南](docs/chatgpt.zh-CN.md) |
+| [Mole 清理/分析/状态](https://github.com/tw93/Mole) | [`mo`](https://github.com/tw93/Mole)（[Mole](https://github.com/tw93/Mole)） | 仅 macOS；[单独安装 Mole](https://github.com/tw93/Mole#quick-start) |
+| [VibeCleaner 开发者缓存扫描](https://vibecleaner.app/) | [`vibecleaner`](https://vibecleaner.app/) headless CLI 或兼容 wrapper | 只读扫描；不会驱动[公开 GUI](https://vibecleaner.app/) DMG |
+| [Homebrew 清单/服务](https://brew.sh/) | [`brew`](https://brew.sh/)（Homebrew） | macOS 或 Linux；可选 |
+| [备份和仓库检查](https://restic.net/) | [`restic`](https://restic.net/) | macOS 或 Linux；仓库操作还需要配置仓库/密码环境变量引用 |
+| [复制和同步](https://rclone.org/) | [`rclone`](https://rclone.org/) | macOS 或 Linux；需要单独配置 remote |
+| [GitHub 观察](https://cli.github.com/) | [`gh`](https://cli.github.com/)（GitHub CLI） | macOS 或 Linux；目标数据需要认证时先登录 [`gh`](https://cli.github.com/) |
+| [Mac App Store 清单](https://github.com/mas-cli/mas) | [`mas`](https://github.com/mas-cli/mas) | 仅 macOS；可选 |
+| [Apple Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac) | [`shortcuts`](https://support.apple.com/guide/shortcuts-mac/welcome/mac) | macOS 自带，不需额外安装；运行 Shortcut 需要审批 |
+| [Automator](https://support.apple.com/guide/automator/welcome/mac)、[Keyboard Maestro](https://www.keyboardmaestro.com/main/)、[Raycast](https://www.raycast.com/)、[Alfred](https://www.alfredapp.com/)、[Hazel](https://www.noodlesoft.com/) 发现 | 对应的 macOS App | 仅 macOS；应用自有定义只观察，不会导入为任意命令 |
+| 使用 [OSV-Scanner](https://github.com/google/osv-scanner)、[Gitleaks](https://github.com/gitleaks/gitleaks)、[Trivy](https://trivy.dev/) 的安全扫描 | [`osv-scanner`](https://github.com/google/osv-scanner)、[`gitleaks`](https://github.com/gitleaks/gitleaks)、[`trivy`](https://trivy.dev/) | macOS 或 Linux；按需分别安装 |
+| [系统更新计划](https://github.com/topgrade-rs/topgrade) | [`topgrade`](https://github.com/topgrade-rs/topgrade) | macOS 或 Linux；执行需要审批 |
+| [Codex 执行器](https://github.com/openai/codex) | [`codex`](https://github.com/openai/codex) CLI | 可选；只有使用 `taskrail codex-run` 时需要 |
+| [Responses 执行器](https://platform.openai.com/docs/quickstart/make-your-first-api-request) | 网络访问和 [OpenAI API key](https://platform.openai.com/api-keys) 等 `OPENAI_API_KEY` | 可选；不需要额外 CLI |
+| [ChatGPT MCP/Tunnel 连接](docs/chatgpt.zh-CN.md) | [`tunnel-client`](https://github.com/openai/tunnel-client)、[OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 和本地凭据 | 可选；参阅 [ChatGPT 集成指南](docs/chatgpt.zh-CN.md) |
 
-因此，只安装 Taskrail 就足够完成下面的第一次运行：
+上面的链接用于确认每个外部依赖；Taskrail 自身的适配器行为和安全证据见
+[集成目录](docs/README.zh-CN.md)、[验收检查清单](docs/ACCEPTANCE.md)和
+[VibeCleaner 集成 ADR](docs/adr/0033-vibecleaner-headless-integration.md)。
 
-~~~bash
-taskrail add hello /bin/echo --arg "hello from Taskrail"
-taskrail run hello
-~~~
-
-容器部署是另一条可选路径。`[deploy/](deploy/)` 下的示例需要 ARM64 Docker 主机和 Docker Compose；
+容器部署是另一条可选路径。`[deploy/](deploy/)` 下的示例需要 ARM64
+[Docker](https://docs.docker.com/get-started/) 主机和 [Docker Compose](https://docs.docker.com/compose/)；
 本地 CLI/TUI 使用和 Rust 测试套件都不需要 Docker。该示例是单主机、公开只读 MCP 部署，仍需要
 HTTPS/认证边缘，不是通用的托管服务。
 
-## 快速开始
-
-如果从仓库检出目录安装，请使用上面的源码安装命令：
-
-~~~
-cargo +1.88.0 install --locked --path crates/taskrail
-~~~
-
-无需编写配置文件即可添加命令：
-
-~~~
-taskrail add hello /bin/echo --arg "hello from Taskrail"
-taskrail list
-taskrail run hello
-taskrail runs
-taskrail logs <run-id>
-# 只有没有任何运行历史的托管定义才能被删除
-taskrail delete hello
-~~~
-
-最短使用路径是：
-
-~~~
-add → run → inspect
-~~~
+## 调度与监督
 
 添加周期性任务：
 
@@ -303,13 +322,21 @@ Taskrail 可以管理你已经在使用的命令和脚本：
 - 一次性命令，以及按间隔或 cron 运行的周期性任务；
 - 本地运行历史、标准输出、标准错误和运维事件；
 - launchd、cron、systemd 用户服务/定时器、Homebrew 服务，以及受支持的 macOS 应用自动化发现
-  （Shortcuts、Automator、Keyboard Maestro、Raycast、Alfred 和 Hazel）；应用自有定义保持只读观察；
-  发现阶段保持只读观察，Shortcuts 另有类型化、需审批的运行路径；
+  （[Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac)、
+  [Automator](https://support.apple.com/guide/automator/welcome/mac)、
+  [Keyboard Maestro](https://www.keyboardmaestro.com/main/)、
+  [Raycast](https://www.raycast.com/)、[Alfred](https://www.alfredapp.com/) 和
+  [Hazel](https://www.noodlesoft.com/)）；应用自有定义保持只读观察；发现阶段保持只读观察，
+  Shortcuts 另有类型化、需审批的运行路径；
 - 对受支持的用户级原生任务进行显式领养，并记录可回滚的变更；
 - 删除没有运行历史的未使用托管定义，同时保留不可变的运行历史；
-- 可选的 Codex 和 Responses 兼容 AI 执行器；
-- VibeCleaner（只读开发者缓存扫描）、Mole、restic、rclone、GitHub、Homebrew、mas、OSV-Scanner、Gitleaks、Trivy、
-  Topgrade 和 Apple Shortcuts 的类型化语义集成；
+- 可选的 [Codex](https://github.com/openai/codex) 和
+  [Responses 兼容](https://platform.openai.com/docs/quickstart/make-your-first-api-request) AI 执行器；
+- [VibeCleaner](https://vibecleaner.app/)（只读开发者缓存扫描）、[Mole](https://github.com/tw93/Mole)、
+  [restic](https://restic.net/)、[rclone](https://rclone.org/)、[GitHub CLI](https://cli.github.com/)、
+  [Homebrew](https://brew.sh/)、[mas](https://github.com/mas-cli/)、[OSV-Scanner](https://github.com/google/osv-scanner)、
+  [Gitleaks](https://github.com/gitleaks/gitleaks)、[Trivy](https://trivy.dev/)、[Topgrade](https://github.com/topgrade-rs/topgrade)
+  和类型化 [Apple Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac) 集成；
 - 支持只读和 dry-run 调度的持久化、类型化集成自动化；
 - 从这些集成中归一化发现结果、指标、变更、产物、运行历史和待处理事项。
 
@@ -318,7 +345,8 @@ Taskrail 会先观察原生任务，再等待显式领养命令。发现过程�
 
 ## 原生集成
 
-Taskrail 为原生工具提供统一的类型化语义层。例如：
+Taskrail 为原生工具提供统一的类型化语义层。上游工具链接集中在
+[可选集成表](#可选集成只安装你需要的工具)；下面的示例展示对应的 Taskrail 适配器：
 
 ~~~
 taskrail integration mole detect
@@ -424,8 +452,9 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## 当前状态
 
-当前软件包版本为 0.1.7，可用于本地命令自动化和私有 ChatGPT 交互式应用控制；未来 Scheduled
-触发仍是尚未验证的账号级工作流门槛。
+最新标签版本为 `0.1.7`，可用于本地命令自动化和私有 ChatGPT 交互式应用控制。
+仓库还包含尚未发布的 VibeCleaner 扫描工作；需要区分发布包和当前源码时，请查看
+[变更记录](CHANGELOG.md#unreleased)。未来 Scheduled 触发仍是尚未验证的账号级工作流门槛。
 稳定的核心路径是：
 
 ~~~
@@ -441,7 +470,7 @@ add/register → list → daemon → run → history/logs → tui
 | launchd / cron / systemd / Homebrew 以及受支持的 macOS 应用发现和后台监督 | 🔵 集成；Shortcuts 已具备类型化、需审批的运行能力 |
 | 用户级原生任务领养 | 🔵 集成（cron/launchd/systemd） |
 | Codex CLI 和 Responses 执行器 | 🟣 可选集成 |
-| 原生语义集成 | 🟢 VibeCleaner（扫描） / Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade / Shortcuts |
+| 原生语义集成 | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / 安全扫描器 / Topgrade / Shortcuts；VibeCleaner 扫描尚未发布 |
 | 私有 ChatGPT MCP/Tunnel 与 ChatGPT 交互式只读调用 | 🟢 已验证；尚未观察到未来 Scheduled 触发 |
 | ChatGPT MCP Apps 本机与 Fleet 只读视图 | 🟢 已实现（私有 MCP） |
 | 多主机 fleet 网关和显式主机路由 | 🟢 已实现（私有配置） |
@@ -451,6 +480,8 @@ add/register → list → daemon → run → history/logs → tui
 
 ## 文档
 
+- [变更记录](CHANGELOG.md)
+- [最新发布版本](https://github.com/Yuxin-Qiao/Taskrail/releases/latest)
 - [中文文档索引](docs/README.zh-CN.md)
 - [English README](README.md)
 - [中文 ChatGPT 集成指南](docs/chatgpt.zh-CN.md)

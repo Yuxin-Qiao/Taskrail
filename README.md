@@ -1,32 +1,84 @@
 <div align="center">
-  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects VibeCleaner, Mole, Homebrew, restic, rclone, local jobs, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
+  <img src="docs/assets/taskrail-topology.svg" alt="Taskrail connects native jobs, local tools, and ChatGPT to one automation control plane for scheduling, safe execution, and audit history" width="960" />
 
   <p>
-    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yuxin-Qiao/Taskrail/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI status" /></a>
+    <a href="https://github.com/Yuxin-Qiao/Taskrail/releases/latest"><img src="https://img.shields.io/github/v/release/Yuxin-Qiao/Taskrail?style=flat-square&color=2563eb" alt="Latest release" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.88%2B-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust 1.88+" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="Apache 2.0 license" /></a>
   </p>
 
-  <table align="center">
-    <thead>
-      <tr><th>Platform / architecture</th><th>Status</th><th>Install and prerequisites</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Apple Silicon macOS<br><code>aarch64-apple-darwin</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: built-in LaunchAgent</td></tr>
-      <tr><td>ARM64 Linux (GNU libc)<br><code>aarch64-unknown-linux-gnu</code></td><td>✅ Supported</td><td>Release archive: no Rust required<br>Source build: Rustup/Cargo + Rust 1.88+<br>Daemon: systemd user manager required</td></tr>
-      <tr><td>Windows, Intel/AMD <code>x86_64</code>, Alpine/musl, other targets</td><td>❌ Not supported</td><td>No official binaries or CI coverage; unsupported targets are rejected at compile time</td></tr>
-    </tbody>
-  </table>
-  <p><sub>Core CLI/TUI needs no Node.js, Python, standalone SQLite, or OpenSSL. VibeCleaner, Homebrew, Mole, restic, rclone, <code>gh</code>, scanners, Codex, and ChatGPT Tunnel are optional integrations.</sub></p>
+  <p>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(aarch64)-000000?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon macOS" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/arch-aarch64-0091BD?style=flat-square&logo=arm&logoColor=white" alt="aarch64 architecture" /></a>
+    <a href="#supported-runtime-targets"><img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-unsupported-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 unsupported" /></a>
+  </p>
 
-  <p><a href="#supported-platforms-and-prerequisites">Platform &amp; install</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
+  <p>
+    <strong>Local-first automation for Apple Silicon macOS and ARM64 Linux.</strong><br />
+    Discover native jobs, schedule direct-argv commands, run them safely, and inspect every result.
+  </p>
+
+  <p><a href="#quick-start">Quick start</a> · <a href="#supported-platforms-and-prerequisites">Install &amp; platforms</a> · <a href="docs/chatgpt.md">ChatGPT integration</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
   <p><sub>Works with</sub> · <a href="https://vibecleaner.app/">VibeCleaner</a> · <a href="https://github.com/tw93/Mole">Mole</a> · <a href="https://github.com/Homebrew/brew">Homebrew</a> · <a href="https://github.com/restic/restic">restic</a> · <a href="https://github.com/rclone/rclone">rclone</a></p>
+  <p><sub>Core CLI/TUI needs no Node.js, Python, standalone SQLite, or OpenSSL. External tools and ChatGPT are optional integrations.</sub></p>
 </div>
 
 <p align="center">
   <sub>discover</sub> &nbsp;→&nbsp; <sub>schedule</sub> &nbsp;→&nbsp; <sub>execute</sub> &nbsp;→&nbsp; <sub>inspect</sub>
 </p>
+
+# Taskrail
+
+Taskrail is the local control plane between the schedulers and tools already on
+your computer. It keeps the Registry, execution, run history, and audit trail
+on the host while giving you one consistent CLI, TUI, browser dashboard, and
+optional MCP surface.
+
+| Discover | Schedule | Execute | Inspect |
+| --- | --- | --- | --- |
+| Inspect native jobs without changing them | One-shot, interval, or cron Automations | Typed direct-argv plans; no arbitrary shell strings | Runs, logs, events, metrics, drift, and approvals |
+
+> **Safety boundary:** discovery is read-only; native adoption and every
+> write-capable integration are explicit, plan-bound, and approval-gated. A
+> public MCP deployment exposes inspection only. Taskrail is a local executable,
+> not a hosted scheduler.
+
+## Quick start
+
+### 1. Install
+
+From a checkout, install with Rust `1.88.0` or newer:
+
+```bash
+cargo +1.88.0 install --locked --path crates/taskrail
+```
+
+Prefer a prebuilt binary? Use the [release archive](#option-a-download-a-release-no-rust-required)
+for your supported platform.
+
+### 2. Add and run a command
+
+```bash
+taskrail add hello /bin/echo --arg "hello from Taskrail"
+taskrail run hello
+taskrail runs
+taskrail logs <run-id>
+```
+
+### 3. Keep recurring work running
+
+```bash
+taskrail daemon --install
+taskrail status
+taskrail tui                 # terminal view
+taskrail gui                 # loopback browser dashboard
+```
+
+The detailed platform prerequisites, release verification, and Linux headless
+setup are documented below.
 
 ## Supported platforms and prerequisites
 
@@ -38,10 +90,9 @@ installation required for the core CLI.
 
 Official binaries, CI, and release verification cover only these targets:
 
-| Platform | Rust target | Status |
-| --- | --- | --- |
-| Apple Silicon macOS (M1/M2/M3/M4) | `aarch64-apple-darwin` | Supported |
-| 64-bit ARM Linux with GNU libc (for example, ARM64 Debian/Ubuntu) | `aarch64-unknown-linux-gnu` | Supported |
+- <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(M1--M4)-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon" /> `aarch64-apple-darwin` — **Supported** (LaunchAgent daemon supervision)
+- <img src="https://img.shields.io/badge/Linux-ARM64%20(glibc)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="ARM64 Linux" /> `aarch64-unknown-linux-gnu` — **Supported** (`systemd --user` supervision)
+- <img src="https://img.shields.io/badge/Windows%20%2F%20x86__64-unsupported-71717a?style=flat-square&logo=windows&logoColor=white" alt="Windows / x86_64 unsupported" /> `x86_64`, Windows, 32-bit ARM, Linux `musl`/Alpine — **Unsupported** (rejected at compile time)
 
 Intel/AMD `x86_64`, Windows, 32-bit ARM, Linux `musl`/Alpine, and other
 architectures or operating systems are not supported release targets. The Rust
@@ -123,59 +174,34 @@ command.
 
 | Capability | External command or setup | Platform and notes |
 | --- | --- | --- |
-| Mole cleanup/analyze/status | `mo` (Mole) | macOS only; install Mole separately |
-| VibeCleaner developer-cache scan | `vibecleaner` headless CLI or compatible wrapper | Read-only scan; the public GUI DMG is not driven by Taskrail |
-| Homebrew inventory/services | `brew` (Homebrew) | macOS or Linux; optional |
-| Backup and repository checks | `restic` | macOS or Linux; configure repository/password environment references for repository actions |
-| Copy and sync | `rclone` | macOS or Linux; configure remotes separately |
-| GitHub observations | `gh` (GitHub CLI) | macOS or Linux; authenticate `gh` when the target data requires it |
-| Mac App Store inventory | `mas` | macOS only; optional |
-| Apple Shortcuts | `shortcuts` | Included with macOS; no separate package, but running a Shortcut is approval-gated |
-| Automator, Keyboard Maestro, Raycast, Alfred, Hazel discovery | Corresponding macOS app | macOS only; app-owned definitions are observed, not imported as arbitrary commands |
-| Security scans | `osv-scanner`, `gitleaks`, `trivy` | macOS or Linux; install each scanner you plan to call |
-| System update planning | `topgrade` | macOS or Linux; execution is approval-gated |
-| Codex executor | `codex` CLI | Optional; needed only for `taskrail codex-run` |
-| Responses executor | Network access and an API key such as `OPENAI_API_KEY` | Optional; no extra CLI is required |
-| ChatGPT MCP/Tunnel connection | `tunnel-client`, an OpenAI Secure MCP Tunnel, and its local credentials | Optional; see [ChatGPT integration](docs/chatgpt.md) |
+| [Mole cleanup/analyze/status](https://github.com/tw93/Mole) | [`mo`](https://github.com/tw93/Mole) ([Mole](https://github.com/tw93/Mole)) | macOS only; [install Mole separately](https://github.com/tw93/Mole#quick-start) |
+| [VibeCleaner developer-cache scan](https://vibecleaner.app/) | [`vibecleaner`](https://vibecleaner.app/) headless CLI or compatible wrapper | Read-only scan; the [public GUI](https://vibecleaner.app/) DMG is not driven by Taskrail |
+| [Homebrew inventory/services](https://brew.sh/) | [`brew`](https://brew.sh/) (Homebrew) | macOS or Linux; optional |
+| [Backup and repository checks](https://restic.net/) | [`restic`](https://restic.net/) | macOS or Linux; configure repository/password environment references for repository actions |
+| [Copy and sync](https://rclone.org/) | [`rclone`](https://rclone.org/) | macOS or Linux; configure remotes separately |
+| [GitHub observations](https://cli.github.com/) | [`gh`](https://cli.github.com/) (GitHub CLI) | macOS or Linux; authenticate [`gh`](https://cli.github.com/) when the target data requires it |
+| [Mac App Store inventory](https://github.com/mas-cli/mas) | [`mas`](https://github.com/mas-cli/mas) | macOS only; optional |
+| [Apple Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac) | [`shortcuts`](https://support.apple.com/guide/shortcuts-mac/welcome/mac) | Included with macOS; no separate package, but running a Shortcut is approval-gated |
+| [Automator](https://support.apple.com/guide/automator/welcome/mac), [Keyboard Maestro](https://www.keyboardmaestro.com/main/), [Raycast](https://www.raycast.com/), [Alfred](https://www.alfredapp.com/), [Hazel](https://www.noodlesoft.com/) discovery | Corresponding macOS app | macOS only; app-owned definitions are observed, not imported as arbitrary commands |
+| Security scans with [OSV-Scanner](https://github.com/google/osv-scanner), [Gitleaks](https://github.com/gitleaks/gitleaks), and [Trivy](https://trivy.dev/) | [`osv-scanner`](https://github.com/google/osv-scanner), [`gitleaks`](https://github.com/gitleaks/gitleaks), [`trivy`](https://trivy.dev/) | macOS or Linux; install each scanner you plan to call |
+| [System update planning](https://github.com/topgrade-rs/topgrade) | [`topgrade`](https://github.com/topgrade-rs/topgrade) | macOS or Linux; execution is approval-gated |
+| [Codex executor](https://github.com/openai/codex) | [`codex`](https://github.com/openai/codex) CLI | Optional; needed only for `taskrail codex-run` |
+| [Responses executor](https://platform.openai.com/docs/quickstart/make-your-first-api-request) | Network access and an [OpenAI API key](https://platform.openai.com/api-keys) such as `OPENAI_API_KEY` | Optional; no extra CLI is required |
+| [ChatGPT MCP/Tunnel connection](docs/chatgpt.md) | [`tunnel-client`](https://github.com/openai/tunnel-client), [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), and local credentials | Optional; see the [ChatGPT integration guide](docs/chatgpt.md) |
 
-For example, installing Taskrail alone is enough for this first run:
-
-```bash
-taskrail add hello /bin/echo --arg "hello from Taskrail"
-taskrail run hello
-```
+The upstream links above identify each external dependency. Taskrail's own
+adapter behavior and safety evidence are documented in the [integration catalog](docs/README.md),
+the [acceptance checklist](docs/ACCEPTANCE.md), and the
+[VibeCleaner integration ADR](docs/adr/0033-vibecleaner-headless-integration.md).
 
 The optional container deployment is a separate path. The files under
-[`deploy/`](deploy/) require an ARM64 Docker host and Docker Compose; Docker is
-not required for local CLI/TUI use or for the Rust test suite. The sample is a
+[`deploy/`](deploy/) require an ARM64 [Docker](https://docs.docker.com/get-started/)
+host and [Docker Compose](https://docs.docker.com/compose/); Docker is not
+required for local CLI/TUI use or for the Rust test suite. The sample is a
 single-host, public-read-only MCP deployment and still needs an HTTPS/auth
 edge; it is not a general hosted service.
 
-## Quick start
-
-If you are installing from a checkout, use the source-build command above:
-
-```bash
-cargo +1.88.0 install --locked --path crates/taskrail
-```
-
-Add a command without writing a configuration file:
-
-```bash
-taskrail add hello /bin/echo --arg "hello from Taskrail"
-taskrail list
-taskrail run hello
-taskrail runs
-taskrail logs <run-id>
-# Delete only a managed definition with no recorded run history
-taskrail delete hello
-```
-
-The short path is:
-
-```text
-add → run → inspect
-```
+## Schedule and supervise
 
 Add a recurring task:
 
@@ -341,15 +367,26 @@ Taskrail can manage commands and scripts you already use:
 - one-shot commands and recurring interval or cron jobs;
 - local run history, stdout, stderr, and operational events;
 - launchd, cron, systemd user services/timers, Homebrew services, and supported
-  macOS application automation discovery (Shortcuts, Automator, Keyboard
-  Maestro, Raycast, Alfred, and Hazel); application-owned definitions remain
-  observe-only during discovery, while Shortcuts has a separate typed,
+  macOS application automation discovery ([Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac),
+  [Automator](https://support.apple.com/guide/automator/welcome/mac),
+  [Keyboard Maestro](https://www.keyboardmaestro.com/main/),
+  [Raycast](https://www.raycast.com/), [Alfred](https://www.alfredapp.com/),
+  and [Hazel](https://www.noodlesoft.com/)); application-owned definitions
+  remain observe-only during discovery, while Shortcuts has a separate typed,
   approval-gated run path;
 - explicit adoption of supported user-native jobs, with rollback records;
 - deletion of unused managed definitions without deleting immutable run history;
-- optional Codex and Responses-compatible AI executions;
-- typed semantic integrations for VibeCleaner (read-only developer-cache scan), Mole, restic, rclone, GitHub, Homebrew, mas,
-  OSV-Scanner, Gitleaks, Trivy, Topgrade, and typed Apple Shortcuts runs;
+- optional [Codex](https://github.com/openai/codex) and
+  [Responses-compatible](https://platform.openai.com/docs/quickstart/make-your-first-api-request)
+  AI executions;
+- typed semantic integrations for [VibeCleaner](https://vibecleaner.app/)
+  (read-only developer-cache scan), [Mole](https://github.com/tw93/Mole),
+  [restic](https://restic.net/), [rclone](https://rclone.org/),
+  [GitHub CLI](https://cli.github.com/), [Homebrew](https://brew.sh/),
+  [mas](https://github.com/mas-cli/mas), [OSV-Scanner](https://github.com/google/osv-scanner),
+  [Gitleaks](https://github.com/gitleaks/gitleaks), [Trivy](https://trivy.dev/),
+  [Topgrade](https://github.com/topgrade-rs/topgrade), and typed
+  [Apple Shortcuts](https://support.apple.com/guide/shortcuts-mac/welcome/mac) runs;
 - durable, typed integration Automations for read-only and dry-run schedules;
 - normalized findings, metrics, changes, artifacts, run history, and inbox
   attention items from those integrations.
@@ -360,7 +397,9 @@ sources and always requires an explicit command.
 
 ## Native integrations
 
-Taskrail exposes one typed semantic layer for native tools. For example:
+Taskrail exposes one typed semantic layer for native tools. The upstream links
+are collected in the [optional integrations table](#optional-integrations-install-only-what-you-use);
+the examples below show the corresponding Taskrail adapters:
 
 ```bash
 taskrail integration mole detect
@@ -478,9 +517,12 @@ taskrail codex-run --cwd . --model-catalog-json /path/to/catalog.json \
 
 ## Current status
 
-The current package is `0.1.7` and is usable for local command automation and
-interactive private ChatGPT app control; future Scheduled triggering remains
-an unverified account-level workflow gate. The stable center is:
+The latest tagged package is `0.1.7` and is usable for local command
+automation and interactive private ChatGPT app control. The repository also
+contains unreleased VibeCleaner scan work; see the [changelog](CHANGELOG.md#unreleased)
+when you need to distinguish the release archive from the current source tree.
+Future Scheduled triggering remains an unverified account-level workflow gate.
+The stable center is:
 
 ```text
 add/register → list → daemon → run → history/logs → tui
@@ -495,7 +537,7 @@ The current implementation and remaining release gates are:
 | launchd / cron / systemd / Homebrew plus supported macOS app discovery and background supervision | 🔵 Integration; Shortcuts has typed, approval-gated run |
 | User-level native adoption | 🔵 Integration (cron/launchd/systemd) |
 | Codex CLI and Responses executor | 🟣 Optional integration |
-| Native semantic integrations | 🟢 VibeCleaner (scan) / Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade / Shortcuts |
+| Native semantic integrations | 🟢 Mole / restic / rclone / GitHub / Homebrew / mas / security scanners / Topgrade / Shortcuts; VibeCleaner scan is unreleased |
 | Private ChatGPT MCP/Tunnel and interactive read-only ChatGPT app call | 🟢 Verified; future Scheduled trigger not yet observed |
 | Read-only ChatGPT MCP Apps views for local and Fleet overviews | 🟢 Implemented (private MCP) |
 | Multi-host fleet gateway with explicit host routing | 🟢 Implemented (private configuration) |
@@ -505,6 +547,8 @@ The current implementation and remaining release gates are:
 
 ## Documentation
 
+- [Changelog](CHANGELOG.md)
+- [Latest release](https://github.com/Yuxin-Qiao/Taskrail/releases/latest)
 - [简体中文 README](README.zh-CN.md)
 - [中文文档索引](docs/README.zh-CN.md)
 - [Contributing](CONTRIBUTING.md)
